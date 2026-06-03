@@ -21,6 +21,7 @@ personal-assistant-meta/
 
 - `specs/` 回答："系统能做什么？用户如何使用？"
 - 以用户故事、功能需求和交互流程为主线组织
+- **入口文件**：`specs/overall_specifications.md` 是该目录的根入口，目录内所有其他文件都必须被该文件引用（直接或间接）
 
 ### architecture/ — 系统架构
 
@@ -28,6 +29,7 @@ personal-assistant-meta/
 
 - `architecture/` 回答："系统由哪些组件构成？它们如何协作？"
 - 以组件图、模块划分、数据流和接口定义为主线组织
+- **入口文件**：`architecture/overall_architecture.md` 是该目录的根入口，目录内所有其他文件都必须被该文件引用（直接或间接）
 
 ### issues/ — 变更任务
 
