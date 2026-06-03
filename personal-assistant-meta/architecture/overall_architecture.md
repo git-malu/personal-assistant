@@ -1,6 +1,6 @@
 # Personal Assistant — 总体架构设计
 
-> 版本：v0.2 | 状态：Draft | 基于 AgentArts 平台
+> 版本：v0.3 | 状态：Draft | 基于 AgentArts 平台
 
 ---
 
@@ -10,70 +10,58 @@
 
 ```mermaid
 flowchart TB
-    subgraph Clients["客户端"]
-        WebChat["Web Chat UI<br/>(React/Vue)"]
-        CliChat["CLI Chat"]
-        MobileChat["Mobile App"]
+    subgraph Frontends["🖥️ 前端（详见 frontend_architecture.md）"]
+        direction LR
+        WebChat["Web Chat<br/>浏览器"]
+        Feishu["飞书直连<br/>自定义 Bot"]
+        OC["OfficeClaw<br/>桌面客户端"]
     end
 
-    subgraph IdPs["Identity Provider（外部）"]
-        GoogleIdP["Google OAuth"]
-        GitHubIdP["GitHub OAuth"]
-        CustomIdP["自定义 IdP<br/>(OIDC compatible)"]
+    subgraph Backend["☁️ 后端 — FastAPI（详见 backend_architecture.md）"]
+        direction LR
+        Routes["路由层<br/>/ping /invocations<br/>/feishu/webhook<br/>/auth/callback<br/>/chat/stream"]
+        Handler["Agent 处理逻辑<br/>LangGraph 编排"]
+        SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
     end
 
-    subgraph AgentArts["AgentArts 平台"]
-        direction TB
-
-        subgraph Inbound["Inbound — 入站认证"]
-            IAM["IAM Auth<br/>(AK/SK Signature)"]
-            JWT["Custom JWT Auth<br/>(OIDC Discovery)"]
-            KeyAuth["API Key Auth"]
-        end
-
-        Runtime["Agent Runtime<br/>Personal Assistant<br/>(LangGraph + Python)"]
-
-        subgraph IdentitySvc["Identity Service"]
-            WorkloadId["Workload Identity<br/>(Agent 工作负载身份)"]
-            CredProviders["Credential Providers<br/>API Key / OAuth2 / STS"]
-        end
-
-        MemorySvc["Memory Service<br/>Short-term + Long-term<br/>Semantic / Preference / Episodic"]
-        Gateway["MCP Gateway<br/>API → MCP Tool 转换"]
-
-        subgraph Observability["观测"]
-            Tracing["全链路 Trace"]
-            Logs["运行日志"]
-            Eval["自动评估"]
-        end
+    subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
+        MemorySvc["Memory Service"]
+        IdentitySvc["Identity Service"]
+        SandboxSvc["Sandbox Service"]
+        MCPGW["MCP Gateway"]
     end
 
     subgraph External["外部服务"]
-        GoogleAPI["Google APIs<br/>(Calendar, Gmail...)"]
-        GitHubAPI["GitHub API<br/>(Issues, PRs...)"]
-        InternalAPI["企业内部 API<br/>(CRM, OA...)"]
-        HwCloudRes["云资源<br/>(OBS, RDS...)"]
+        GoogleAPI["Google APIs"]
+        GitHubAPI["GitHub API"]
+        InternalAPI["企业内部 API"]
     end
 
-    Clients -->|"HTTPS + Auth Header"| Inbound
-    Inbound -->|"验证通过 → RequestContext"| Runtime
-    Runtime -->|"Memory SDK"| MemorySvc
-    Runtime -->|"Gateway SDK"| Gateway
-    Runtime -->|"Identity SDK<br/>Outbound OAuth/API Key/STS"| IdentitySvc
-    Runtime -->|"OTEL"| Observability
-
-    IdentitySvc -->|"get_resource_oauth2_token()<br/>USER_FEDERATION"| GoogleIdP
-    IdentitySvc -->|"get_resource_oauth2_token()<br/>USER_FEDERATION"| GitHubIdP
-    IdentitySvc -->|"get_resource_api_key()"| InternalAPI
-    IdentitySvc -->|"get_resource_sts_token()"| HwCloudRes
-    GoogleIdP --> GoogleAPI
-    GitHubIdP --> GitHubAPI
+    WebChat -->|"SSE + OAuth"| Routes
+    Feishu -->|"Webhook"| Routes
+    OC -->|"AgentArts 转发"| Routes
+    Routes --> Handler
+    Handler --> SDK
+    SDK --> MemorySvc
+    SDK --> IdentitySvc
+    SDK --> SandboxSvc
+    Handler --> MCPGW --> External
+    IdentitySvc --> External
 ```
+
+**架构层级**：
+
+| 层 | 负责 | 详细文档 |
+|----|------|----------|
+| **前端** | 消息通道、用户交互界面 | `frontend_architecture.md` |
+| **后端** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
+| **平台** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
 
 ### 1.2 技术选型
 
 | 层级 | 选型 | 说明 |
 |------|------|------|
+| **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp |
 | **Agent 编排** | LangGraph (Python) | 有状态图编排，支持条件路由和工具调用循环 |
 | **LLM** | DeepSeek-V3.2 (via MaaS) | OpenAI-compatible API，部署在华为云 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域 |
@@ -85,7 +73,41 @@ flowchart TB
 
 ---
 
-## 2. 认证流详解
+## 2. 前端与后端
+
+架构采用**前后端分离**设计。详细设计见独立文档：
+
+| 文档 | 内容 |
+|------|------|
+| `frontend_architecture.md` | 三种客户端渠道（Web Chat / 飞书直连 / OfficeClaw）、渠道对比、选择指南、部署拓扑 |
+| `backend_architecture.md` | FastAPI 路由设计、Agent 处理逻辑、LangGraph 编排、AgentArts SDK 集成、项目结构 |
+
+### 2.1 前后端关系
+
+```mermaid
+flowchart LR
+    subgraph Frontends["前端（消息通道）"]
+        WebChat["Web Chat"]
+        Feishu["飞书直连"]
+        OC["OfficeClaw"]
+    end
+
+    subgraph Backend["后端（FastAPI :8080）"]
+        Routes["路由层"]
+        Handler["Agent 处理逻辑"]
+    end
+
+    WebChat -->|"SSE + OAuth"| Routes
+    Feishu -->|"Webhook 事件"| Routes
+    OC -->|"AgentArts /invocations"| Routes
+    Routes --> Handler
+```
+
+**核心原则**：前端只负责消息通道和协议适配，不做 Agent 逻辑。所有 Agent 推理、Memory、Tool 调用都在后端。
+
+---
+
+## 3. 认证流详解
 
 ```mermaid
 sequenceDiagram
@@ -120,9 +142,9 @@ sequenceDiagram
 
 ---
 
-## 3. Identity 设计
+## 4. Identity 设计
 
-### 3.1 Inbound — 用户认证到 Agent
+### 4.1 Inbound — 用户认证到 Agent
 
 AgentArts Runtime 通过 `agentarts_config.yaml` 中 `runtime.identity_configuration` 配置三种 Inbound 认证方式：
 
@@ -154,7 +176,7 @@ runtime:
 
 > 推荐生产环境使用 **Custom JWT** 方式，通过 Google OAuth 或自有 OIDC IdP 提供用户认证。
 
-### 3.2 Outbound — Agent 代表用户调用外部服务
+### 4.2 Outbound — Agent 代表用户调用外部服务
 
 AgentArts Identity SDK 提供三种 Outbound 认证模式：
 
@@ -164,7 +186,7 @@ AgentArts Identity SDK 提供三种 Outbound 认证模式：
 | **M2M** | `M2M` | Agent 以自身服务身份调用 API | 调用企业内部 CRM、OA 系统 |
 | **STS Token** | — | Agent 获取云资源访问凭证 | 操作 OBS 对象存储、访问 RDS |
 
-#### 3.2.1 Credential Provider 创建
+#### 4.2.1 Credential Provider 创建
 
 通过 AgentArts SDK 创建各类 Credential Provider：
 
@@ -209,7 +231,7 @@ sts_provider = client.create_sts_credential_provider(
 )
 ```
 
-#### 3.2.2 凭据装饰器使用
+#### 4.2.2 凭据装饰器使用
 
 ```python
 from agentarts.sdk import require_access_token, require_api_key, require_sts_token
@@ -273,9 +295,11 @@ async def access_obs_file(bucket: str, key: str, sts_credentials: Optional[StsCr
 
 ---
 
-## 4. Chat Agent 设计
+## 5. Chat Agent 设计
 
-### 4.1 LangGraph 编排
+> 详细实现见 `backend_architecture.md` #3、#4。
+
+### 5.1 LangGraph 编排
 
 Agent 使用 LangGraph StateGraph 实现有状态的对话编排：
 
@@ -294,142 +318,34 @@ stateDiagram-v2
 - **tools** — ToolNode：执行工具调用，返回结果
 - **finalize** — 终止节点：保存 Memory，构建最终响应
 
-### 4.2 Agent 代码骨架
+### 5.2 FastAPI 入口（替代 AgentArtsRuntimeApp）
 
 ```python
-# app/personal_assistant/agent.py
+# app/main.py
+from fastapi import FastAPI
+from app.agent_handler import AgentHandler
 
-import os
-from typing import Dict, Any, TypedDict, Annotated, Optional
-from langgraph.graph.message import add_messages
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+app = FastAPI()
+handler = AgentHandler()
 
-from agentarts.sdk import AgentArtsRuntimeApp, RequestContext
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
-# Identity Outbound 工具
-from .tools.github_tools import list_github_issues
-from .tools.google_tools import get_calendar_events
-from .tools.internal_tools import search_crm
-from .tools.cloud_tools import read_obs_file
-
-# Memory
-from .memory import PersonalAssistantMemory
-
-app = AgentArtsRuntimeApp()
-
-
-class AgentState(TypedDict):
-    messages: Annotated[list, add_messages]
-    query: str
-    response: str
-    context: Optional[Dict[str, Any]]
-
-
-class PersonalAssistant:
-    def __init__(self):
-        self.model_name = os.environ.get("MODEL_NAME", "deepseek-v3.2")
-        self.memory = PersonalAssistantMemory()
-        self._graph = None
-
-        # 定义可用工具
-        self.tools = [
-            list_github_issues,
-            get_calendar_events,
-            search_crm,
-            read_obs_file,
-        ]
-
-    def _build_graph(self):
-        llm = ChatOpenAI(
-            model=self.model_name,
-            api_key=os.environ.get("MODEL_API_KEY"),
-            base_url=os.environ.get("MODEL_URL",
-                "https://api.modelarts-maas.com/openai/v1")
-        )
-        llm_with_tools = llm.bind_tools(self.tools)
-
-        tool_node = ToolNode(self.tools)
-
-        async def agent_node(state: AgentState) -> Dict[str, Any]:
-            """核心 Agent 节点：决定调用工具还是直接回答"""
-            # 注入 Memory 上下文
-            memory_context = await self.memory.get_context(state)
-            system_prompt = f"你是 Personal Assistant。\n{memory_context}"
-            messages = [HumanMessage(content=system_prompt)] + state.get("messages", [])
-            response = await llm_with_tools.ainvoke(messages)
-            return {"messages": [response]}
-
-        async def finalize_node(state: AgentState) -> Dict[str, Any]:
-            """最终节点：保存 Memory，返回结果"""
-            if state.get("messages"):
-                last_msg = state["messages"][-1]
-                await self.memory.save_interaction(state, last_msg)
-            return {
-                "response": state["messages"][-1].content if state.get("messages") else ""
-            }
-
-        workflow = StateGraph(AgentState)
-        workflow.add_node("agent", agent_node)
-        workflow.add_node("tools", tool_node)
-        workflow.add_node("finalize", finalize_node)
-
-        workflow.set_entry_point("agent")
-
-        # 条件路由：如需工具调用则去 tools，否则结束
-        workflow.add_conditional_edges(
-            "agent",
-            lambda state: "tools" if state["messages"][-1].tool_calls else "finalize",
-            {"tools": "tools", "finalize": "finalize"}
-        )
-        workflow.add_edge("tools", "agent")     # 工具结果返回 agent 继续推理
-        workflow.add_edge("finalize", END)
-
-        return workflow.compile()
-
-    async def run(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
-        graph = self._graph or self._build_graph()
-        self._graph = graph
-        result = await graph.ainvoke({
-            "messages": [HumanMessage(content=query)],
-            "query": query,
-            "response": "",
-            "context": context or {}
-        })
-        return {"response": result.get("response", "")}
-
-
-_assistant = PersonalAssistant()
-
-
-@app.entrypoint
-async def handler(
-    payload: Dict[str, Any],
-    context: RequestContext = None   # AgentArts 自动注入
-) -> Dict[str, Any]:
-    """
-    AgentArts Runtime entrypoint.
-    RequestContext 由平台根据 Inbound Auth 结果自动注入，包含：
-      - context.user_id     : 用户身份
-      - context.user_token  : 用户 Token（用于 Outbound User Federation）
-      - context.session_id  : 会话 ID
-    """
-    query = payload.get("message", "")
-    user_context = {
-        "user_id": context.user_id if context else None,
-        "user_token": context.user_token if context else None,
-        "session_id": context.session_id if context else None,
-    }
-    return await _assistant.run(query, user_context)
-
-
-if __name__ == "__main__":
-    app.run()
+@app.post("/invocations")
+async def invoke(request: Request):
+    payload = await request.json()
+    result = await handler.handle(
+        message=payload.get("message", ""),
+        user_id=request.headers.get("X-AgentArts-User-Id"),
+        session_id=request.headers.get("X-AgentArts-Session-Id"),
+    )
+    return {"response": result}
 ```
 
-### 4.3 Agent State 数据流
+不再使用 `AgentArtsRuntimeApp` 和 `@app.entrypoint`，改用标准 FastAPI 路由。平台层面完全兼容，只要容器在 8080 提供 `/ping` + `/invocations` 即可。
+
+### 5.3 Agent State 数据流
 
 ```mermaid
 flowchart LR
@@ -443,27 +359,27 @@ flowchart LR
 
 ---
 
-## 5. Memory 集成
+## 6. Memory 集成
 
-### 5.1 Memory 模型
+### 6.1 Memory 模型
 
 AgentArts Memory 采用分层存储模型：
 
-```
-Space（记忆空间）
- └── Session（会话）
-      ├── Messages（消息记录）
-      └── Memories（抽取的记忆）
-           ├── Semantic（语义记忆 — 知识/事实）
-           ├── Preference（偏好记忆 — 用户习惯）
-           └── Episodic（情景记忆 — 历史对话摘要）
+```mermaid
+flowchart TD
+    Space["Space（记忆空间）"] --> Session["Session（会话）"]
+    Session --> Messages["Messages（消息记录）"]
+    Session --> Memories["Memories（抽取的记忆）"]
+    Memories --> Semantic["Semantic<br/>语义记忆 — 知识/事实"]
+    Memories --> Preference["Preference<br/>偏好记忆 — 用户习惯"]
+    Memories --> Episodic["Episodic<br/>情景记忆 — 历史对话摘要"]
 ```
 
 - **Space**：租户级隔离单元，一个 Personal Assistant 实例对应一个 Space
 - **Session**：每次对话会话，关联特定用户
 - **Memory**：从 Session 消息中自动抽取的长短期记忆
 
-### 5.2 SDK 集成代码
+### 6.2 SDK 集成代码
 
 ```python
 # app/personal_assistant/memory.py
@@ -528,9 +444,9 @@ class PersonalAssistantMemory:
 
 ---
 
-## 6. 部署配置
+## 7. 部署配置
 
-### 6.1 `agentarts_config.yaml`
+### 7.1 `agentarts_config.yaml`
 
 ```yaml
 default_agent: personal-assistant
@@ -609,7 +525,7 @@ agents:
           value: dev
 ```
 
-### 6.2 部署命令
+### 7.2 部署命令
 
 ```bash
 # 本地开发
@@ -630,32 +546,35 @@ curl -X POST https://<runtime-domain>/invocations \
 
 ---
 
-## 7. 项目文件结构
+## 8. 项目文件结构
 
 ```
 personal-assistant/
-├── .agentarts_config.yaml      # AgentArts 项目配置 + Runtime Identity 配置
+├── .agentarts_config.yaml          # AgentArts 部署配置
+├── Dockerfile                       # ARM64 镜像
+├── requirements.txt                 # Python 依赖
 ├── app/
-│   └── personal_assistant/
-│       ├── __init__.py
-│       ├── agent.py            # Agent 入口 + LangGraph 编排
-│       ├── memory.py           # Memory 集成
-│       ├── tools/
-│       │   ├── __init__.py
-│       │   ├── github_tools.py # GitHub 工具 (OAuth2 User Federation)
-│       │   ├── google_tools.py # Google 工具 (OAuth2 User Federation)
-│       │   ├── internal_tools.py # 内部 API 工具 (API Key M2M)
-│       │   └── cloud_tools.py  # 云资源工具 (STS M2M)
-│       └── prompts/
-│           └── system_prompt.txt
-├── Dockerfile                  # ARM64 镜像构建
-├── requirements.txt            # Python 依赖
+│   ├── main.py                      # FastAPI 应用入口 + 路由定义
+│   ├── agent_handler.py             # 共享 Agent 处理逻辑
+│   ├── graph.py                     # LangGraph 编排定义
+│   ├── memory.py                    # Memory 集成
+│   ├── feishu_adapter.py            # 飞书消息解析 + 回复
+│   ├── oauth.py                     # Google OAuth 流程
+│   └── tools/
+│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation)
+│       ├── google_tools.py          # Google 工具 (OAuth2 User Federation)
+│       ├── internal_tools.py        # 内部 API 工具 (API Key M2M)
+│       └── cloud_tools.py           # 云资源工具 (STS M2M)
+├── web/                              # Web Chat 前端（独立项目）
+│   └── ...
 └── README.md
 ```
 
+> 前端不再作为 `adapters/` 目录放在同一仓库。Web Chat 前端为独立项目，飞书和 OfficeClaw 走各自平台的配置。
+
 ---
 
-## 8. Inbound / Outbound 认证矩阵
+## 9. Inbound / Outbound 认证矩阵
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
@@ -667,10 +586,12 @@ personal-assistant/
 
 ---
 
-## 9. 参考文档
+## 10. 参考文档
 
 | 文档 | 路径 |
 |------|------|
+| **前端架构** | `architecture/frontend_architecture.md` |
+| **后端架构** | `architecture/backend_architecture.md` |
 | AgentArts 平台参考 | `architecture/cloud-service/agentarts.md` |
 | AgentCore 对比参考 | `architecture/cloud-service/agentcore.md` |
 | Identity SDK 文档 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_044.html` |
