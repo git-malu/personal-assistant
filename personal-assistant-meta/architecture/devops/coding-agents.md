@@ -8,7 +8,7 @@
 - 运行载体：Hermes Agent
 - 负责所有 manager 相关任务的派发与最终验收
 
-步骤：
+instructions：
   1. 创建 sub issue 分配给 Design Manager
   2. Design Manager 完成后，创建 sub issue 分配给 Backend Dev Manager
   3. Backend Dev Manager 完成后，创建 sub issue 分配给 Frontend Dev Manager
@@ -18,7 +18,7 @@
 - 运行载体：Hermes Agent
 负责架构设计相关任务的派发与验收。
 
-步骤：
+instructions：
 1. 创建 sub issue 分配给 Architect，完成架构设计，产出落在 `personal-assistant-meta` 目录下
 2. Architect 完成后，创建 sub issue 分配给 Developer 进行 review
 3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
@@ -27,7 +27,7 @@
 - 运行载体：Hermes Agent
 负责后端开发任务的派发与验收。
 
-步骤：
+instructions：
 1. 创建 sub issue 分配给 Developer，完成后端代码开发，产出落在 `personal-assistant-service` 目录下
 2. Developer 完成后，创建 sub issue 分配给 QA 进行测试
 3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
@@ -36,22 +36,22 @@
 - 运行载体：Hermes Agent
 负责前端开发任务的派发与验收。
 
-步骤：
+instructions：
 1. 创建 sub issue 分配给 Developer，完成前端代码开发，产出落在 `personal-assistant-client` 目录下
 2. Developer 完成后，创建 sub issue 分配给 QA 进行测试
 3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
 ### 5. Architect
 - 运行载体：Hermes Agent
-- 专职架构设计
+- instructions: 专职架构设计
 
 ### 6. Developer
 - 运行载体：OpenCode
-- 专职代码开发
+- instructions: 专职代码开发
 
 ### 7. QA
 - 运行载体：OpenCode
-- 专职代码测试
+- instructions: 专职代码测试
 
 ## 工作流程理念
 
