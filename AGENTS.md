@@ -3,7 +3,27 @@
 
 基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的对话式 AI 助手。通过自然语言管理日程、邮件、笔记和任务，具备跨 Session Memory 和用户委托能力。支持 Web Chat、飞书直连和 OfficeClaw 三种接入渠道。
 
-**Design hub**: 所有设计讨论、架构决策和变更规划在 [`personal-assistant-meta/`](./personal-assistant-meta/) 目录下进行。开始前先阅读 [`personal-assistant-meta/AGENTS.md`](./personal-assistant-meta/AGENTS.md) 了解设计规范和约束。
+## Directory Guide
+
+```
+personal-assistant/
+├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
+├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
+├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
+└── .gitnexus/                   # GitNexus 索引配置
+```
+
+### personal-assistant-client/ — 前端应用
+
+提供 Web Chat 对话界面，负责用户交互、消息渲染，以及飞书、OfficeClaw 等多接入渠道的客户端适配层。
+
+### personal-assistant-service/ — 后端服务
+
+运行在 AgentArts Runtime 上的 AI Agent 服务，处理对话逻辑、日程/邮件/笔记/任务管理、跨 Session Memory、用户委托等核心能力。
+
+### personal-assistant-meta/ — Design Hub
+
+所有设计讨论、架构决策和变更规划在此目录下进行。开始前先阅读 [`personal-assistant-meta/AGENTS.md`](./personal-assistant-meta/AGENTS.md) 了解设计规范和约束。
 
 ---
 
