@@ -2,6 +2,11 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": [
     "AGENTS.md",
-    "personal-assistant-meta/AGENTS.md"
-  ]
+    "personal-assistant-meta/AGENTS.md",
+    "personal-assistant-service/AGENTS.md",
+    "personal-assistant-client/AGENTS.md"
+  ],
+  "permission": {
+    "task": "allow"
+  }
 }
