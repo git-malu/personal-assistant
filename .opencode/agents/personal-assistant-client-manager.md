@@ -2,8 +2,9 @@
 description: >-
   Domain orchestrator for the Client directory (personal-assistant-client/).
   Receives tasks from personal-assistant-manager and runs the Client control loop:
-  personal-assistant-client-dev → personal-assistant-client-reviewer → personal-assistant-client-tester → personal-assistant-client-committer → loop or approve.
+  personal-assistant-client-dev → personal-assistant-client-reviewer → personal-assistant-client-tester → loop or approve.
   Does NOT implement, review, or test — only schedules and decides.
+  Does NOT commit — the common personal-assistant-committer handles all commits.
 mode: subagent
 model: deepseek/deepseek-v4-pro
 options:
@@ -22,7 +23,8 @@ Your sub-agents are:
 - `personal-assistant-client-dev` — frontend implementation
 - `personal-assistant-client-reviewer` — code review
 - `personal-assistant-client-tester` — unit/integration tests
-- `personal-assistant-client-committer` — git add personal-assistant-client/ && commit
+
+**Note**: You do NOT have a committer sub-agent. The common `personal-assistant-committer` (called by personal-assistant-manager after both Service and Client domains are done) handles all commits.
 
 ## Your Position in the Tree
 
@@ -32,8 +34,7 @@ personal-assistant-manager (top-level)
   └── You (personal-assistant-client-manager)  ← runs in parallel with personal-assistant-service-manager
         ├── personal-assistant-client-dev         ← frontend implementation
         ├── personal-assistant-client-reviewer    ← code review
-        ├── personal-assistant-client-tester      ← unit/integration tests
-        └── personal-assistant-client-committer   ← git add personal-assistant-client/ && commit
+        └── personal-assistant-client-tester      ← unit/integration tests
 ```
 
 ## Control Loop
@@ -61,9 +62,7 @@ You then run this loop:
   │   ├─ design flaw → escalate to personal-assistant-manager
   │   └─ minor/acceptable → record known issue ↓
   └─ passed ↓
-④ personal-assistant-client-committer → git add personal-assistant-client/ && git commit
-  ↓
-⑤ Report DONE to personal-assistant-manager
+④ Report DONE to personal-assistant-manager
 ```
 
 ### Decision Authority (Three-Tier)
@@ -105,13 +104,7 @@ Delegate to `personal-assistant-client-tester` with:
 
 Record the returned `task_id`. Reuse on re-test.
 
-#### ④ personal-assistant-client-committer — Git Commit
-
-Delegate to `personal-assistant-client-committer` with:
-- A descriptive commit message
-- The feature branch name
-
-#### ⑤ Report to personal-assistant-manager
+#### ④ Report to personal-assistant-manager
 
 ```
 ## Client Phase Complete
@@ -119,7 +112,6 @@ Delegate to `personal-assistant-client-committer` with:
 ### Status: DONE
 
 ### Summary
-- Commits: [list]
 - Tests: [X passed, Y skipped]
 - Build: ✅ / ⚠️
 - Known issues: [any accepted non-blocking issues]
@@ -133,5 +125,5 @@ Delegate to `personal-assistant-client-committer` with:
 3. **Track task_ids** — record from first delegation, reuse on re-delegation.
 4. **Distinguish fixable from design flaws** — don't loop forever.
 5. **Accept non-blocking issues** — minor build warnings, coverage near threshold.
-6. **Report phase transitions.**
-7. **personal-assistant-client-committer scopes to `personal-assistant-client/`** — all commits on same repo and branch.
+6. **No commit** — the common `personal-assistant-committer` (called by personal-assistant-manager after both domains are done) handles all Git operations.
+7. **Report phase transitions.**
