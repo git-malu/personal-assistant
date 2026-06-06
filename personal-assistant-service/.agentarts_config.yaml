@@ -1,0 +1,53 @@
+default_agent: personal-assistant
+
+agents:
+  personal-assistant:
+    base:
+      name: personal-assistant
+      entrypoint: "agent:app"
+      dependency_file: "pyproject.toml"
+      platform: "linux/arm64"
+      language: "python3"
+      base_image: "ghcr.io/astral-sh/uv:python3.12-bookworm"
+      region: "cn-southwest-2"
+
+    swr_config:
+      organization: "personal-assistant-org"
+      repository: "agent_personal_assistant"
+      organization_auto_create: true
+      repository_auto_create: true
+
+    runtime:
+      invoke_config:
+        protocol: HTTP
+        port: 8080
+
+      network_config:
+        network_mode: PUBLIC
+
+      environment_variables:
+        - key: MODEL_API_KEY
+          value: "<your-maas-api-key>"
+        - key: MODEL_NAME
+          value: "deepseek-v4-pro"
+        - key: MODEL_URL
+          value: "https://api.modelarts-maas.com/openai/v1"
+
+      observability:
+        tracing:
+          enabled: true
+        metrics:
+          enabled: true
+        logs:
+          enabled: true
+
+      artifact_source:
+        url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
+        commands:
+          - "uv sync --frozen --no-dev"
+
+      tags:
+        - key: app
+          value: personal-assistant
+        - key: env
+          value: dev
