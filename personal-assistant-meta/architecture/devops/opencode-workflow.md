@@ -92,7 +92,7 @@ graph TD
 
 ## 执行顺序（Happy Path）
 
-**相同序号 = 并行执行**。Service 和 Client 在 ⑨-⑪ 完全并行，两者都完成后由统一 Committer 提交，再进入 E2E 测试。
+**相同序号 = 并行执行**。Committer 在两个检查点提交：① Meta 完成后（Plan Commit，步骤 ⑥），提交计划产物到 feature branch 供 Human 评审；② Service 和 Client 都完成后（Implementation Commit，步骤 ⑬），提交完整实现。E2E 测试在 Implementation Commit 之后进行。
 
 ```mermaid
 flowchart TD
@@ -110,20 +110,22 @@ flowchart TD
     S1 --> S2
     S2 --> S3 --> S4 --> S5
 
-    S5 --> HUMAN_APPROVAL["👤 ⑥ Human<br/>Plan Approval"]
+    S5 --> S5b["⑥ personal-assistant-manager<br/>下发 → personal-assistant-committer<br/>Plan Commit"]
 
-    HUMAN_APPROVAL --> S6["⑦ personal-assistant-manager<br/>并行下发"]
+    S5b --> HUMAN_APPROVAL["👤 ⑦ Human<br/>Plan Approval"]
+
+    HUMAN_APPROVAL --> S6["⑧ personal-assistant-manager<br/>并行下发"]
 
     subgraph SVC_PHASE["<b>Service 领域</b> — personal-assistant-service/  ∥"]
-        S7A["⑧ personal-assistant-service-manager<br/>调度 personal-assistant-service-dev"]
-        S8A["⑨ personal-assistant-service-manager<br/>调度 personal-assistant-service-reviewer"]
-        S9A["⑩ personal-assistant-service-manager<br/>调度 personal-assistant-service-tester"]
+        S7A["⑨ personal-assistant-service-manager<br/>调度 personal-assistant-service-dev"]
+        S8A["⑩ personal-assistant-service-manager<br/>调度 personal-assistant-service-reviewer"]
+        S9A["⑪ personal-assistant-service-manager<br/>调度 personal-assistant-service-tester"]
     end
 
     subgraph CLIENT_PHASE["<b>Client 领域</b> — personal-assistant-client/  ∥"]
-        S7B["⑧ personal-assistant-client-manager<br/>调度 personal-assistant-client-dev"]
-        S8B["⑨ personal-assistant-client-manager<br/>调度 personal-assistant-client-reviewer"]
-        S9B["⑩ personal-assistant-client-manager<br/>调度 personal-assistant-client-tester"]
+        S7B["⑨ personal-assistant-client-manager<br/>调度 personal-assistant-client-dev"]
+        S8B["⑩ personal-assistant-client-manager<br/>调度 personal-assistant-client-reviewer"]
+        S9B["⑪ personal-assistant-client-manager<br/>调度 personal-assistant-client-tester"]
     end
 
     S6 --> S7A
@@ -132,13 +134,13 @@ flowchart TD
     S7A --> S8A --> S9A
     S7B --> S8B --> S9B
 
-    S9A --> JOIN{"⑪ 两者都完成"}
+    S9A --> JOIN{"⑫ 两者都完成"}
     S9B --> JOIN
 
-    JOIN --> S10["⑫ personal-assistant-manager<br/>下发 → personal-assistant-committer<br/>统一提交全仓库"]
+    JOIN --> S10["⑬ personal-assistant-manager<br/>下发 → personal-assistant-committer<br/>Implementation Commit"]
 
-    S10 --> S11["⑬ personal-assistant-manager<br/>下发 → personal-assistant-e2e-tester"]
-    S11 --> S12["⑭ personal-assistant-manager<br/>请求 Merge Approval"]
+    S10 --> S11["⑭ personal-assistant-manager<br/>下发 → personal-assistant-e2e-tester"]
+    S11 --> S12["⑮ personal-assistant-manager<br/>请求 Merge Approval"]
     S12 --> DONE(["Done"])
 
     style START fill:#e1f5fe,stroke:#0288d1
@@ -152,13 +154,14 @@ flowchart TD
 
 **与 AnyWear 执行顺序的差异**：
 
-- 步骤 ⑫：统一 Committer 在 Service 和 Client 都完成后一次性提交全部变更（Meta + Service + Client），替代了原来各领域 loop 内独立 commit 的模式。
-- 步骤 ⑭：不再有独立的 Root-Committer 节点。Merge Approval 由 personal-assistant-manager 直接请求用户审批后执行单次 `git merge`。
-- 无 recursive merge：统一 Committer 已提交所有变更到 feature branch，Manager 只需在审批后 merge 到 main。
+- 步骤 ⑥（Plan Commit）：Meta 阶段完成后，Committer 提交计划产物到 feature branch，再进入 Human 评审。确保计划版本化后再由人工审核。
+- 步骤 ⑬（Implementation Commit）：Service 和 Client 都完成后，Committer 提交完整实现（Meta + Service + Client），再进入 E2E 测试。
+- 步骤 ⑮：不再有独立的 Root-Committer 节点。Merge Approval 由 personal-assistant-manager 直接请求用户审批后执行单次 `git merge`。
+- 无 recursive merge：所有变更已在 feature branch 上，Manager 只需在审批后 merge 到 main。
 
 ## Control Loop
 
-每个领域 Manager 内部跑 control loop：Dev → Reviewer → Tester。Manager 不写代码，只做调度和决策。**领域 loop 内不再包含 commit 步骤**——commit 由顶层的 `personal-assistant-committer` 在所有领域完成后统一执行。
+每个领域 Manager 内部跑 control loop：Dev → Reviewer → Tester。Manager 不写代码，只做调度和决策。**领域 loop 内不再包含 commit 步骤**——commit 由顶层的 `personal-assistant-committer` 在两个检查点执行：Meta 完成后（Plan Commit）和所有领域完成后（Implementation Commit）。
 
 Tester 报告失败时，Manager 做三级决策：
 
@@ -168,17 +171,21 @@ Tester 报告失败时，Manager 做三级决策：
 | 设计缺陷（API 语义不对等） | 需重新设计 | 上报 personal-assistant-manager，等 Meta 侧调整 |
 | 非阻塞问题（覆盖率略低等） | 接受 | 记录 known issue，验收通过 |
 
-## Committer 规范（Mono-Repo 统一提交）
+## Committer 规范（Mono-Repo 两检查点提交）
 
-`personal-assistant-committer` 是**唯一的提交 Agent**，由 personal-assistant-manager 在 Service 和 Client 两个领域都完成后调用。一次性提交全部变更：
+`personal-assistant-committer` 是**唯一的提交 Agent**，由 personal-assistant-manager 在两个检查点调用：
 
-| Committer | `git add` 范围 | 调用时机 |
-|-----------|---------------|---------|
-| personal-assistant-committer | `personal-assistant-meta/` + `personal-assistant-service/` + `personal-assistant-client/` | Service 和 Client 都完成后 |
+| 检查点 | 调用时机 | Commit 消息前缀 | 内容 |
+|--------|---------|---------------|------|
+| Plan Commit | Meta 阶段完成后，Human 评审前 | `plan:` | Implementation Plan + API 契约 |
+| Implementation Commit | Service 和 Client 都完成后，E2E 测试前 | `feat:` / `fix:` / `refactor:` | 完整实现（Meta 产物 + 后端 + 前端） |
+
+每次调用时 Committer 均 `git add` 全部三个目录（`personal-assistant-meta/` + `personal-assistant-service/` + `personal-assistant-client/`），生成一次 commit 并 push。
 
 **设计理由**：
 
-- **原子性**：一次 commit 包含完整的 feature 变更（设计文档 + 后端 + 前端），便于 code review 和回滚。
+- **Plan Commit**：将计划和 API 契约版本化后再进入 Human 评审，用户看到的是已提交的确定版本，评审反馈有明确的 commit 锚点。
+- **Implementation Commit**：一次 commit 包含完整的 feature 变更（设计文档 + 后端 + 前端），便于 code review 和回滚。
 - **去耦合**：领域 Manager 不再关心 Git 操作，专注于自己的质量控制。
 - **简化**：从 3 个 Committer 合并为 1 个，减少 Agent 数量和协调复杂度。
 
