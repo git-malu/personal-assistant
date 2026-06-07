@@ -4,6 +4,7 @@ description: >-
   with a narrow scope: only regenerates TypeScript types from the OpenAPI spec.
   Does NOT implement frontend features.
 mode: subagent
+color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

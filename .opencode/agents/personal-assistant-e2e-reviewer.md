@@ -5,6 +5,7 @@ description: >-
   personal-assistant-e2e-tester. Does NOT modify test code — only reviews and reports.
   Reports to personal-assistant-e2e-manager.
 mode: subagent
+color: #6B21A8
 permission:
   edit: deny
 ---

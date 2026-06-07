@@ -6,6 +6,7 @@ description: >-
   Does NOT implement, review, or test — only schedules and decides.
   Does NOT commit — the common personal-assistant-committer handles all commits.
 mode: subagent
+color: #1E40AF
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

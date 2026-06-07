@@ -5,6 +5,7 @@ description: >-
   scenarios via Hermes, and reports results. Does NOT modify implementation code.
   Reports to personal-assistant-e2e-manager.
 mode: all
+color: #92400E
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

@@ -8,6 +8,7 @@ description: >-
   personal-assistant-committer (e2e commit) → Merge Approval → Merge.
   Never writes implementation code directly. Single repo, no submodules.
 mode: all
+color: #1E40AF
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

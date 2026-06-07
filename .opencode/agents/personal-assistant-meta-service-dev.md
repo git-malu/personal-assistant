@@ -4,6 +4,7 @@ description: >-
   with a narrow scope: only updates FastAPI/Pydantic schemas and regenerates
   OpenAPI spec. Does NOT implement backend features.
 mode: subagent
+color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

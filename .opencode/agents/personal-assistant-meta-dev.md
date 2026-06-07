@@ -5,6 +5,7 @@ description: >-
   implementation plan under issues/{features,bugs,refactor}/<issue>/plan.md.
   Architecture design is assumed already complete.
 mode: subagent
+color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

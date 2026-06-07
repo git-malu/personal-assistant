@@ -8,6 +8,7 @@ description: >-
   (2) after Service, Client, and Infra loops are done, before E2E — commits implementation;
   (3) after E2E review passes, before Merge Approval — commits E2E test code.
 mode: subagent
+color: #115E59
 permission:
   bash: allow
   edit: deny

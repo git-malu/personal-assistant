@@ -4,6 +4,7 @@ description: >-
   for correctness, security, cost implications, and adherence to guidelines.
   Reports issues but does not modify code.
 mode: subagent
+color: #6B21A8
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

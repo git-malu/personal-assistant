@@ -3,6 +3,7 @@ description: >-
   Frontend developer agent for personal-assistant-client. Implements UI components,
   pages, state management. Works in personal-assistant-client/ directory only.
 mode: subagent
+color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

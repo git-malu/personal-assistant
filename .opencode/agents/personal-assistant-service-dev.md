@@ -4,6 +4,7 @@ description: >-
   business logic, and database operations. Works in personal-assistant-service/
   directory only.
 mode: subagent
+color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

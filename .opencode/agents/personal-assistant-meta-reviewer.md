@@ -4,6 +4,7 @@ description: >-
   issues/{features,bugs,refactor}/ for completeness, feasibility, and
   cross-directory consistency. Reports issues but does not modify content.
 mode: subagent
+color: #6B21A8
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
