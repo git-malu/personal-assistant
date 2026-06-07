@@ -87,13 +87,13 @@ graph TD
     EM --> ET
     EM --> ER
 
-    style AM fill:#e1f5fe,stroke:#0288d1
-    style MM fill:#fff3e0,stroke:#f57c00
-    style SM fill:#fff3e0,stroke:#f57c00
-    style CM fill:#fff3e0,stroke:#f57c00
-    style IM fill:#fff3e0,stroke:#f57c00
-    style EM fill:#fff3e0,stroke:#f57c00
-    style AM_C fill:#e8f5e9,stroke:#2e7d32
+    style AM fill:#DBEAFE,stroke:#1E40AF
+    style MM fill:#DBEAFE,stroke:#1E40AF
+    style SM fill:#DBEAFE,stroke:#1E40AF
+    style CM fill:#DBEAFE,stroke:#1E40AF
+    style IM fill:#DBEAFE,stroke:#1E40AF
+    style EM fill:#DBEAFE,stroke:#1E40AF
+    style AM_C fill:#CFFAFE,stroke:#115E59
     style HUMAN fill:#fce4ec,stroke:#c62828,stroke-dasharray: 5 5
 ```
 
@@ -183,14 +183,14 @@ flowchart TD
     S12 --> S13["⑱ personal-assistant-manager<br/>请求 Merge Approval"]
     S13 --> DONE(["Done"])
 
-    style START fill:#e1f5fe,stroke:#0288d1
+    style START fill:#DBEAFE,stroke:#1E40AF
     style JOIN fill:#fce4ec,stroke:#c62828
-    style DONE fill:#e8f5e9,stroke:#2e7d32
-    style META_PHASE fill:#fff8e1,stroke:#f9a825
-    style SVC_PHASE fill:#e8eaf6,stroke:#3949ab
-    style CLIENT_PHASE fill:#e8eaf6,stroke:#3949ab
-    style INFRA_PHASE fill:#e8eaf6,stroke:#3949ab
-    style E2E_PHASE fill:#f3e5f5,stroke:#7b1fa2
+    style DONE fill:#CFFAFE,stroke:#115E59
+    style META_PHASE fill:#DBEAFE,stroke:#1E40AF
+    style SVC_PHASE fill:#D1FAE5,stroke:#065F46
+    style CLIENT_PHASE fill:#D1FAE5,stroke:#065F46
+    style INFRA_PHASE fill:#D1FAE5,stroke:#065F46
+    style E2E_PHASE fill:#FEF3C7,stroke:#92400E
     style HUMAN_APPROVAL fill:#fce4ec,stroke:#c62828
 ```
 
@@ -514,3 +514,53 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-e2e-reviewer | `personal-assistant-e2e-reviewer.md` |
 
 命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）。
+
+## Agent 颜色方案
+
+按角色分配统一颜色，用于 OpenCode Desktop badge 渲染和 Mermaid 架构图。Desktop 取 `color:` hex 值自动生成 badge（深色文字 + 浅色背景），Mermaid 图手动指定 `fill`（100 色阶背景）+ `stroke`（800 色阶边框）。
+
+### 角色颜色表
+
+| 角色 | Desktop `color:` | Mermaid `fill` | Mermaid `stroke` | 语义 |
+|------|:--:|:--:|:--:|------|
+| Manager | `#1E40AF` | `#DBEAFE` (Blue-100) | `#1E40AF` (Blue-800) | 调度、决策、权威 |
+| Dev | `#065F46` | `#D1FAE5` (Emerald-100) | `#065F46` (Emerald-800) | 创造、实现、构建 |
+| Tester | `#92400E` | `#FEF3C7` (Amber-100) | `#92400E` (Amber-800) | 验证、警觉、质量 |
+| Reviewer | `#6B21A8` | `#F3E8FF` (Violet-100) | `#6B21A8` (Violet-800) | 审视、判断、把关 |
+| Committer | `#115E59` | `#CFFAFE` (Cyan-100) | `#115E59` (Teal-800) | 集成、交付、收口 |
+
+> **Human 节点**保持粉红色系：`fill:#FCE4EC, stroke:#C62828`，不参与 Agent 颜色体系。
+
+### Agent 配色清单（22 个）
+
+| Agent | 角色 | `color:` |
+|-------|------|:--:|
+| `personal-assistant-manager` | Manager | `#1E40AF` |
+| `personal-assistant-meta-manager` | Manager | `#1E40AF` |
+| `personal-assistant-service-manager` | Manager | `#1E40AF` |
+| `personal-assistant-client-manager` | Manager | `#1E40AF` |
+| `personal-assistant-infra-manager` | Manager | `#1E40AF` |
+| `personal-assistant-e2e-manager` | Manager | `#1E40AF` |
+| `personal-assistant-meta-dev` | Dev | `#065F46` |
+| `personal-assistant-meta-service-dev` | Dev | `#065F46` |
+| `personal-assistant-meta-client-dev` | Dev | `#065F46` |
+| `personal-assistant-service-dev` | Dev | `#065F46` |
+| `personal-assistant-client-dev` | Dev | `#065F46` |
+| `personal-assistant-infra-dev` | Dev | `#065F46` |
+| `personal-assistant-service-tester` | Tester | `#92400E` |
+| `personal-assistant-client-tester` | Tester | `#92400E` |
+| `personal-assistant-infra-tester` | Tester | `#92400E` |
+| `personal-assistant-e2e-tester` | Tester | `#92400E` |
+| `personal-assistant-meta-reviewer` | Reviewer | `#6B21A8` |
+| `personal-assistant-service-reviewer` | Reviewer | `#6B21A8` |
+| `personal-assistant-client-reviewer` | Reviewer | `#6B21A8` |
+| `personal-assistant-infra-reviewer` | Reviewer | `#6B21A8` |
+| `personal-assistant-e2e-reviewer` | Reviewer | `#6B21A8` |
+| `personal-assistant-committer` | Committer | `#115E59` |
+
+### 设计理由
+
+- **Tailwind 色阶**：100 + 800 组合确保浅底深字，高对比度，深色/浅色 TUI 均可辨识
+- **5 种颜色互不混淆**：蓝/绿/琥珀/紫/青在色相环上均匀分布
+- **语义直觉映射**：蓝 = 管理（K8s control plane）、绿 = 构建（CI 绿色通过）、琥珀 = 测试（交通灯黄/Jest 快照）、紫 = 审查（代码审查工具常用）、青 = 交付（pipeline/deploy）
+- **顶层 Manager 与领域 Manager 同色**：角色本质相同（调度+决策），差异体现在名字上
