@@ -9,7 +9,7 @@ Personal Assistant 开发计划，12 个 Feature（含 1 个基础设施前置 F
 | Feature | 内容 | 核心交付 | 依赖 | 状态 |
 |---------|------|----------|------|------|
 | [1](feature-1-agent-skeleton.md) | Agent 骨架 + Web Chat | 浏览器完成流式对话（单 HTML） | 无 | backlog |
-| [1.1](feature-1.1-web-chat-frontend/issue.md) | Web Chat 前端工程化 | Vite + React + TypeScript + Tailwind（替换单 HTML） | Feature 1 | backlog |
+| [1.1](feature-1.1-web-chat-frontend/issue.md) | Web Chat 前端工程化 | Vite + React + TypeScript + Tailwind + assistant-ui（替换单 HTML） | Feature 1 | backlog |
 | [1.2](feature-1.2-database-setup/issue.md) | PostgreSQL 数据库集成 | 持久化基础设施（Docker Compose + SQLAlchemy + 表结构） | Feature 1 | backlog |
 | [1.3](feature-1.3-multi-llm-provider/issue.md) | 多 LLM Provider 可配置 | `config.yaml` + `llm_config.py` | Feature 1 | backlog |
 | [1.4](feature-1.4-chainlit-playground/issue.md) | Chainlit Playground 调试工具 | 同容器 `/playground` Chainlit UI，挂接 agent_handler | Feature 1 | backlog |
@@ -69,7 +69,7 @@ gantt
     F1  Agent 骨架 + Web Chat       :f1, 2026-01-01, 14d
 
     section 并行基础设施
-    F1.1  前端工程化 (Vite+React)    :f1_1, after f1, 10d
+    F1.1  前端工程化 (Vite+React+assistant-ui)    :f1_1, after f1, 10d
     F1.2  PostgreSQL 数据库          :f1_2, after f1, 7d
     F1.3  多 LLM Provider            :f1_3, after f1, 3d
     F1.4  Chainlit Playground         :f1_4, after f1, 2d

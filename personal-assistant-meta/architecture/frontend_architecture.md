@@ -66,7 +66,7 @@ sequenceDiagram
 | **路由** | `/chat/stream`, `/auth/callback` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
-| **技术栈** | Vite + React + TypeScript + Tailwind CSS，shadcn/ui Chat 模板，Vercel AI SDK（`useChat`）。详见 [ADR-008](../ADR/ADR-008-web-chat-frontend-framework.md) |
+| **技术栈** | Vite + React + TypeScript + Tailwind CSS，assistant-ui AI Chat 组件库（含 `@assistant-ui/react-ai-sdk`）。详见 [ADR-013](../ADR/ADR-013-assistant-ui-chat-library.md) |
 
 **OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
 
@@ -104,7 +104,7 @@ FastAPI 容器 :8080
 | **路径** | `/playground` — 避免与 `/chat`（未来 OAuth 登录后的用户入口）冲突 |
 | **生命周期** | 与 Web Chat 长期共存。Phase 1 用于快速验证 Agent 链路；Phase 3 生产 Web Chat 上线后，`/playground` 保留给运维调试 |
 
-Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同——一个走 Chainlit 的 WebSocket 协议，一个走 SSE + Vite 静态资源。
+Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同：Web Chat 走 SSE + assistant-ui（React 静态资源），Playground 走 Chainlit 的 WebSocket 协议（Python 原生）。
 
 ### 2.2 飞书直连
 
