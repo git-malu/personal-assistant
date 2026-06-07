@@ -28,5 +28,13 @@ Key context:
    - **Database**: Update schema and migrations as needed.
    - **Integrations**: Update external service integrations as needed.
 3. **Verify**: Run type checks and tests after changes.
-4. **Commit** your changes inside `personal-assistant-service/`.
-5. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Service-Manager with the specific question. Do not guess or silently deviate from the plan.
+4. **Update docs** (if needed): Review `personal-assistant-service/README.md` and `personal-assistant-service/AGENTS.md`. Update only if the changes introduce something a future developer needs to know:
+   - New dependencies or setup steps
+   - New or changed CLI commands (start, test, lint, build, migrate)
+   - Changed directory structure or new modules
+   - New environment variables or configuration
+   - Changed conventions or patterns that differ from existing docs
+
+   **Constraint: keep it minimal.** These files are quick-reference, not exhaustive manuals. If nothing meaningful changed — skip. A one-line addition is better than a paragraph. Removing outdated info is also an update.
+5. **Commit** your changes inside `personal-assistant-service/`.
+6. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Service-Manager with the specific question. Do not guess or silently deviate from the plan.

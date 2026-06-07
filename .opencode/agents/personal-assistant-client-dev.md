@@ -27,5 +27,13 @@ Key context:
    - **State**: Server state via TanStack Query, client state via Zustand or local state as appropriate.
    - **Routing**: Update routes as needed.
 3. **Verify**: Run type checks, linting, and tests after changes.
-4. **Commit** your changes inside `personal-assistant-client/`.
-5. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Client-Manager with the specific question. Do not guess or silently deviate from the plan.
+4. **Update docs** (if needed): Review `personal-assistant-client/README.md` and `personal-assistant-client/AGENTS.md`. Update only if the changes introduce something a future developer needs to know:
+   - New dependencies or setup steps
+   - New or changed CLI commands (start, test, lint, build)
+   - Changed directory structure or new modules
+   - New environment variables or configuration
+   - Changed conventions or patterns that differ from existing docs
+
+   **Constraint: keep it minimal.** These files are quick-reference, not exhaustive manuals. If nothing meaningful changed — skip. A one-line addition is better than a paragraph. Removing outdated info is also an update.
+5. **Commit** your changes inside `personal-assistant-client/`.
+6. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Client-Manager with the specific question. Do not guess or silently deviate from the plan.
