@@ -219,3 +219,6 @@ __marimo__/
 
 # Paperclip
 .paperclip/worktrees
+
+# Playwright CLI
+.playwright-cli

@@ -7,12 +7,15 @@
   MODEL_URL / MODEL_API_KEY / MODEL_NAME
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
+
+logger = logging.getLogger(__name__)
 
 # 项目根目录 = app/llm_config.py 的上两级目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -54,23 +57,53 @@ def get_model(provider: str | None = None) -> BaseChatModel:
 
     if llm_cfg and "providers" in llm_cfg:
         # ── 正常路径：config.yaml 已配置 ──
+        is_default = provider is None
         provider = provider or llm_cfg.get("default", "maas")
-        p = llm_cfg["providers"].get(provider)
+        providers = llm_cfg["providers"]
+        p = providers.get(provider)
         if not p:
             raise ValueError(
                 f"LLM provider '{provider}' 未在 config.yaml 中配置。"
-                f" 可用 providers: {list(llm_cfg['providers'].keys())}"
+                f" 可用 providers: {list(providers.keys())}"
             )
         api_key = os.environ.get(p["api_key_env"])
-        if not api_key:
+        if api_key:
+            return init_chat_model(
+                model=f"openai:{p['model']}",
+                base_url=p["base_url"],
+                api_key=api_key,
+            )
+        # 仅一个 provider 时保持原有快速失败行为，提供精确的 env var 名称
+        if len(providers) == 1:
             raise ValueError(
                 f"环境变量 {p['api_key_env']} 未设置，provider={provider} 不可用。"
                 f" 请设置 {p['api_key_env']} 环境变量后重试。"
             )
-        return init_chat_model(
-            model=f"openai:{p['model']}",
-            base_url=p["base_url"],
-            api_key=api_key,
+        # 多个 provider：扫描其他 provider 作为 fallback
+        logger.warning(
+            f"Default provider '{provider}' API key ({p['api_key_env']}) not set, "
+            f"scanning alternatives..."
+        )
+        for alt_name, alt_p in providers.items():
+            if alt_name == provider:
+                continue
+            alt_key = os.environ.get(alt_p["api_key_env"])
+            if alt_key:
+                request_label = "default" if is_default else "requested"
+                logger.warning(
+                    f"Auto-falling back to provider '{alt_name}'. "
+                    f"To use the {request_label} provider '{provider}', "
+                    f"set {p['api_key_env']} env var, "
+                    f"or change llm.default to '{alt_name}' in config.yaml."
+                )
+                return init_chat_model(
+                    model=f"openai:{alt_p['model']}",
+                    base_url=alt_p["base_url"],
+                    api_key=alt_key,
+                )
+        raise ValueError(
+            f"没有可用的 LLM provider。已检查 providers: {list(providers.keys())}。"
+            f" 请设置任一 provider 的 API key 环境变量后重试。"
         )
     else:
         # ── Fallback 路径：config.yaml 不存在或未配置 llm section ──

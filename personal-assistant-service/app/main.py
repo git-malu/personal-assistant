@@ -1,8 +1,12 @@
+import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("uvicorn")
 
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
@@ -86,4 +90,17 @@ async def chat_stream(request: Request, q: str = ""):
 
 
 # Static file serving for the web chat UI — MUST be mounted after all API routes
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+# Try monorepo relative path first (local dev), fall back to Docker container path
+_proj_root = Path(__file__).resolve().parent.parent.parent
+STATIC_DIR = _proj_root / "personal-assistant-client" / "dist"
+if not STATIC_DIR.is_dir():
+    STATIC_DIR = Path("dist")  # Docker: /app/dist/
+
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")
+else:
+    logger.warning(
+        f"前端构建产物目录不存在（已尝试: {_proj_root / 'personal-assistant-client' / 'dist'}, dist/）。"
+        "开发模式下请使用 `npm run dev` 在 personal-assistant-client/ 独立启动前端。"
+        "部署模式下请确保 `npm run build` 已在 personal-assistant-client/ 执行。"
+    )

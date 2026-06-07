@@ -278,3 +278,169 @@ def test_config_with_llm_but_no_providers_falls_back():
         app.llm_config.get_model()
 
         mock_init.assert_called_once()
+
+
+# ── Fallback to alternative provider (multi-provider) ────────────────────
+
+
+def test_fallback_to_alternative_provider_when_default_key_missing():
+    """When default key is missing but alt has one, falls back and warns."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_env": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-deepseek-key"}, clear=True),
+        patch("app.llm_config.init_chat_model") as mock_init,
+        patch.object(app.llm_config.logger, "warning") as mock_warning,
+    ):
+        mock_model = MagicMock()
+        mock_init.return_value = mock_model
+
+        result = app.llm_config.get_model()
+
+        assert result is mock_model
+        mock_init.assert_called_once_with(
+            model="openai:deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_key="test-deepseek-key",
+        )
+        # Verify warnings were logged (scanning + fallback)
+        assert mock_warning.call_count >= 2
+        # The fallback warning should mention "default" (None uses default provider)
+        fallback_calls = [
+            c for c in mock_warning.call_args_list
+            if "Auto-falling back" in c.args[0]
+        ]
+        assert len(fallback_calls) == 1
+        assert "To use the default provider" in fallback_calls[0].args[0]
+
+
+def test_explicit_provider_with_missing_key_falls_back():
+    """Explicit provider key missing, alt key set → fallback says 'requested'."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_env": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-deepseek-key"}, clear=True),
+        patch("app.llm_config.init_chat_model") as mock_init,
+        patch.object(app.llm_config.logger, "warning") as mock_warning,
+    ):
+        mock_model = MagicMock()
+        mock_init.return_value = mock_model
+
+        result = app.llm_config.get_model(provider="maas")
+
+        assert result is mock_model
+        mock_init.assert_called_once_with(
+            model="openai:deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_key="test-deepseek-key",
+        )
+        # The fallback warning should mention "requested" (not "default")
+        fallback_calls = [
+            c for c in mock_warning.call_args_list
+            if "Auto-falling back" in c.args[0]
+        ]
+        assert len(fallback_calls) == 1
+        assert "To use the requested provider" in fallback_calls[0].args[0]
+
+
+def test_all_providers_fail_raises_unified_error():
+    """2+ providers configured, none have keys → raises unified Chinese error."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_env": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(ValueError, match="没有可用的 LLM provider"),
+    ):
+        app.llm_config.get_model()
+
+
+def test_default_provider_works_no_fallback():
+    """When default provider's key IS set, normal behavior: no fallback, no warnings."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_env": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch.dict(os.environ, {"MAAS_API_KEY": "test-maas-key"}, clear=True),
+        patch("app.llm_config.init_chat_model") as mock_init,
+        patch.object(app.llm_config.logger, "warning") as mock_warning,
+    ):
+        mock_model = MagicMock()
+        mock_init.return_value = mock_model
+
+        result = app.llm_config.get_model()
+
+        assert result is mock_model
+        mock_init.assert_called_once_with(
+            model="openai:deepseek-v4-pro",
+            base_url="https://api.modelarts-maas.com/openai/v1",
+            api_key="test-maas-key",
+        )
+        # No fallback-related warnings should be logged when default works
+        mock_warning.assert_not_called()

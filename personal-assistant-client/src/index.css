@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github.css";
+
+/* Blinking cursor animation for streaming text */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink::after {
+  content: '▍';
+  animation: blink 1s infinite;
+  color: #007aff;
+}
