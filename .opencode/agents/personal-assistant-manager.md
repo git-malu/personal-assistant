@@ -13,6 +13,7 @@ options:
   reasoningEffort: max
 permission:
   task: allow
+  bash: allow
 ---
 
 # About You
