@@ -65,8 +65,14 @@
 
 | 术语 | 定义 |
 |------|------|
-| **MaaS** | 华为云 ModelArts as a Service。大模型即服务平台，提供模型广场、一键部署、API 调用。本项目通过 MaaS 调 LLM，非直连模型厂商 |
-| **DeepSeek-V4-Pro** | 当前默认使用的 LLM 模型。1.6T 参数 / 49B 激活 / 1M 上下文。通过 MaaS 部署调用 |
+| **LLM Provider** | LLM 推理服务提供方。本项目通过 `config.yaml` 管理多个 provider，运行时按名称选取 |
+| **MaaS** | 华为云 ModelArts as a Service。大模型即服务平台，提供模型广场、一键部署、API 调用。本项目默认 provider |
+| **DeepSeek 官方** | DeepSeek 官方 API（`api.deepseek.com`）。本项目备选 provider，公网可达，用于无 VPN 开发或低成本任务 |
+| **DeepSeek-V4-Pro** | MaaS 上的默认模型。1.6T 参数 / 49B 激活 / 1M 上下文 |
+| **DeepSeek-Chat** | DeepSeek 官方 API 的通用对话模型 |
+| **Provider 配置** | 通过 `config.yaml` 的 `llm.providers` 段管理，每个 provider 包含 `base_url`、`api_key_env`（环境变量引用）、`model` |
+| **Provider 切换** | 修改 `config.yaml` 的 `llm.default` 字段值，重启后生效。不需要改代码 |
+| **`api_key_env`** | Provider 配置中的密钥引用字段。存储环境变量名而非密钥明文，由 `app/llm_config.py` 在运行时通过 `os.environ` 读取 |
 
 ---
 

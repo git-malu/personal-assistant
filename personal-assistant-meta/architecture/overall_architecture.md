@@ -63,7 +63,7 @@ flowchart TB
 |------|------|------|
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills |
-| **LLM** | DeepSeek-V4-Pro (via MaaS) | OpenAI-compatible API，华为云 MaaS 平台部署，模型可替换 |
+| **LLM** | 多 Provider 可配置（MaaS / DeepSeek 官方） | `config.yaml` 声明 provider，`init_chat_model()` 统一调用。默认 MaaS，可按需切换。详见 ADR-005 + ADR-011 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，语义/偏好/情景三种策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
@@ -372,13 +372,10 @@ AgentHandler 直接调用 deepagents 的 `.invoke()` 或 `.astream()`：
 ```python
 class AgentHandler:
     def __init__(self):
-        model = init_chat_model(
-            model="openai:deepseek-v4-pro",
-            base_url=os.environ["MODEL_URL"],
-            api_key=os.environ["MODEL_API_KEY"],
-        )
+        from app.llm_config import get_model
+        self.model = get_model()  # 默认使用 config.yaml 中 llm.default 指定的 provider
         self.agent = create_deep_agent(
-            model=model,
+            model=self.model,
             system_prompt="你是 Personal Assistant...",
             tools=[...],  # Identity SDK 装饰的工具
         )
@@ -391,9 +388,90 @@ class AgentHandler:
 
 ---
 
-## 6. Memory 集成
+## 6. LLM Provider 配置
 
-### 6.1 Memory 模型
+> 详细设计见 [ADR-011](ADR/ADR-011-multi-llm-provider.md)。
+
+### 6.1 配置结构
+
+LLM Provider 通过项目根目录的 `config.yaml` 管理，支持多个 OpenAI-compatible provider 共存：
+
+```yaml
+# config.yaml — LLM Provider 配置
+llm:
+  default: maas  # 默认 provider
+  providers:
+    maas:
+      base_url: https://api.modelarts-maas.com/openai/v1
+      api_key_env: MAAS_API_KEY  # 引用环境变量，不留明文密钥
+      model: deepseek-v4-pro
+    deepseek:
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      model: deepseek-chat
+```
+
+### 6.2 配置加载模块
+
+`app/llm_config.py` 读取 `config.yaml` + 环境变量，暴露统一的 `get_model()` 接口：
+
+```python
+# app/llm_config.py
+import os
+import yaml
+from langchain.chat_models import init_chat_model
+
+_config = None
+
+def _load_config():
+    global _config
+    if _config is None:
+        with open("config.yaml") as f:
+            _config = yaml.safe_load(f)
+    return _config
+
+def get_model(provider: str = None) -> BaseChatModel:
+    """获取 LLM model 实例。默认使用 llm.default 指定的 provider。"""
+    cfg = _load_config()
+    provider = provider or cfg["llm"]["default"]
+    p = cfg["llm"]["providers"][provider]
+    api_key = os.environ.get(p["api_key_env"])
+    if not api_key:
+        raise ValueError(
+            f"环境变量 {p['api_key_env']} 未设置，provider={provider} 不可用"
+        )
+    return init_chat_model(
+        model=f"openai:{p['model']}",
+        base_url=p["base_url"],
+        api_key=api_key,
+    )
+```
+
+### 6.3 与环境变量的关系
+
+| 变量 | 用途 | 必填 |
+|------|------|------|
+| `MAAS_API_KEY` | MaaS 平台 API Key | MaaS provider 使用时 |
+| `DEEPSEEK_API_KEY` | DeepSeek 官方 API Key | DeepSeek provider 使用时 |
+
+> `MODEL_URL` / `MODEL_API_KEY` / `MODEL_NAME`（旧版单一 provider 变量）仍被兼容读取，作为 `maas` provider 的 fallback。后续版本移除。
+
+### 6.4 Provider 选择逻辑
+
+```mermaid
+flowchart TD
+    Start["AgentHandler 初始化"] --> LoadConfig["读取 config.yaml"]
+    LoadConfig --> GetProvider{"llm.default = ?"}
+    GetProvider -->|"maas"| MaaS["读 MAAS_API_KEY → init_chat_model('openai:deepseek-v4-pro', base_url='...maas...')"]
+    GetProvider -->|"deepseek"| DeepSeek["读 DEEPSEEK_API_KEY → init_chat_model('openai:deepseek-chat', base_url='...deepseek.com')"]
+    GetProvider -->|"未设置"| Error["启动失败，提示配置 llm.default"]
+```
+
+---
+
+## 7. Memory 集成
+
+### 7.1 Memory 模型
 
 AgentArts Memory 采用分层存储模型：
 
@@ -411,7 +489,7 @@ flowchart TD
 - **Session**：每次对话会话，关联特定用户
 - **Memory**：从 Session 消息中自动抽取的长短期记忆
 
-### 6.2 SDK 集成代码
+### 7.2 SDK 集成代码
 
 ```python
 # app/personal_assistant/memory.py
@@ -476,9 +554,9 @@ class PersonalAssistantMemory:
 
 ---
 
-## 7. 部署配置
+## 8. 部署配置
 
-### 7.1 `agentarts_config.yaml`
+### 8.1 `agentarts_config.yaml`
 
 ```yaml
 default_agent: personal-assistant
@@ -541,12 +619,10 @@ agents:
         commands: []
 
       environment_variables:
-        - key: MODEL_API_KEY
+        - key: MAAS_API_KEY
           value: "<MaaS API Key>"
-        - key: MODEL_NAME
-          value: "deepseek-v4-pro"
-        - key: MODEL_URL
-          value: "https://api.modelarts-maas.com/openai/v1"
+        - key: DEEPSEEK_API_KEY
+          value: "<DeepSeek 官方 API Key>"
         - key: MEMORY_SPACE_ID
           value: "<Memory Space ID>"
 
@@ -557,7 +633,7 @@ agents:
           value: dev
 ```
 
-### 7.2 部署命令
+### 8.2 部署命令
 
 ```bash
 # 本地开发
@@ -578,16 +654,19 @@ curl -X POST https://<runtime-domain>/invocations \
 
 ---
 
-## 8. 项目文件结构
+## 9. 项目文件结构
 
 ```
 personal-assistant/
 ├── .agentarts_config.yaml          # AgentArts 部署配置
 ├── Dockerfile                       # ARM64 镜像
-├── requirements.txt                 # Python 依赖
+├── config.yaml                      # LLM Provider 配置（新增）
+├── pyproject.toml                   # Python 依赖 + ruff 配置
+├── uv.lock                           # 确定性锁文件
 ├── app/
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
+│   ├── llm_config.py                # LLM Provider 配置加载（新增）
 │   ├── memory.py                    # Memory 集成
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
@@ -605,7 +684,7 @@ personal-assistant/
 
 ---
 
-## 9. Inbound / Outbound 认证矩阵
+## 10. Inbound / Outbound 认证矩阵
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
@@ -617,7 +696,7 @@ personal-assistant/
 
 ---
 
-## 10. 参考文档
+## 11. 参考文档
 
 | 文档 | 路径 |
 |------|------|

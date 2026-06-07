@@ -158,7 +158,41 @@ Agent: 草拟如下：
 
 ---
 
-## 6. 核心验证点
+## 6. LLM Provider 管理
+
+系统支持配置多个 LLM Provider，通过 `config.yaml` 声明式管理。默认使用华为云 MaaS，可按需切换到 DeepSeek 官方或其他 OpenAI-compatible provider。
+
+### 6.1 Provider 切换场景
+
+| 场景 | 推荐 Provider | 原因 |
+|------|--------------|------|
+| 生产环境 | MaaS | 内网直连、数据合规、华为云统一账单 |
+| 无 VPN 开发 | DeepSeek 官方 | 公网可达，不受华为内网限制 |
+| 低成本长尾任务 | DeepSeek 官方 | 按量付费，无平台溢价 |
+| 模型能力对比 | 任一 | 切换 `llm.default` 即可 A/B 测试 |
+
+### 6.2 配置方式
+
+详见 [ADR-011](../architecture/ADR/ADR-011-multi-llm-provider.md) 和 [LLM Provider 配置](../architecture/overall_architecture.md#6-llm-provider-配置)。
+
+```yaml
+# config.yaml
+llm:
+  default: maas
+  providers:
+    maas:
+      base_url: https://api.modelarts-maas.com/openai/v1
+      api_key_env: MAAS_API_KEY
+      model: deepseek-v4-pro
+    deepseek:
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      model: deepseek-chat
+```
+
+---
+
+## 7. 核心验证点
 
 | 验证项 | 说明 |
 |--------|------|
@@ -170,7 +204,7 @@ Agent: 草拟如下：
 
 ---
 
-## 7. 开发计划
+## 8. 开发计划
 
 | Phase | 内容 | 验证点 |
 |-------|------|--------|

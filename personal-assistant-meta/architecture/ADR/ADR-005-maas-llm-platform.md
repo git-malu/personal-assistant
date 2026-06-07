@@ -1,6 +1,8 @@
 # ADR-005: 华为云 MaaS 作为 LLM 推理平台
 
-> 状态：Accepted | 日期：2026-06-03 | 修订：2026-06-03
+> 状态：Accepted (Amended by [ADR-011](ADR-011-multi-llm-provider.md)) | 日期：2026-06-03 | 修订：2026-06-07
+
+> **2026-06-07 修订**：ADR-011 引入多 LLM Provider 架构。MaaS 仍为默认/生产 provider，DeepSeek 官方作为备选 provider 共存。本 ADR 的"拒绝 DeepSeek 官方 API"改为"拒绝 DeepSeek 官方 API 作为**唯一** provider"。
 
 ---
 
@@ -51,7 +53,9 @@ MaaS 是华为云的大模型即服务平台，提供模型广场、一键部署
 
 ## 拒绝的方案
 
-### DeepSeek 官方 API 直连
+### DeepSeek 官方 API 作为唯一 provider
+
+> **Amended by ADR-011**：DeepSeek 官方 API 已作为**备选 provider** 纳入多 provider 架构，供无 VPN 的开发场景和低成本任务使用。以下原始拒绝理由适用于"作为唯一 provider"的决策。
 
 - 需要经过公网，GFW 环境下不稳定
 - 数据流向第三方，合规风险
@@ -69,10 +73,11 @@ MaaS 是华为云的大模型即服务平台，提供模型广场、一键部署
 
 ## 影响
 
-- API 端点：`https://api.modelarts-maas.com/openai/v1`
+> 本 ADR 已被 [ADR-011](ADR-011-multi-llm-provider.md) amend——引入多 provider 架构后，MaaS 降级为"默认 provider"，不再独占 LLM 调用。
+
+- MaaS API 端点：`https://api.modelarts-maas.com/openai/v1`
 - 使用 `langchain-openai` 的 `ChatOpenAI` 调用，OpenAI 兼容协议
-- 模型名称通过环境变量 `MODEL_NAME` 注入，切换模型只需改环境变量
-- AgentArts 部署配置中需配置 MaaS API Key（`MODEL_API_KEY`）
+- Provider 配置通过 `config.yaml` 的 `llm.providers.maas` 段管理，API Key 通过 `MAAS_API_KEY` 环境变量注入
 - MaaS 模型会持续更新（V3.2 → V4 已完成），ADR 不锁定具体版本
 
 ## 参考
