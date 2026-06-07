@@ -3,12 +3,10 @@ description: >-
   Primary agent for end-to-end testing across the personal-assistant ecosystem.
   Starts both Service and Client, executes cross-directory integration test
   scenarios via Hermes, and reports results. Does NOT modify implementation code.
-mode: primary
+mode: all
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
-  skills:
-    - hermes-e2e-testing
 permission:
   bash: allow
   edit: allow
