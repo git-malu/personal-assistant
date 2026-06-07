@@ -19,8 +19,8 @@ describe('MessageBubble', () => {
       render(<MessageBubble message={msg} />)
 
       const bubble = screen.getByText('Hello').closest('.max-w-\\[75\\%\\]')
-      expect(bubble).toHaveClass('bg-[#007aff]')
-      expect(bubble).toHaveClass('text-white')
+      expect(bubble).toHaveClass('bg-primary')
+      expect(bubble).toHaveClass('text-primary-foreground')
     })
 
     it('should be right-aligned', () => {
@@ -69,7 +69,7 @@ describe('MessageBubble', () => {
       render(<MessageBubble message={msg} />)
 
       const bubble = screen.getByText('Hi there').closest('.max-w-\\[75\\%\\]')
-      expect(bubble).toHaveClass('bg-[#e5e5ea]')
+      expect(bubble).toHaveClass('bg-muted')
     })
 
     it('should be left-aligned', () => {

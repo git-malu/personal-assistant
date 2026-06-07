@@ -3,7 +3,7 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for components/StreamingText.tsx</title>
+    <title>Code coverage report for components/ChatContainer.tsx</title>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../prettify.css" />
     <link rel="stylesheet" href="../base.css" />
@@ -19,13 +19,13 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../index.html">All files</a> / <a href="index.html">components</a> StreamingText.tsx</h1>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">components</a> ChatContainer.tsx</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>5/5</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>5/5</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
@@ -89,58 +89,76 @@
 <a name='L24'></a><a href='#L24'>24</a>
 <a name='L25'></a><a href='#L25'>25</a>
 <a name='L26'></a><a href='#L26'>26</a>
-<a name='L27'></a><a href='#L27'>27</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">17x</span>
-<span class="cline-any cline-yes">16x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { memo } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { LoginPlaceholder } from './LoginPlaceholder'
+import { MessageList } from './MessageList'
+import { ChatInput } from './ChatInput'
+import { useChat } from '../hooks/useChat'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 &nbsp;
-const rehypePlugins = [rehypeHighlight]
-&nbsp;
-interface StreamingTextProps {
-  text: string;
-  isStreaming: boolean;
-}
-&nbsp;
-export const StreamingText = memo(function StreamingText({
-  text,
-  isStreaming,
-}: StreamingTextProps) {
-  if (!isStreaming) {
-    return &lt;ReactMarkdown rehypePlugins={rehypePlugins}&gt;{text}&lt;/ReactMarkdown&gt;
-  }
+export function ChatContainer() {
+  const { messages, sendMessage, isStreaming, error, clearError } = useChat()
 &nbsp;
   return (
-    &lt;&gt;
-      &lt;ReactMarkdown rehypePlugins={rehypePlugins}&gt;{text}&lt;/ReactMarkdown&gt;
-      &lt;span className="cursor-blink" /&gt;
-    &lt;/&gt;
+    &lt;div className="flex flex-col h-screen max-w-[480px] mx-auto bg-background dark:bg-background"&gt;
+      &lt;LoginPlaceholder /&gt;
+      {/* Header */}
+      &lt;div className="flex-shrink-0 px-4 py-3 border-b border-border"&gt;
+        &lt;h1 className="text-lg font-semibold text-foreground"&gt;
+          Personal Assistant
+        &lt;/h1&gt;
+      &lt;/div&gt;
+      {/* Error banner */}
+      {error &amp;&amp; (
+        &lt;Alert variant="destructive" className="flex-shrink-0 rounded-none border-0"&gt;
+          &lt;AlertDescription className="flex justify-between items-center"&gt;
+            &lt;span&gt;{error}&lt;/span&gt;
+            &lt;button onClick={clearError} className="ml-2 font-bold text-lg leading-none"&gt;&amp;times;&lt;/button&gt;
+          &lt;/AlertDescription&gt;
+        &lt;/Alert&gt;
+      )}
+      &lt;MessageList messages={messages} /&gt;
+      &lt;ChatInput onSend={sendMessage} disabled={isStreaming} /&gt;
+    &lt;/div&gt;
   )
-})
+}
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->

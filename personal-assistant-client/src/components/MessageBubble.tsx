@@ -13,8 +13,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       <div
         className={`max-w-[75%] px-3 py-2 rounded-2xl break-words ${
           isUser
-            ? 'self-end bg-[#007aff] text-white rounded-bl-lg'
-            : 'self-start bg-[#e5e5ea] text-black dark:text-white rounded-br-lg'
+            ? 'self-end bg-primary text-primary-foreground rounded-bl-lg'
+            : 'self-start bg-muted text-foreground dark:text-foreground rounded-br-lg'
         }`}
       >
         <StreamingText

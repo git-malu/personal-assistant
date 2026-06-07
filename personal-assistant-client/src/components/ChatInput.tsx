@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react'
+import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
 
 interface ChatInputProps {
   onSend: (content: string) => void;
@@ -34,26 +36,26 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }
 
   return (
-    <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
+    <div className="flex-shrink-0 border-t border-border p-4">
       <div className="flex items-end gap-2">
-        <textarea
+        <Textarea
           ref={textareaRef}
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={disabled}
           placeholder="输入消息..."
-          rows={1}
-          className="flex-1 border border-[#d1d1d6] rounded-2xl p-2.5 px-4 bg-white dark:bg-gray-800 dark:text-white dark:border-gray-600 resize-none min-h-[40px] max-h-32 overflow-y-auto outline-none focus:border-[#007aff] focus:ring-1 focus:ring-[#007aff]"
+          className="min-h-[40px] max-h-32 resize-none field-sizing-fixed"
         />
-        <button
+        <Button
           onClick={handleSend}
           disabled={isSendDisabled}
           aria-label="发送消息"
-          className="flex-shrink-0 w-10 h-10 rounded-full bg-[#007aff] text-white flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#0056cc] transition-colors"
+          variant="default"
+          size="icon"
         >
           ▸
-        </button>
+        </Button>
       </div>
     </div>
   )
