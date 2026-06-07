@@ -1,11 +1,15 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 
-from app.agent_handler import AgentHandler
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+from app.agent_handler import AgentHandler  # noqa: E402
 
 
 @asynccontextmanager

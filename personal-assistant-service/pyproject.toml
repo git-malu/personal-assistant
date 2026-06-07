@@ -9,6 +9,7 @@ dependencies = [
     "langchain-openai>=0.3.0",
     "langchain-core>=0.3.0",
     "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
