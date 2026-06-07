@@ -222,3 +222,6 @@ __marimo__/
 
 # Playwright CLI
 .playwright-cli
+
+# Chainlit
+.chainlit/
