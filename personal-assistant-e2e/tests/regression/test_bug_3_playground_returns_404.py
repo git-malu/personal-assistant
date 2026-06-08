@@ -4,6 +4,10 @@ Related: personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/ (RESO
 
 BUG-3 was fixed by merging main (f51c0f7). The /playground endpoint now
 serves Chainlit content. These tests verify the fix remains in place.
+
+NOTE (refactor-2): The `test_root_still_serves_index_html` test is now
+obsolete because refactor-2 removed the StaticFiles mount — GET / now
+returns 404 by design. The playground-specific tests remain valid.
 """
 
 import httpx
@@ -25,23 +29,11 @@ class TestBug3_PlaygroundReturns404:
 
     @pytest.fixture
     def service_url(self):
-        """Start the service via ServiceProcess and return its base URL."""
-        import subprocess
-        from pathlib import Path
+        """Start the service via ServiceProcess and return its base URL.
 
-        # Ensure dist exists before starting the service
-        dist_dir = (
-            Path(__file__).resolve().parent.parent.parent.parent
-            / "personal-assistant-client" / "dist"
-        )
-        if not (dist_dir / "index.html").exists():
-            subprocess.run(
-                ["npm", "run", "build"],
-                cwd=str(dist_dir.parent),
-                check=True,
-                timeout=120,
-            )
-
+        Note (refactor-2): We no longer run `npm run build` because dist/
+        is no longer required by the service (StaticFiles was removed).
+        """
         sp = ServiceProcess(port=self.PORT)
         sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
         yield sp.url
@@ -66,8 +58,15 @@ class TestBug3_PlaygroundReturns404:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles mount removed, "
+               "GET / now returns 404 by design."
+    )
     def test_root_still_serves_index_html(self, service_url):
-        """Baseline: GET / should still serve the assistant-ui chat interface."""
+        """Baseline: GET / should still serve the assistant-ui chat interface.
+
+        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
+        """
         resp = httpx.get(f"{service_url}/")
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("content-type", "")

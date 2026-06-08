@@ -186,10 +186,9 @@ class FakeAgentHandler:
 
 @pytest.fixture
 def fake_handler():
-    """Create a FakeAgentHandler and patch AgentHandler to use it."""
+    """Create a FakeAgentHandler instance."""
     handler = FakeAgentHandler()
-    with patch("app.main.AgentHandler", return_value=handler):
-        yield handler
+    return handler
 
 
 @pytest.fixture
@@ -201,15 +200,24 @@ async def test_app_client(fake_handler):
     doesn't auto-trigger the lifespan.
 
     Must be async because ASGITransport requires httpx.AsyncClient.
+    Must import app.main first so the module exists for patching.
+    Uses patch.object with a real module reference to avoid
+    pkgutil.resolve_name errors.
     """
     os.environ.setdefault("MODEL_API_KEY", "test-key-for-e2e")
-    from app.main import app
+    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
 
-    app.state.agent_handler = fake_handler
+    # Import app.main first so the module exists for patching,
+    # then use patch.object which takes a real module reference.
+    import app.main as app_main
+    with patch.object(app_main, "AgentHandler", return_value=fake_handler):
+        from app.main import app
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+        app.state.agent_handler = fake_handler
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
 
 # ── Scenario 1: Dev Mode Startup ──────────────────────────────────────
@@ -376,15 +384,26 @@ class TestScenario2_SSEStreamingChat:
 
 
 # ── Scenario 3: Markdown Rendering (Static) ────────────────────────────
+# NOTE (refactor-2): This entire scenario is now OBSOLETE. refactor-2
+# removed the StaticFiles mount; GET / no longer serves dist/index.html.
+# Tests are skipped but preserved as historical documentation.
 
 
 @pytest.mark.feature
 @pytest.mark.slow
 class TestScenario3_MarkdownRenderingStatic:
-    """Verify production build serves assistant-ui frontend with chat interface."""
+    """Verify production build serves assistant-ui frontend with chat interface.
+
+    ALL TESTS SKIPPED after refactor-2: StaticFiles mount removed.
+    GET / now returns 404 — dist/ is no longer served by the backend.
+    """
 
     PORT = 18711
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles mount removed, "
+               "GET / now returns 404 by design."
+    )
     def test_build_and_serve_dist(self, http_client):
         """Build client, start service with dist/, verify HTML contains assistant-ui elements."""
         # Ensure dist/ exists (run build if needed)
@@ -439,8 +458,15 @@ class TestScenario3_MarkdownRenderingStatic:
         finally:
             _stop_service(proc)
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles mount removed, "
+               "static assets are no longer served by the backend."
+    )
     def test_static_assets_are_served(self, http_client):
-        """Bundled JS and CSS assets are served from /assets/."""
+        """Bundled JS and CSS assets are served from /assets/.
+
+        SKIPPED: refactor-2 removed StaticFiles.
+        """
         # Verify dist exists first
         if not (DIST_DIR / "index.html").exists():
             pytest.skip("dist/ not built — run npm run build first")
@@ -729,26 +755,27 @@ class TestScenario7_ChainlitCoexistence:
 @pytest.mark.feature
 @pytest.mark.slow
 class TestScenario8_StaticFilesMount:
-    """Verify StaticFiles mount serves dist/ and API routes take priority."""
+    """Verify StaticFiles mount serves dist/ and API routes take priority.
+
+    NOTE (refactor-2): The StaticFiles mount is removed. `test_root_serves_index_html`
+    and `test_spa_fallback_serves_index_html` are skipped. The remaining API-level
+    tests (ping, stream, invocations) still pass because API routes continue to work.
+    """
 
     PORT = 18713
 
-    @pytest.fixture(autouse=True)
-    def _ensure_dist(self):
-        """Ensure dist/ exists before running these tests."""
-        if not (DIST_DIR / "index.html").exists():
-            result = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=str(CLIENT_DIR),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                pytest.skip(f"npm run build failed: {result.stderr[-300:]}")
+    # NOTE (refactor-2): _ensure_dist fixture removed — the 2 dist-dependent
+    # tests are skipped, and the remaining 3 API tests don't need dist/.
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles mount removed, "
+               "GET / now returns 404 by design."
+    )
     def test_root_serves_index_html(self, http_client):
-        """GET / returns dist/index.html with 200 and text/html."""
+        """GET / returns dist/index.html with 200 and text/html.
+
+        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
+        """
         proc = _start_service(self.PORT)
         try:
             resp = http_client.get(f"http://127.0.0.1:{self.PORT}/")
@@ -793,15 +820,15 @@ class TestScenario8_StaticFilesMount:
         finally:
             _stop_service(proc)
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles/SPA fallback removed. "
+               "Bug-2 (SPA fallback) is now invalid by design — GET /chat returns 404."
+    )
     def test_spa_fallback_serves_index_html(self, http_client):
         """SPA fallback: verify /chat path serves index.html.
 
-        Uses @pytest.mark.xfail(strict=True): while bug-2 exists, this test
-        fails with AssertionError (404 != 200) → XFAIL. When bug-2 is fixed,
-        it will pass → XPASS(strict) → alerts developers to drop the xfail
-        marker.
-
-        Bug: personal-assistant-meta/issues/bugs/bug-2-spa-fallback-not-working/
+        SKIPPED: refactor-2 removed StaticFiles and SPA fallback entirely.
+        Bug-2 is now invalid — SPA fallback was removed by design.
         """
         proc = _start_service(self.PORT)
         try:

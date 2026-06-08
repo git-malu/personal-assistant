@@ -290,8 +290,15 @@ class TestScenario1_DefaultProviderMaaS:
         finally:
             _stop_service(proc)
 
+    @pytest.mark.skip(
+        reason="Obsolete after refactor-2: StaticFiles mount removed, "
+               "GET / now returns 404 by design."
+    )
     def test_static_files_endpoint_serves_html(self, http_client):
-        """GET / returns HTML (static files served)."""
+        """GET / returns HTML (static files served).
+
+        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
+        """
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
