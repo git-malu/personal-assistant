@@ -1,11 +1,23 @@
 ---
-status: backlog
+status: fixed
 related: feat/web-chat-frontend
 discovered_by: personal-assistant-e2e-tester
 discovered_at: 2026-06-08 E2E test session for Feature 1.1
+fixed_by: personal-assistant-manager (pipeline)
+fixed_at: 2026-06-08
+fix_branch: fix/spa-fallback
+fix_commits:
+  - 725ec0c  # plan
+  - 467f16c  # implementation: SPAFallbackMiddleware + unit tests
+  - 67a8b67  # e2e: remove xfail markers
+resolution: |
+  采用 Middleware 拦截 404 方案。新增 SPAFallbackMiddleware（Starlette BaseHTTPMiddleware），
+  在 StaticFiles 返回 404 时将响应替换为 index.html。skip_prefixes=("/api/", "/playground")
+  确保 API 和 Playground 路由不受影响。移除 html=True 参数。
+  Service 单元测试 63 pass / E2E 回归 + 功能测试 5 pass。
 ---
 
-# Bug 2: SPA Fallback Not Working (StaticFiles html=True)
+# Bug 2: SPA Fallback Not Working (StaticFiles html=True) — ✅ FIXED
 
 ## 现象 (Symptoms)
 
