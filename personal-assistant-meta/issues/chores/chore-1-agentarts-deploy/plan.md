@@ -6,14 +6,19 @@
 
 ## 0. Issue Evaluation
 
+> **Re-evaluation date**: 2026-06-08. Original evaluation confirmed; minor updates for ADR-011 awareness.
+
 | 维度 | 结果 | 说明 |
 |------|------|------|
-| Staleness | ✅ | 所有引用的架构文档（`cicd.md`、`agentarts.md`、`overall_architecture.md`、`infra/AGENTS.md`）均存在且内容匹配当前设计。`refactor/refactor-1-consolidate-ping-routes` 和 `refactor/refactor-2-remove-web-chat-static-serving` 均已合并。当前 `app/main.py` 中 root-level `/ping`（L42）和 `/invocations`（L48）handlers 已存在，且无 Web Chat 静态文件服务残留 |
-| Feasibility | ✅ | 部署路径明确：Docker build → SWR push → agentarts launch → smoke test（后端）+ vite build → obsutil cp → OBS 静态网站（前端）。CORS 中间件为标准 FastAPI 模式。无 ADR 冲突 |
-| Completeness | ✅ | Issue 包含 12 个任务拆解，覆盖后端部署、CORS 配置、前端构建、OBS 部署、前后端冒烟验证。pitfalls 覆盖 ARM64、OCI 格式、SPA 路由回退、CORS、缓存策略、OBS 工具选择等 |
-| Impact Scope | ✅ | **Service**：CORS 中间件添加（`app/main.py`）。**Client**：Vite 构建 + OBS 上传。**Infra**：OBS Bucket 创建（IaC 或手动）。**Meta**：无变更。跨域部署链路：OBS（前端）→ CORS → AgentArts Runtime（后端） |
+| Staleness | ✅ | 所有引用的架构文档（`cicd.md` v0.1, `agentarts.md` 2026-06-02, `overall_architecture.md` v0.3, `ADR-004`, `infra/AGENTS.md`）均存在且内容匹配当前设计。`refactor-1-consolidate-ping-routes` 和 `refactor-2-remove-web-chat-static-serving` 均在 `resolved/` 且已合并。当前 `app/main.py` 中 root-level `/ping`（L42）和 `/invocations`（L48）handlers 已存在，CORSMiddleware 尚未添加（需执行 §2.5）。`.agentarts_config.yaml` 中 entrypoint 不一致（§16.5）、MODEL_API_KEY 冗余（§16.7，ADR-011 已确认废弃）、artifact_source.commands 冗余（§16.8）均已在 plan pitfalls 中文档化 |
+| Feasibility | ✅ | 部署路径明确：Docker build（ARM64）→ SWR push → agentarts launch → smoke test（后端）+ vite build → obsutil cp → OBS 静态网站（前端）。CORS 中间件为标准 FastAPI 模式。无 ADR 冲突——ADR-004 支持 FastAPI 方案，ADR-006 支持 CDKTF IaC 路径，ADR-011 不影响部署流程（仅确认 MODEL_API_KEY 废弃，与 §16.7 判断一致） |
+| Completeness | ✅ | Issue 包含 12 个任务拆解，覆盖后端部署、CORS 配置、前端构建、OBS 部署、前后端冒烟验证。plan 额外提供：§2 前置检查、§15 回滚计划、§16 14 项 pitfalls troubleshooting、§17 Mermaid 序列图、§18 最终验证清单、§19 9 项后续 cleanup 任务 |
+| Impact Scope | ✅ | **Service**：CORS 中间件添加（`app/main.py`，仅 2 行 import + 8 行 add_middleware 调用）。**Client**：Vite 构建 + OBS 上传。**Infra**：OBS Bucket 创建（IaC CDKTF 或手动）。**Meta**：无变更。跨域部署链路：OBS（前端）→ CORS → AgentArts Runtime（后端）。无跨层耦合风险 |
 
-**判定：ACCEPT** → 继续编写 Implementation Plan。
+**判定：ACCEPT** → Plan 仍然有效，无需结构性修改。以下为确认记录（非 plan 修改项）：
+
+- **ADR-011 影响**：`MODEL_API_KEY` 已被正式废弃（`config.yaml` 中 `maas` provider 仅引用 `MAAS_API_KEY`）。Plan §16.7 的「保留（无害），后续移除」判断与 ADR-011 结论一致。`MODEL_URL` / `MODEL_NAME` 仍可做 fallback（ADR-011 §99-101），plan smoke test 不受影响。
+- **feature-9-deployment**：仍为 `backlog` 状态，与此 chore 无依赖关系。
 
 ---
 
