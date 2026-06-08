@@ -1,6 +1,6 @@
 # Features
 
-Personal Assistant 开发计划，13 个 Feature（含 1 个基础设施前置 Feature + 12 个 Phase Feature）。
+Personal Assistant 开发计划，15 个 Feature（含 1 个基础设施前置 Feature + 14 个 Phase Feature）。
 
 渠道策略：Web Chat → 飞书 → OfficeClaw。用浏览器快速验证 Agent 核心能力，再接入企业内部 IM 和微信。
 
@@ -22,6 +22,7 @@ Personal Assistant 开发计划，13 个 Feature（含 1 个基础设施前置 F
 | [8](feature-8-sts-tool.md) | 云资源 Tool (STS) | Agent 访问 OBS 等云资源 | Feature 1, 4, 1.2 | backlog |
 | [9](feature-9-deployment.md) | 部署上线 + 可观测 | 生产环境 + 三渠道验证 | Feature 1-8, 1.1, 1.2, 10 | backlog |
 | [10](feature-10-outbound-email-obs/issue.md) | Outbound Email + OBS（AgentArts Python SDK） | 邮件处理（Microsoft Graph）+ OBS 文件查询（STS） | Feature 1, 2, 4, 1.2, 8 | backlog |
+| [11](feature-11-github-workflow-terraform-deploy/issue.md) | GitHub Workflow + Terraform 自动化部署 | CI/CD 流水线（GitHub Actions + CDKTF + docker buildx），Client（OBS+CDN）+ Service（AgentArts）自动部署 | Feature 1, 1.1, 1.2, 9 | backlog |
 
 ## 依赖关系
 
@@ -52,6 +53,8 @@ flowchart TD
     F7 --> F9
     F8 --> F9
     F10 --> F9
+    F1_1 --> F11[\"Feature 11: CI/CD 自动化部署\"]
+    F9 --> F11
 ```
 
 ## 渠道上线顺序
@@ -93,6 +96,7 @@ gantt
 
     section 收尾
     F9  部署上线 + 可观测            :milestone, after f10, 0d
+    F11  CI/CD 自动化部署             :f11, after f9, 14d
 ```
 
 > F1.1 和 F1.2 在 F1 完成后即可并行推进，互不阻塞。F2、F5 也可同步进行。瓶颈在 F1.2 → F4 链路上（因 F4 依赖 1.2 的表结构，F6-8 又依赖 F4）。F10 在 F8（STS 基础设施）完成后开始，复用 F8 的 STS Provider。F3 是纯配置工作，放在 Memory 之后做是因为需要验证跨渠道 Memory。
