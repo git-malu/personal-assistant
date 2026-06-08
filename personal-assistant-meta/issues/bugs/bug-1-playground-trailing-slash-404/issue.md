@@ -1,8 +1,14 @@
 ---
-status: backlog
+status: closed
 related: feat/chainlit-playground
 discovered_by: personal-assistant-e2e-tester
 discovered_at: 2026-06-07 E2E test session for Feature 1.4
+resolved_by: personal-assistant-e2e-tester
+resolved_at: 2026-06-08 E2E regression verification
+resolution: >-
+  修复已确认。app/main.py L97-100 添加了显式 redirect route，
+  GET /playground 返回 307 Temporary Redirect → /playground/。
+  单元测试 + 回归测试 + Hermes E2E 全部通过。
 ---
 
 # Bug 1: GET /playground (无 trailing slash) 返回 404
