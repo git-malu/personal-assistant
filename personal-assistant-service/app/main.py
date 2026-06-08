@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
+from app.spa_middleware import SPAFallbackMiddleware  # noqa: E402
 
 
 @asynccontextmanager
@@ -115,10 +116,6 @@ mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), pat
 # mount, so FastAPI matches them first. Chainlit /playground is also registered
 # before this line, guaranteeing it won't be shadowed.
 #
-# html=True: enables SPA fallback — any path not matching a physical file serves
-# index.html, allowing React Router (or equivalent) to handle client-side routing.
-# This is required for assistant-ui's client-side navigation (e.g. /chat, /settings).
-# ---------------------------------------------------------------------------
 _proj_root = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = _proj_root / "personal-assistant-client" / "dist"
 if not STATIC_DIR.is_dir():
@@ -127,9 +124,10 @@ if not STATIC_DIR.is_dir():
 if STATIC_DIR.is_dir():
     app.mount(
         "/",
-        StaticFiles(directory=str(STATIC_DIR), html=True),
+        StaticFiles(directory=str(STATIC_DIR)),
         name="web-chat",  # distinct from future Chainlit mount name to avoid collision
     )
+    app.add_middleware(SPAFallbackMiddleware, static_dir=STATIC_DIR)
 else:
     logger.warning(
         f"前端构建产物目录不存在（已尝试: {_proj_root / 'personal-assistant-client' / 'dist'}, dist/）。"

@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -560,3 +561,52 @@ class TestAgentHandlerSingletonIntegration:
         assert stored is from_singleton, (
             "app.state.agent_handler must be the singleton instance"
         )
+
+
+# ---------------------------------------------------------------------------
+# SPA Fallback Middleware
+# ---------------------------------------------------------------------------
+
+
+class TestSPAFallbackMiddleware:
+    """Tests for SPAFallbackMiddleware that serves index.html for client-side routes."""
+
+    @pytest.mark.asyncio
+    async def test_spa_fallback_serves_index_html(self, client):
+        """GET /chat (client-side route, no physical file) should serve index.html."""
+        response = await client.get("/chat")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Personal Assistant" in response.text
+        assert 'id="root"' in response.text
+
+    @pytest.mark.asyncio
+    async def test_api_routes_bypass_fallback(self, client):
+        """GET /api/ping should return normal JSON, not index.html."""
+        response = await client.get("/api/ping")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+        assert "Personal Assistant" not in response.text
+
+    @pytest.mark.asyncio
+    async def test_playground_bypasses_fallback(self, client):
+        """GET /playground should NOT return index.html (redirect or Chainlit UI)."""
+        response = await client.get("/playground")
+        # Should be a 307 redirect, not index.html content
+        assert response.status_code == 307
+        assert "Personal Assistant" not in response.text
+
+    @pytest.mark.asyncio
+    async def test_404_passthrough_when_no_index_html(self, client):
+        """When index.html doesn't exist, middleware should not replace 404."""
+        original_exists = Path.exists
+
+        def mock_exists(self):
+            # Only affect index.html existence check inside middleware
+            if self.name == "index.html":
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", mock_exists):
+            response = await client.get("/chat")
+            assert response.status_code == 404
