@@ -91,7 +91,7 @@ def _start_service(
                 f"Service exited with code {proc.returncode}: {stderr_text}"
             )
         try:
-            resp = httpx.get(f"http://127.0.0.1:{port}/api/ping", timeout=2.0)
+            resp = httpx.get(f"http://127.0.0.1:{port}/ping", timeout=2.0)
             if resp.status_code == 200:
                 return proc
         except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -196,12 +196,12 @@ class TestScenario1_DefaultProviderMaaS:
     PORT = 18701
 
     def test_service_starts_and_ping_responds(self, http_client):
-        """Service starts with MAAS_API_KEY, /api/ping returns 200."""
+        """Service starts with MAAS_API_KEY, /ping returns 200."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
             data = resp.json()
             assert data == {"status": "ok"}
@@ -209,13 +209,13 @@ class TestScenario1_DefaultProviderMaaS:
             _stop_service(proc)
 
     def test_api_invocations_endpoint_structure(self, http_client):
-        """POST /api/invocations: verify HTTP plumbing (dummy key → LLM may fail, but response structure is correct)."""
+        """POST /invocations: verify HTTP plumbing (dummy key → LLM may fail, but response structure is correct)."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
             )
             # With dummy key, LLM may return error → 500, but the
@@ -232,13 +232,13 @@ class TestScenario1_DefaultProviderMaaS:
             _stop_service(proc)
 
     def test_api_invocations_empty_message_returns_400(self, http_client):
-        """POST /api/invocations with empty message returns 400."""
+        """POST /invocations with empty message returns 400."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": ""},
             )
             assert resp.status_code == 400
@@ -247,13 +247,13 @@ class TestScenario1_DefaultProviderMaaS:
             _stop_service(proc)
 
     def test_api_invocations_missing_message_returns_400(self, http_client):
-        """POST /api/invocations without message field returns 400."""
+        """POST /invocations without message field returns 400."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={},
             )
             assert resp.status_code == 400
@@ -342,20 +342,20 @@ llm:
             "DEEPSEEK_API_KEY": "dummy-deepseek-e2e-key",
         })
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
             assert resp.json() == {"status": "ok"}
         finally:
             _stop_service(proc)
 
     def test_deepseek_invocations_endpoint(self, http_client):
-        """POST /api/invocations works with deepseek provider (HTTP plumbing test)."""
+        """POST /invocations works with deepseek provider (HTTP plumbing test)."""
         proc = _start_service(self.PORT, env={
             "DEEPSEEK_API_KEY": "dummy-deepseek-e2e-key",
         })
         try:
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "你好，DeepSeek"},
                 headers={"X-AgentArts-User-Id": "test-user"},
             )
@@ -415,7 +415,7 @@ class TestScenario3_ConfigFallback:
             "MODEL_URL": "https://test.api.example.com/v1",
         })
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
             assert resp.json() == {"status": "ok"}
         finally:
@@ -427,11 +427,11 @@ class TestScenario3_ConfigFallback:
             "MODEL_API_KEY": "dummy-fallback-key",
         })
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
 
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
             )
             assert resp.status_code in (200, 500)
@@ -444,7 +444,7 @@ class TestScenario3_ConfigFallback:
             "MODEL_API_KEY": "dummy-key",
         })
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
         finally:
             _stop_service(proc)

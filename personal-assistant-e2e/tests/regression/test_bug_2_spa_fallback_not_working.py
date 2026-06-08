@@ -76,6 +76,6 @@ class TestBug2_SPAFallbackNotWorking:
 
     def test_api_routes_still_work_with_static_mount(self, service_url):
         """API routes must still work even when SPA fallback is broken."""
-        resp = httpx.get(f"{service_url}/api/ping")
+        resp = httpx.get(f"{service_url}/ping")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}

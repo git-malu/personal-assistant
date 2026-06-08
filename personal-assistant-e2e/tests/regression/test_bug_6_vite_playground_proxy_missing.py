@@ -186,8 +186,8 @@ class TestBug6_VitePlaygroundProxyMissing:
     # ── Sanity checks ─────────────────────────────────────────────────
 
     def test_api_proxy_still_works(self, dev_urls):
-        """Sanity: /api/ping proxy (existing rule) should still work."""
-        resp = httpx.get(f"{dev_urls['vite_url']}/api/ping")
+        """Sanity: /ping proxy (existing rule) should still work."""
+        resp = httpx.get(f"{dev_urls['vite_url']}/ping")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
