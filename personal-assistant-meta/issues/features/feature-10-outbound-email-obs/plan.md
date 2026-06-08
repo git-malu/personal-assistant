@@ -1,6 +1,6 @@
 # Feature 10: Outbound Email + OBS — 实施计划
 
-> 版本：v1.3 | 日期：2026-06-08 | 对应 Issue：`issue.md` | 修订：Chainlit 本地调试 + 移除 Feature 4 依赖
+> 版本：v1.4 | 日期：2026-06-08 | 对应 Issue：`issue.md` | 修订：Chainlit 本地调试 + 移除 Feature 4 依赖 + 修复 #1-#6 审查意见
 
 ---
 
@@ -172,7 +172,7 @@ sequenceDiagram
 | 用户在 Drafts 中有多个草稿 | Agent 始终取 `list_emails(folder="drafts", limit=1)` 返回的最新一条 |
 | 用户说"修改"而非"发送" | Agent 获取最新草稿 → 提取 `original_email_id` → 重新调用 `draft_reply` → 展示新版本并等待确认 |
 | 用户直接说"发送"无前文（首次对话） | Agent 因 Drafts 中无相关草稿，回复"我没有找到之前草拟的邮件内容，请问你想发送什么？" |
-| 用户要求发新邮件（非回复） | `draft_reply` 仅用于回复场景；新邮件由 Agent 在回复中直接构造内容展示，用户确认后调用 `send_email`（同流程） |
+| 用户要求发新邮件（非回复） | **MVP 限制**：`draft_reply` 需要 `original_email_id`，仅用于回复场景。对于新邮件（无原始邮件 ID），Agent 在当前 `/invocations` 调用中直接构造邮件内容展示给用户确认，并在回复中提示用户在同一轮对话中说"发送"。由于 Drafts 文件夹中没有对应草稿，用户说"发送"后 Agent 从**当前对话历史**中提取邮件内容（而非 Drafts 文件夹）。此流程依赖 LLM 的记忆能力（`messages` 数组在当前调用内保留），**不支持跨 `/invocations` 的 Guard 确认**——即新邮件场景中必须在同一轮对话中完成"展示确认 → 发送"。若后续需要跨调用的新邮件 Guard，可新增 `draft_new(to, subject, body)` 工具通过 `POST /me/messages` 创建独立草稿存入 Drafts 文件夹，或等待 Feature 2（Memory）就绪后用 `interrupt()` 实现。 |
 
 > **与 deepagents HITL 的关系**：deepagents 底层 LangGraph 支持 `interrupt()` 的 Human-in-the-Loop 原生确认流程。当前 MVP 使用 Drafts 文件夹方案因其零依赖且足够简单。若后续 Memory 功能就绪，可升级为 `interrupt()` 机制以支持更丰富的确认交互（如修改特定字段、带按钮的确认 UI）。
 
@@ -183,11 +183,12 @@ sequenceDiagram
 **架构**：
 
 ```
-chainlit_app.py  ──→  AgentHandler(local_mode=True)
+chainlit_app.py  ──→  AgentHandler()
                           │
                           ├──→ create_deep_agent(model, system_prompt, tools=[...])
                           │         │
-                          │         └──→ 工具函数（本地 auth fallback）
+                          │         └──→ 工具函数（本地 auth fallback：
+                          │               if access_token is None → DeviceCodeCredential）
                           │
                           └──→ 硬编码用户：TEST_USER_ID = "dev-user@personal-assistant.local"
 ```
@@ -217,16 +218,27 @@ TEST_USER_ID = "dev-user@personal-assistant.local"
 
 @cl.on_chat_start
 async def start():
-    agent = AgentHandler(local_mode=True)
+    agent = AgentHandler()
     cl.user_session.set("agent", agent)
     cl.user_session.set("user_id", TEST_USER_ID)
 
 @cl.on_message
 async def on_message(message: cl.Message):
     agent = cl.user_session.get("agent")
-    response = await agent.handle(message.content)
+    response = await agent.handle(message.content, user_id=TEST_USER_ID)
     await cl.Message(content=response).send()
 ```
+
+> **设计说明**：`chainlit_app.py` 不需要 `local_mode` 参数。工具函数内部通过 `if access_token is None` 自动检测本地环境并 fallback 到 `DeviceCodeCredential`；Production 环境下 `@require_access_token` 装饰器确保 token 不为 `None`，fallback 分支永不触发。AgentHandler 的初始化逻辑完全不变——始终创建相同的 `create_deep_agent(...)`，auth 差异由工具函数自行处理。
+
+**与 `app/playground.py` 的关系**：当前代码库已有 `app/playground.py`，通过 `mount_chainlit` 挂载在 FastAPI 进程内的 `/playground` 路径上，用于集成/测试环境。`chainlit_app.py` 是一个**独立的**本地调试入口，通过 `chainlit run chainlit_app.py` 启动，完全不依赖 FastAPI / `main.py`：
+
+| 入口 | 启动方式 | 依赖 FastAPI | 用户身份 | 适用场景 |
+|------|---------|:---:|------|------|
+| `chainlit_app.py` | `chainlit run chainlit_app.py` | ❌ | 硬编码 `dev-user@...` | 快速本地迭代、工具调试 |
+| `app/playground.py` | FastAPI → `mount_chainlit` | ✅ | `main.py` 注入 | 集成/预发布环境 |
+
+两者共存、互不冲突。`chainlit_app.py` 不使用 `get_agent_handler()` 单例（它不在 FastAPI 进程中），而是直接实例化 `AgentHandler()`。
 
 **工具函数的 Local Dev Fallback**（以 `list_emails` 为例）：
 
@@ -270,9 +282,10 @@ personal-assistant-service/
 ├── pyproject.toml                  # [MODIFY] 新增依赖：agentarts-sdk, esdk-obs-python；dev 依赖：chainlit, azure-identity
 ├── uv.lock                         # [AUTO] 由 uv sync 重新生成
 ├── config.yaml                     # [MODIFY] 添加 OBS 相关配置（endpoint、sts-provider-name）
-├── chainlit_app.py                 # [NEW] Chainlit 本地调试入口（硬编码用户 + local auth）
+├── chainlit_app.py                 # [NEW] Chainlit 本地调试入口（硬编码用户 + local auth fallback，独立于 FastAPI）
 ├── app/
 │   ├── __init__.py                 # [EXISTING]
+│   ├── playground.py               # [EXISTING — no change] Chainlit 集成入口（通过 mount_chainlit 挂载在 /playground）
 │   ├── agent_handler.py            # [MODIFY] system prompt 扩展 + tools 列表更新
 │   └── tools/                      # [NEW] 工具目录
 │       ├── __init__.py             # [NEW] 包标记
@@ -815,7 +828,7 @@ OBS_ENDPOINT, OBS_STS_PROVIDER_NAME = _load_obs_config()
 | 现有路由 | 工具如何触发 | 说明 |
 |----------|------------|------|
 | `POST /invocations` | 用户消息 → LLM 识别意图 → 调用工具 | 非流式，工具结果包裹在 `{"response": "..."}` 中 |
-| `GET /api/chat/stream` | 同上，最终响应通过 SSE 流式推送 | SSE 流仅推送 `on_chat_model_stream` 事件（LLM 逐 token 输出），工具调用的结果在 LLM 处理完 tool result 后的 token 流中自然融入。若需在前端展示 "Agent 正在调用工具..." 状态，需在 `handle_stream()` 中额外处理 `on_tool_start`/`on_tool_end` 事件（本 MVP 不做，后续 Feature 可扩展） |
+| `GET /api/chat/stream` | 同上，最终响应通过 SSE 流式推送 | SSE 流仅推送 `on_chat_model_stream` 事件（LLM 逐 token 输出），工具调用的结果在 LLM 处理完 tool result 后的 token 流中自然融入。若需在前端展示 "Agent 正在调用工具..." 状态，需在 `handle_stream()` 中额外处理 `on_tool_start`/`on_tool_end` 事件（本 MVP 不做，后续 Feature 可扩展）。<br><br>**注意**：工具执行期间（如 Graph API 拉取 50 封邮件），SSE 流会暂停推送 token，直到工具完成并将结果返回 LLM 后才恢复。对 MVP 场景可接受；后续可考虑发送 `on_tool_start`/`on_tool_end` 进度事件改善体验。 |
 
 ### 5.2 OpenAPI Spec 影响
 
@@ -1076,9 +1089,9 @@ print("✅ huaweicloud-sts-provider created successfully")
 
 | # | 验证项 | 命令/操作 | 预期结果 |
 |---|--------|----------|----------|
-| V6 | Agent 可识别邮件工具 | 用户："你能帮我查邮件吗？" | Agent 回复中提到可以查收件箱、搜索邮件等 |
-| V7 | Agent 可识别 OBS 工具 | 用户："你能查看云存储里的文件吗？" | Agent 回复中提到可以列出和读取 OBS 文件 |
-| V8 | 工具列表正确 | 检查 `agent_handler.py` 中 `tools=[...]` 列表 | 包含 8 个工具函数 |
+| V7 | Agent 可识别邮件工具 | 用户："你能帮我查邮件吗？" | Agent 回复中提到可以查收件箱、搜索邮件等 |
+| V8 | Agent 可识别 OBS 工具 | 用户："你能查看云存储里的文件吗？" | Agent 回复中提到可以列出和读取 OBS 文件 |
+| V9 | 工具列表正确 | 检查 `agent_handler.py` 中 `tools=[...]` 列表 | 包含 8 个工具函数 |
 
 ### 9.3 E2E 验证（参见 §5 E2E 验证场景）
 
@@ -1095,9 +1108,9 @@ print("✅ huaweicloud-sts-provider created successfully")
 
 | # | 验证项 | 操作 | 预期结果 |
 |---|--------|------|----------|
-| V9 | 工具错误不导致 Agent 崩溃 | 故意传无效 email_id | Agent 返回友好错误信息，继续对话 |
-| V10 | 装饰器缺少凭据时友好提示 | m365-provider 未授权时查邮件 | Agent 返回 "需要先授权 Microsoft 365 访问" 而非 500 |
-| V11 | system prompt 中 Guard 规则生效 | 参见 E8 | Agent 不跳过草拟确认步骤 |
+| V10 | 工具错误不导致 Agent 崩溃 | 故意传无效 email_id | Agent 返回友好错误信息，继续对话 |
+| V11 | 装饰器缺少凭据时友好提示 | m365-provider 未授权时查邮件 | Agent 返回 "需要先授权 Microsoft 365 访问" 而非 500 |
+| V12 | system prompt 中 Guard 规则生效 | 参见 E8 | Agent 不跳过草拟确认步骤 |
 
 ---
 
