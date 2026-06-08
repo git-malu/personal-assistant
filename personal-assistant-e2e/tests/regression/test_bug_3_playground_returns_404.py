@@ -62,7 +62,7 @@ class TestBug3_PlaygroundReturns404:
         for _ in range(3):
             httpx.get(f"{service_url}/playground", follow_redirects=False)
         # After /playground calls, ping should still work
-        resp = httpx.get(f"{service_url}/api/ping")
+        resp = httpx.get(f"{service_url}/ping")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 

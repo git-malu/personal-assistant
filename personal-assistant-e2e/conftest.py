@@ -137,7 +137,7 @@ class ServiceProcess:
                     f"{stderr.decode(errors='replace')[-500:]}"
                 )
             try:
-                resp = httpx.get(f"{self.url}/api/ping", timeout=2.0)
+                resp = httpx.get(f"{self.url}/ping", timeout=2.0)
                 if resp.status_code == 200:
                     return  # Success
             except (httpx.ConnectError, httpx.TimeoutException):

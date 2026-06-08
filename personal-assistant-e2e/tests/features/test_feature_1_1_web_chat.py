@@ -18,7 +18,7 @@ Test scenarios from plan:
   5. Error Handling — Empty query returns proper error
   6. Production Build — npm run build generates dist/
   7. Chainlit Coexistence — /playground endpoint availability
-  8. StaticFiles Mount — /, /api/ping, /api/chat/stream all work
+  8. StaticFiles Mount — /, /ping, /api/chat/stream all work
 """
 
 import json
@@ -102,7 +102,7 @@ def _start_service(
                 f"Service exited with code {proc.returncode}: {stderr_text}"
             )
         try:
-            resp = httpx.get(f"http://127.0.0.1:{port}/api/ping", timeout=2.0)
+            resp = httpx.get(f"http://127.0.0.1:{port}/ping", timeout=2.0)
             if resp.status_code == 200:
                 return proc
         except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -716,7 +716,7 @@ class TestScenario7_ChainlitCoexistence:
                 )
 
             # After /playground calls, main endpoints still work
-            ping = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            ping = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert ping.status_code == 200
             assert ping.json() == {"status": "ok"}
         finally:
@@ -767,10 +767,10 @@ class TestScenario8_StaticFilesMount:
             _stop_service(proc)
 
     def test_api_ping_takes_priority_over_static(self, http_client):
-        """GET /api/ping returns 200 JSON — API routes override static mount."""
+        """GET /ping returns 200 JSON — API routes override static mount."""
         proc = _start_service(self.PORT)
         try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/api/ping")
+            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/ping")
             assert resp.status_code == 200
             data = resp.json()
             assert data == {"status": "ok"}
@@ -819,11 +819,11 @@ class TestScenario8_StaticFilesMount:
             _stop_service(proc)
 
     def test_api_invocations_works_with_static_mounted(self, http_client):
-        """POST /api/invocations endpoint works alongside static files."""
+        """POST /invocations endpoint works alongside static files."""
         proc = _start_service(self.PORT)
         try:
             resp = http_client.post(
-                f"http://127.0.0.1:{self.PORT}/api/invocations",
+                f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
             )
             # With dummy key, may get 500 from LLM, but the endpoint exists
