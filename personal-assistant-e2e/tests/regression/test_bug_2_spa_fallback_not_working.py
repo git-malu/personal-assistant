@@ -59,10 +59,6 @@ class TestBug2_SPAFallbackNotWorking:
         assert "text/html" in resp.headers.get("content-type", "")
         assert "Personal Assistant" in resp.text
 
-    @pytest.mark.xfail(
-        reason="BUG-2: StaticFiles(html=True) does not provide SPA fallback in Starlette 1.2.1. "
-               "See personal-assistant-meta/issues/bugs/bug-2-spa-fallback-not-working/"
-    )
     def test_chat_route_serves_index_html(self, service_url):
         """GET /chat should serve index.html (SPA fallback). Currently FAILS with 404."""
         resp = httpx.get(f"{service_url}/chat")
@@ -71,9 +67,6 @@ class TestBug2_SPAFallbackNotWorking:
         assert "Personal Assistant" in resp.text
         assert 'id="root"' in resp.text
 
-    @pytest.mark.xfail(
-        reason="BUG-2: StaticFiles(html=True) does not provide SPA fallback in Starlette 1.2.1."
-    )
     def test_settings_route_serves_index_html(self, service_url):
         """GET /settings should serve index.html (SPA fallback). Currently FAILS with 404."""
         resp = httpx.get(f"{service_url}/settings")

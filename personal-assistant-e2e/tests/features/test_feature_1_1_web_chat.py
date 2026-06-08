@@ -793,10 +793,6 @@ class TestScenario8_StaticFilesMount:
         finally:
             _stop_service(proc)
 
-    @pytest.mark.xfail(
-        reason="BUG-2: SPA fallback broken in Starlette 1.2.1 StaticFiles html=True",
-        strict=True,
-    )
     def test_spa_fallback_serves_index_html(self, http_client):
         """SPA fallback: verify /chat path serves index.html.
 
