@@ -1,8 +1,15 @@
 ---
-status: backlog
+status: done
 related: bug-3-playground-returns-404 (commit f51c0f7)
 discovered_by: personal-assistant-e2e-tester
 discovered_at: 2026-06-08 E2E re-run for Feature 1.1
+resolved_by: personal-assistant-manager
+resolved_at: 2026-06-08
+resolution: |
+  Fixed in commit 46d6b58.
+  将 mount_chainlit 的 target 参数从相对路径 "app/playground.py" 改为 Path(__file__).parent / "playground.py"，
+  使用模块自定位消弭 CWD 敏感性。
+  验证: playground.py 路径恒解析为 <SERVICE_DIR>/app/playground.py（绝对路径），文件存在。
 ---
 
 # Bug 4: `mount_chainlit` relative path breaks module import from outside SERVICE_DIR
