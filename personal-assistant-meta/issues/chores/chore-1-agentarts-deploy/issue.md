@@ -4,45 +4,44 @@ status: backlog
 
 # Chore 1: 首次部署至 AgentArts Runtime 生产环境 + 前端 OBS 部署
 
-将 Personal Assistant 服务首次部署到 AgentArts Runtime（`cn-southwest-2`），同时将 Web Chat 前端部署到 OBS 静态托管。打通**容器构建 → SWR 推送 → Runtime 启动** + **前端构建 → OBS 上传 → CORS 验证**的完整链路。
+将 Personal Assistant 服务首次部署到 AgentArts Runtime（`cn-southwest-2`），同时将 Web Chat 前端部署到 OBS 静态托管。打通 **容器构建 → SWR 推送 → Runtime 启动** + **前端构建 → OBS 上传 → CORS 验证** 的完整链路。
 
 ---
 
 ## 背景
 
-项目已完成核心骨架开发（Feature 1 Agent Skeleton）和 Web Chat 前端工程化（Feature 1.1），`.agentarts_config.yaml` 和 `Dockerfile` 均已就位。按部署三阶段方案：
+项目已完成核心骨架开发（Feature 1 Agent Skeleton）和 Web Chat 前端工程化（Feature 1.1），`.agentarts_config.yaml` 和 `Dockerfile` 均已就位。当前服务架构：
 
-| Phase | 前端托管 | 说明 |
-|-------|---------|------|
-| **Phase 1** | 同容器 serve（`StaticFiles` mount `dist/`） | 已验证，开发期使用 |
-| **Phase 2**（当前） | OBS 静态托管（无 CDN） | 需 CORS 配置，前端跨域访问后端 |
-| Phase 3（未来） | OBS + CDN + 自定义域名 | 同域零跨域，CDN 按路径回源 `/api/*`→容器 `/*`→OBS |
+- **FastAPI**：提供 `/ping` 健康检查、`/invocations` 同步调用、`/api/chat/stream` SSE 流式对话
+- **Chainlit Playground**：挂载在 `/playground`，作为 Agent 调试 UI，通过 `mount_chainlit` 与 FastAPI 共享进程
 
-本 chore 执行 **Phase 2**：后端部署到 AgentArts Runtime（Layer 1），前端部署到 OBS（Layer 3），通过 CORS 连通。
-
-部署分层关系见 [architecture/devops/cicd.md#5-分层决策总结](../../architecture/devops/cicd.md#5-分层决策总结)。
+前端 Web Chat（`personal-assistant-client/`）为独立 Vite + React 项目，部署到 OBS 静态托管，通过 CORS 跨域访问 AgentArts Runtime 后端。
 
 ---
 
 ## 范围
 
-### 后端（Layer 1 — AgentArts Runtime）
+### 后端（AgentArts Runtime）
 
 - **Docker 镜像构建**：ARM64 架构镜像（`linux/arm64`）
 - **SWR 推送**：推送到 `swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant`
 - **agentarts launch**：在 AgentArts 控制台启动 Runtime 实例
-- **冒烟验证**：`/ping` 健康检查 + `/invocations` 对话调用
+- **冒烟验证**：
+  - `/ping` 健康检查
+  - `/invocations` 同步对话调用
+  - `/api/chat/stream` SSE 流式对话
+  - `/playground` Chainlit UI 可访问
 - **环境变量配置**：MaaS API Key、DeepSeek API Key 等密文注入
 - **可观测性确认**：Tracing / Metrics / Logs 控制台可查看
-- **CORS 配置**：允许 OBS 域名跨域访问（Phase 2 必需）
+- **CORS 配置**：允许 OBS 域名跨域访问
 
-### 前端（Layer 3 — OBS 静态托管）
+### 前端（OBS 静态托管）
 
 - **前端构建**：`vite build` → `personal-assistant-client/dist/`
 - **OBS Bucket 创建**：`personal-assistant-web-chat`（public-read）
 - **静态网站托管配置**：index_document + error_document 指向 `index.html`
 - **前端上传**：将 `dist/` 产物同步到 OBS Bucket
-- **冒烟验证**：浏览器访问 OBS 域名 → 加载前端 → 发送消息成功
+- **冒烟验证**：浏览器访问 OBS 域名 → 加载前端 → 发送消息成功（跨域）
 
 ---
 
@@ -133,7 +132,7 @@ status: backlog
   ```
   期望返回：`{"status": "ok"}`
 
-- [ ] 对话调用：
+- [ ] 同步对话调用：
   ```bash
   curl -s -X POST <runtime-domain>/invocations \
     -H "Content-Type: application/json" \
@@ -141,6 +140,19 @@ status: backlog
     -d '{"message": "你好，请简单介绍一下你自己"}'
   ```
   期望返回：包含 `response` 字段的 JSON
+
+- [ ] SSE 流式对话：
+  ```bash
+  curl -s -N <runtime-domain>/api/chat/stream?q=你好 \
+    -H "Accept: text/event-stream"
+  ```
+  期望：持续输出 `data:` 行，最终以 `data: [DONE]` 结束
+
+- [ ] Chainlit Playground：
+  ```bash
+  curl -sI <runtime-domain>/playground/
+  ```
+  期望：HTTP 200
 
 ### 7. 可观测性确认（后端）
 
@@ -154,6 +166,8 @@ status: backlog
   - `MAAS_API_KEY`
   - `DEEPSEEK_API_KEY`
   - `MODEL_API_KEY`
+  - `MODEL_NAME`
+  - `MODEL_URL`
 
 ### 9. 前端构建
 
@@ -222,20 +236,24 @@ status: backlog
 
 5. **Region 锁定**：AgentArts Runtime 和 OBS Bucket 均使用 `cn-southwest-2`（西南贵阳一）。
 
+### 服务架构
+
+6. **Chainlit 挂载**：`mount_chainlit` 在 `main.py` 中调用，与 FastAPI 共享同一进程。冒烟验证时 `/playground/`（带 trailing slash）为正确访问路径。
+
 ### 前端 OBS 部署
 
-6. **SPA 路由回退**：OBS 静态网站必须配置 `error_document: index.html`，否则直接访问非根路径（如 `/chat`）会 404。
+7. **SPA 路由回退**：OBS 静态网站必须配置 `error_document: index.html`，否则直接访问非根路径（如 `/chat`）会 404。
 
-7. **CORS 时机**：Phase 2 前端在 OBS（不同域），后端在 AgentArts Runtime（另一个域），跨域请求必须配置 CORS。Phase 3 引入 CDN + 自定义域名后（同域零跨域）可移除 CORS 配置。
+8. **CORS**：前端在 OBS（不同域），后端在 AgentArts Runtime（另一个域），跨域请求必须配置 CORS。
 
-8. **缓存策略**：前端 JS/CSS bundle 带 content hash（Vite 默认），可设置长缓存 `Cache-Control: max-age=31536000`。`index.html` 应设置短缓存或 no-cache。
+9. **缓存策略**：前端 JS/CSS bundle 带 content hash（Vite 默认），可设置长缓存 `Cache-Control: max-age=31536000`。`index.html` 应设置短缓存或 no-cache。
 
-9. **OBS 工具选择**：
-   - `obsutil` CLI（华为云官方，推荐）
-   - CDKTF（`personal-assistant-infra/`，创建 Bucket + 配置）
-   - 华为云 Console（手动操作）
+10. **OBS 工具选择**：
+    - `obsutil` CLI（华为云官方，推荐）
+    - CDKTF（`personal-assistant-infra/`，创建 Bucket + 配置）
+    - 华为云 Console（手动操作）
 
-10. **前端 API base URL**：构建前需确保 Vite 环境变量（`VITE_API_BASE_URL`）指向 AgentArts Runtime 域名（Phase 2 跨域时需完整 URL，不能是相对路径 `/api`）。
+11. **前端 API base URL**：构建前需确保 Vite 环境变量（`VITE_API_BASE_URL`）指向 AgentArts Runtime 域名（跨域时需完整 URL，不能是相对路径 `/api`）。
 
 ---
 
