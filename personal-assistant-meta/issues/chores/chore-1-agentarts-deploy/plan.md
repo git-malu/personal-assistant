@@ -43,13 +43,12 @@
 | P2 | Dockerfile 存在 | `ls personal-assistant-service/Dockerfile` | 文件存在 |
 | P3 | .agentarts_config.yaml 存在 | `ls personal-assistant-service/.agentarts_config.yaml` | 文件存在 |
 | P4 | config.yaml 存在 | `ls personal-assistant-service/config.yaml` | 文件存在 |
-| P5 | client dist 目录 | `ls personal-assistant-client/dist/index.html` | 文件存在（需预先 `npm run build`） |
-| P6 | Docker 已安装 | `docker version` | 输出版本信息，无错误 |
-| P7 | Docker 支持 buildx | `docker buildx version` | 输出版本信息 |
-| P8 | agentarts CLI 已安装 | `agentarts --version` | 输出版本号 |
-| P9 | uv.lock 存在 | `ls personal-assistant-service/uv.lock` | 文件存在 |
-| P10 | openssl 已安装 | `openssl version` | 输出版本信息（SWR 密码生成依赖） |
-| P11 | SWR 域名可达 | `curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com` | 200 或 401（可达） |
+| P5 | Docker 已安装 | `docker version` | 输出版本信息，无错误 |
+| P6 | Docker 支持 buildx | `docker buildx version` | 输出版本信息 |
+| P7 | agentarts CLI 已安装 | `agentarts --version` | 输出版本号 |
+| P8 | uv.lock 存在 | `ls personal-assistant-service/uv.lock` | 文件存在 |
+| P9 | openssl 已安装 | `openssl version` | 输出版本信息（SWR 密码生成依赖） |
+| P10 | SWR 域名可达 | `curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com` | 200 或 401（可达） |
 
 ### 2.2 人工需提供（凭据/密钥）
 
@@ -83,8 +82,13 @@ environment_variables:
 ## 2.4 Pre-Deployment Code Change（阻塞性前置）
 
 > ⚠️ **此变更必须在 `docker build` 之前完成并提交。** 不完成此变更，部署后 AgentArts 平台的健康检查和调用入口将返回 HTML 而非 JSON，导致 Runtime 启动失败或提示 "Unhealthy"。
+>
+> ✅ **实际状态（2026-06-08）**：本节描述的代码变更已由 `refactor/consolidate-ping-routes`（commit `208a9cf`）预先完成。当前 `app/main.py` 中 root-level `/ping`（line 42）和 `/invocations`（line 48）handlers 已存在，且无 `/api/ping` 或 `/api/invocations` 端点残留。本节仅作为设计背景保留，**不再作为阻塞性前置步骤**。
 
 ### 问题
+
+> 📜 以下描述的是触发 `refactor/consolidate-ping-routes` 的**历史问题**。
+> 当前代码已修复，无需执行本节任何操作。
 
 当前 `app/main.py` 中 AgentArts 平台所需的端点注册在 `/api/` 前缀下：
 
@@ -164,9 +168,9 @@ kill %1
 
 ### 设计说明
 
-- `include_in_schema=False`：避免在 OpenAPI 文档中重复暴露（`/api/ping` 和 `/api/invocations` 已在 schema 中）
+- Root-level `/ping` 和 `/invocations` handlers 注册在 FastAPI app 上，会出现在 OpenAPI schema（`/docs`、`/openapi.json`）中
 - 两个 root-level handler 是独立的 FastAPI 路由，**不是 redirect 或 proxy**：直接处理请求，性能无差异
-- 由于这两个路由在 `@app.get("/api/ping")` 之后注册、但在 `app.mount("/", StaticFiles...)` 之前，路由优先级正确：`/api/*` > `/ping` + `/invocations` > 静态文件
+- 路由注册顺序确保优先级：`@app.get("/ping")` → `@app.post("/invocations")` → 后续路由（`/api/chat/stream`、Chainlit playground）
 
 ---
 
@@ -178,34 +182,32 @@ kill %1
 # 1.1 进入项目根目录
 cd /path/to/tidy-eagle
 
-# 1.2 确认客户端已构建
-ls personal-assistant-client/dist/index.html
-# 如果不存在，先执行构建：
-# cd personal-assistant-client && npm run build && cd ..
+# Note: 当前 Dockerfile 仅构建 service 镜像（不含 client dist），无需客户端预构建。
+# 后续如需 serve Web Chat，需单独部署 client 或更新 Dockerfile。
 
-# 1.3 确认 §2.4 的代码变更已完成并提交
-grep -n "async def ping_root" personal-assistant-service/app/main.py
-# 期望输出：行号 + 函数定义（确认 root-level handlers 已添加）
+# 1.2 确认 §2.4 的代码变更已完成并提交
+grep -n '@app\.\(get\|post\)\("/\(ping\|invocations\)"\)' personal-assistant-service/app/main.py
+# 期望输出：行号 + 路由定义（确认 root-level /ping 和 /invocations handlers 已存在）
 
-# 1.4 设置 OCI 兼容性环境变量（Docker 27+ 必需）
+# 1.3 设置 OCI 兼容性环境变量（Docker 27+ 必需）
 export BUILDKIT_USE_OCI_MEDIA_TYPES=0
 
-# 1.5 验证 Docker 可用
+# 1.4 验证 Docker 可用
 docker version
 docker buildx version
 
-# 1.6 验证 agentarts CLI 已安装
+# 1.5 验证 agentarts CLI 已安装
 agentarts --version
 # 如未安装：pip install agentarts-sdk
 
-# 1.7 验证 openssl 可用（SWR 密码生成依赖）
+# 1.6 验证 openssl 可用（SWR 密码生成依赖）
 openssl version
 
-# 1.8 验证 SWR 域名可达
+# 1.7 验证 SWR 域名可达
 curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com
 # 期望输出：200 或 401（可达）
 
-# 1.9 设置华为云认证
+# 1.8 设置华为云认证
 export HUAWEICLOUD_SDK_AK="<your-ak>"
 export HUAWEICLOUD_SDK_SK="<your-sk>"
 echo $HUAWEICLOUD_SDK_AK  # 确认已设置
@@ -244,7 +246,7 @@ docker images | grep agent_personal_assistant
 
 | 症状 | 原因 | 解决方案 |
 |------|------|---------|
-| `COPY personal-assistant-client/dist/` 失败 | 客户端未构建 | 执行 `npm run build` |
+| `COPY personal-assistant-service/app/` 失败 | 源码目录缺失 | 确认在项目根目录执行构建，检查 `personal-assistant-service/app/` 存在 |
 | `uv sync` 失败 | uv.lock 过期或网络不通 | 确认 `uv.lock` 存在且依赖可解析 |
 | `exec format error` | 在 X86 机器上未使用 buildx | 使用 `docker buildx build --platform linux/arm64` |
 | 构建极慢 (>10min) | X86 QEMU 模拟 ARM64 | 正常现象；考虑使用 ARM64 CI runner |
@@ -338,9 +340,7 @@ curl -N -s "$RUNTIME_DOMAIN/api/chat/stream?q=你好" \
   -H "Accept: text/event-stream"
 # 期望输出：data: {...} SSE 事件流
 
-# 5.4 确认 /api/ 前缀路由仍然正常
-curl -s "$RUNTIME_DOMAIN/api/ping"
-# 期望输出：{"status": "ok"}
+# Note: `/api/ping` 端点已由 refactor/consolidate-ping-routes 合并至 root-level `/ping`，无需单独测试。
 ```
 
 **冒烟验证判定标准**：
@@ -349,8 +349,7 @@ curl -s "$RUNTIME_DOMAIN/api/ping"
 |------|---------|---------|
 | `/ping` (root-level) | 返回 `{"status": "ok"}`，HTTP 200 | 检查 §2.4 代码变更是否已应用；查看 AgentArts 控制台日志 |
 | `/invocations` (root-level) | 返回 `{"response": "..."}`，HTTP 200 | 检查 MODEL_API_KEY 是否正确，查看 Trace 定位错误 |
-| `/api/chat/stream` | SSE 事件流正常推送 | 检查 Web Chat 依赖的前端资源是否正确挂载 |
-| `/api/ping` | 返回 `{"status": "ok"}` | 检查 FastAPI 路由注册 |
+| `/api/chat/stream` | SSE 事件流正常推送 | 检查 SSE endpoint 实现和网络连通性 |
 
 ### Step 6 — 可观测性确认
 
@@ -445,13 +444,12 @@ curl -s "$RUNTIME_DOMAIN/api/ping"
 - **影响**：采用手动 `docker build` + `docker push` + `agentarts launch` 流程，Dockerfile CMD 覆盖 entrypoint 声明，**当前部署不受影响**
 - **建议**：部署成功后，将 `entrypoint` 更新为 `"app.main:app"` 以消除配置不一致，避免未来 `agentarts launch` 内置构建流程出错。此项可作为后续 cleanup PR 处理
 
-### 5.6 客户端静态资源缺失
+### 5.6 客户端静态资源
 
-- **问题**：Dockerfile 中 `COPY personal-assistant-client/dist/ ./dist/`，若 dist 目录不存在则构建失败
-- **解决**：
-  ```bash
-  cd personal-assistant-client && npm run build && cd ..
-  ```
+- **现状**：当前 Dockerfile 仅包含 service 镜像（`app/`、`config.yaml`），不包含 Client 静态资源。
+  Web Chat 界面需单独部署（如 OBS + CDN），详见 `cicd.md` §2.2。
+- **注意**：冒烟验证中的 `/api/chat/stream` SSE 端点不依赖 Client 静态资源，
+  但完整的 Web Chat 体验需要前端部署。
 
 ### 5.7 网络模式
 
@@ -552,7 +550,6 @@ sequenceDiagram
 
 - [ ] `GET /ping` 返回 `{"status": "ok"}`（root-level，AgentArts 健康检查）
 - [ ] `POST /invocations` 返回有效 AI 回复（root-level，AgentArts 调用入口）
-- [ ] `GET /api/ping` 返回 `{"status": "ok"}`（`/api/` 前缀路由兼容性）
 - [ ] `GET /api/chat/stream?q=...` SSE 流正常
 - [ ] AgentArts 控制台 Runtime 状态 = 运行中
 - [ ] 全链路 Trace 有数据
@@ -560,7 +557,7 @@ sequenceDiagram
 - [ ] 日志页面可查看容器输出（uvicorn 启动日志、请求日志）
 - [ ] 环境变量密文不泄露（控制台显示 `******`，日志无明文）
 - [ ] `.agentarts_config.yaml` 中无明文占位符残留
-- [ ] §2.4 代码变更已提交（`ping_root` / `invocations_root` handlers 存在）
+- [ ] Root-level `/ping` / `/invocations` handlers 已确认存在（§2.4 已由 `refactor/consolidate-ping-routes` 预完成）
 
 ---
 
