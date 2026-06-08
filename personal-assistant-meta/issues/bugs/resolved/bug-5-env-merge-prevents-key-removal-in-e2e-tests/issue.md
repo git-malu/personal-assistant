@@ -1,8 +1,10 @@
 ---
-status: backlog
+status: invalid
+resolution: not-a-bug — 被测逻辑已由单元测试覆盖，E2E 测试设计不当
 related: feat/web-chat-frontend
 discovered_by: personal-assistant-e2e-tester
 discovered_at: 2026-06-08 E2E test session (post BUG-4 fix verification)
+closed_at: 2026-06-08
 ---
 
 # Bug 5: E2E Test Environment Merge Prevents Removing Environment Variables
