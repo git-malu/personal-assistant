@@ -10,12 +10,12 @@ status: backlog
 
 ## 背景
 
-Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federation 模式，通过 Feature 8（STS Tool）验证了云资源访问模式。本 Phase 直接在成熟的基础设施上扩展两个高价值场景：
+Personal Assistant 的 `@require_access_token` (User Federation) 和 `@require_sts_token` (STS) 装饰器模式已由 AgentArts Python SDK v0.1.3 提供标准支持。本 Phase 直接在这套基础设施上扩展两个高价值场景：
 
 - **邮件处理**：用户通过对话查询 Outlook 邮件、草拟和发送回复，补齐系统最核心的邮件 Agent 能力
 - **OBS 文件查询**：用户通过对话浏览和读取 OBS 对象存储中的文件内容，打通 Agent ↔ 云存储的"查看-理解"回路
 
-底层复用 Feature 4（Inbound Identity）和 Feature 1.2（PostgreSQL 表结构），不引入新的基础设施依赖。
+本 Feature 自包含实现所有凭据管理——`m365-provider` 和 `huaweicloud-sts-provider` 均通过 AgentArts Python SDK 在 Step 1 中独立创建，不引入新的基础设施依赖。
 
 ## 范围
 
@@ -33,7 +33,7 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 
 ### 场景二：华为云 OBS 文件查询与读取（STS）
 
-- 复用 Feature 8 的 `huaweicloud-sts-provider`（IAM Agency + STS Provider）
+- 本 Feature Step 1 中通过 AgentArts Python SDK 独立创建 `huaweicloud-sts-provider`（不依赖 Feature 8）
 - `app/tools/obs_tools.py` — OBS 对象存储工具函数
   - `list_obs_objects(bucket, prefix, limit, sts_credentials)` — 列出 Bucket 内对象
   - `get_obs_object(bucket, key, sts_credentials)` — 读取对象内容（文本/JSON/CSV 等可读格式）
@@ -51,7 +51,7 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 
 ### 10.1 Microsoft 365 OAuth2 Provider
 
-- [ ] Azure Portal → Microsoft Entra ID → 应用注册（或复用 Feature 4 的 App Registration）
+- [ ] Azure Portal → Microsoft Entra ID → 应用注册（如已有 Feature 4 的 App Registration 可复用其 client_id/tenant_id，只需额外授予 Mail 权限）
   - 添加 Microsoft Graph API 权限：`Mail.Read`, `Mail.Send`, `Mail.ReadWrite`
   - 获取 client_id / client_secret
 - [ ] 通过 AgentArts Python SDK 创建 `m365-provider` OAuth2 Credential Provider
@@ -101,7 +101,8 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 ### 10.3 OBS 工具实现
 
 - [ ] `app/tools/obs_tools.py`
-  - `@require_sts_token(provider_name="huaweicloud-sts-provider", agency_session_name="personal-assistant-obs-session")`（复用 Feature 8 Provider）
+  - 通过 Step 1 独立创建的 `huaweicloud-sts-provider`（自包含，不依赖 Feature 8）
+  - `@require_sts_token(provider_name="huaweicloud-sts-provider", agency_session_name="personal-assistant-obs-session")`
   - 装饰器自动注入 `sts_credentials: StsCredentials`（含 `access_key_id`, `secret_access_key`, `security_token`, `expiration`）
   - 使用华为云 `obs` SDK（`ObsClient`）操作 OBS，通过 `sts_credentials` 初始化
   - 读取对象内容后自动检测文件类型，对文本/JSON/CSV 返回可读字符串
@@ -128,10 +129,14 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 ## 依赖
 
 - Feature 1（Agent 骨架 + Web Chat）
-- Feature 2（Memory）— 用户偏好和上下文
-- Feature 4（Inbound Identity）— 用户身份
-- Feature 1.2（PostgreSQL）— `tool_configs` 表
-- Feature 8（STS Tool）— 复用 `huaweicloud-sts-provider`
+
+> **自包含设计**：本 Feature 不依赖 Feature 2（Memory）— Guard 机制使用 Microsoft Graph Drafts 文件夹作为跨调用状态存储。不依赖 Feature 4（Inbound Identity）— 本地调试通过 Chainlit + 硬编码用户完成，生产环境通过 AgentArts Runtime 注入用户身份。不依赖 Feature 1.2（PostgreSQL）。不依赖 Feature 8（STS Tool）— `huaweicloud-sts-provider` 在本 Feature Step 1 中独立创建。
+
+## 调试目标
+
+- Chainlit 本地调试：`uv run chainlit run chainlit_app.py`，硬编码用户 `dev-user@personal-assistant.local`
+- 邮件读写通过 DeviceCodeCredential 获取 token（需预先在 Azure Portal 注册应用）
+- OBS 读取通过环境变量配置 AK/SK
 
 ## 参考
 

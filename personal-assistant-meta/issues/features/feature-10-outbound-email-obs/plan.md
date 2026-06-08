@@ -1,6 +1,6 @@
 # Feature 10: Outbound Email + OBS — 实施计划
 
-> 版本：v1.1 | 日期：2026-06-08 | 对应 Issue：`issue.md` | 修订：Review Feedback
+> 版本：v1.3 | 日期：2026-06-08 | 对应 Issue：`issue.md` | 修订：Chainlit 本地调试 + 移除 Feature 4 依赖
 
 ---
 
@@ -9,12 +9,12 @@
 | 维度 | 结果 | 说明 |
 |------|------|------|
 | Staleness | ✅ | 引用的 AgentArts SDK v0.1.3 与架构文档一致；Microsoft Graph API v1.0 稳定；华为云 OBS SDK 标准。当前日期 2026-06-08，无 staleness 风险。 |
-| Feasibility | ✅ | 实现路径明确：`@require_access_token` (User Federation) + `@require_sts_token` (STS) 装饰器模式已被 Feature 6/8 验证；工具注册到 `create_deep_agent(tools=[...])` 符合 ADR-009。无需新增 API 端点——工具在现有 `/invocations` 流内运行。 |
-| Completeness | ✅ | 5 个邮件函数 + 3 个 OBS 函数，签名和参数定义清晰。E2E 场景（§10.5）覆盖读/写/Guard/跨 Session。 |
-| Impact Scope | ✅ | 仅 Service 侧：新增 `app/tools/email_tools.py`、`app/tools/obs_tools.py`，修改 `agent_handler.py`（system prompt + tools list），添加 `esdk-obs-python` 依赖。Client 侧无变更——工具对前端透明。 |
+| Feasibility | ✅ | 实现路径明确：`@require_access_token` (User Federation) + `@require_sts_token` (STS) 装饰器通过 AgentArts Python SDK 直接使用；工具注册到 `create_deep_agent(tools=[...])` 符合 ADR-009。两个 Credential Provider（`m365-provider`、`huaweicloud-sts-provider`）均在本 Feature 中独立创建，不依赖其他 Feature。 |
+| Completeness | ✅ | 5 个邮件函数 + 3 个 OBS 函数，签名和参数定义清晰。Guard 机制自包含（使用 Microsoft Graph Drafts 文件夹作为跨调用状态存储，零外部依赖）。E2E 场景（§5）覆盖读/写/Guard/跨 Session。 |
+| Impact Scope | ✅ | 仅 Service 侧：新增 `app/tools/email_tools.py`、`app/tools/obs_tools.py`，修改 `agent_handler.py`（system prompt + tools list），添加 `agentarts-sdk` 和 `esdk-obs-python` 依赖。Client 侧无变更——工具对前端透明。 |
 | ADR Conflicts | ✅ | 无冲突。ADR-009（deepagents）：`tools=` 参数；ADR-007（Microsoft Entra ID）：与 Microsoft Graph API 对齐；ADR-012（PostgreSQL）：`tool_configs` 表可用。 |
 
-⚠️ **注意**：`app/tools/` 目录当前不存在（Feature 6/7/8 均为 backlog），实施时需创建。`agentarts-sdk` 依赖尚未在 `pyproject.toml` 中，需一并添加。
+> **自包含设计**：本 Feature 不依赖 Feature 2（Memory）、Feature 6（GitHub Tool）、Feature 8（STS Tool）或其他未实现的 Feature。Guard 机制利用 Microsoft Graph 的 Drafts 自动保存行为实现跨调用状态持久化，无需 Memory。`huaweicloud-sts-provider` 在本 Feature Step 1 中独立创建，不依赖 Feature 8。
 
 **判定：ACCEPT** → 继续编写 Implementation Plan。
 
@@ -121,98 +121,143 @@ sequenceDiagram
 | `send_email` Guard | system prompt 机制 | deepagents 内置 `write_todos` 但无显式 "Guard"；采用 system prompt 指令实现：草拟内容 → 用户确认 → 执行发送 |
 | obs SDK 导入 `from obs import ObsClient` | 包名为 `esdk-obs-python` | PyPI 上的华为云 OBS Python SDK 包名，import 路径仍是 `from obs import ObsClient` |
 
-### 2.3 Guard 机制设计
+### 2.3 Guard 机制设计（自包含，零外部依赖）
 
-`send_email` 是敏感写操作，需要用户二次确认。本阶段采用 **system prompt 驱动**的方式实现 Guard：
+`send_email` 是敏感写操作，需要用户二次确认。本阶段采用 **Microsoft Graph Drafts 文件夹作为状态持久化层**的方式实现 Guard，不依赖 Feature 2 (Memory) 或任何其他外部状态存储。
 
-1. System prompt 中明确要求：当用户请求发送邮件时，Agent **必须先草拟邮件内容**（包括收件人、主题、正文），展示给用户确认
-2. 用户确认后（回复"发送"或"确认"），Agent 才调用 `send_email` 工具真正发送
-3. 不要在一次 Agent 调用中同时草拟并发送——两次独立调用确保用户有机会看到并修改内容
+核心原理：`draft_reply` 调用 `POST /me/messages/{id}/createReply` 时，Microsoft Graph API 会**自动**在用户的 Drafts 文件夹中保存一份草稿邮件。利用这个平台行为，Drafts 文件夹天然充当了跨 `/invocations` 调用的状态存储。
 
-> deepagents 底层是 LangGraph，支持 `interrupt()` 基于 HITL（Human-in-the-Loop）的原生确认流程。当前 MVP 用 system prompt 实现足够简单，后续 Feature 可升级为 LangGraph `interrupt()` 机制以提供更强的安全保障。
+**流程**：
 
-#### 2.3.1 Guard 的跨调用状态持久化
-
-Guard 流程拆分为两次独立的 `/invocations` 调用（第一次草拟，第二次确认发送），每次调用 `agent.ainvoke()` 创建新的 deepagents 上下文。第二次调用能看到第一次的草稿内容，依赖以下机制：
-
-**核心：`session_id` → AgentArts Memory 加载对话历史**
+1. 用户请求发送邮件 → Agent 调用 `draft_reply` 创建草稿（Graph API 自动保存到 Drafts 文件夹）
+2. Agent 在回复中展示完整草稿内容（收件人、主题、正文），并明确告知用户"确认发送请回复'发送'"
+3. 用户回复"发送" → **新一轮 `/invocations` 调用，无对话历史**
+4. Agent 调用 `list_emails(folder="drafts", limit=1)` 获取 Drafts 文件夹中最新的草稿
+5. Agent 调用 `get_email(draft_id)` 读取草稿的完整内容（收件人、主题、正文）
+6. Agent 调用 `send_email(to=..., subject=..., body=...)` 使用草稿内容发送邮件
+7. Agent 回复"邮件已发送！"
 
 ```
-调用 1: POST /invocations {message: "帮我回张三的邮件"}
-  → fastAPI 提取 session_id = request.headers.get("X-AgentArts-Session-Id")
-  → AgentHandler.handle() 使用 session_id 从 Memory 加载历史对话
-  → Agent 草拟回复，LLM 响应 "草拟如下：收件人：张三..."
-  → Memory 保存本轮用户消息 + Agent 响应
+调用 1: POST /invocations {message: "帮我回张三的邮件，说收到"}
+  → Agent 调用 draft_reply(email_id, "收到")
+  → Graph API 自动保存草稿到 Drafts 文件夹
+  → Agent 响应 "草拟如下：收件人：张三，主题：Re: xxx，正文：收到。确认发送请回复'发送'"
 
 调用 2: POST /invocations {message: "发送"}
-  → 相同的 session_id
-  → AgentHandler.handle() 从 Memory 加载调用 1 的对话历史
-  → LLM 看到的 messages 包含：
-      [user: "帮我回张三的邮件", assistant: "草拟如下：收件人：张三... 需要修改或直接发送吗？", user: "发送"]
-  → LLM 理解上下文 → 调用 send_email(to="张三", ...)
+  → Agent 无对话历史（无 Memory 依赖）
+  → Agent 调用 list_emails(folder="drafts", limit=1)
+  → 获取最新草稿 → get_email(draft_id) → 读取内容
+  → Agent 调用 send_email(to="zhangsan@...", subject="Re: xxx", body="收到")
+  → Agent 响应 "邮件已发送给张三！"
 ```
 
-**前提条件**：
+**为什么取"最新的草稿"就是正确的**：用户在对话中是顺序操作的——不会在两个 `/invocations` 调用之间去 Outlook 里手动创建其他草稿。`list_emails(folder="drafts", limit=1)` 返回的最近一条草稿（按 `receivedDateTime` 降序）必然是本轮对话中 `draft_reply` 创建的。
 
-| 条件 | 来源 | 说明 |
-|------|------|------|
-| Feature 2 (Memory) 已实现 | 本 Feature 的依赖 | `AgentHandler.handle()` 需在每次调用开始时加载 Memory 上下文 |
-| Client 传递 `session_id` | Web Chat / AgentArts Runtime | 同一对话窗口内 `session_id` 不变，确保两次调用属于同一会话 |
-| System prompt 指示 Agent 利用上下文 | 本 Feature §4.1 | Agent 需被告知"在对话历史中找到之前的草稿内容并据此发送" |
+**修改草稿流程**：
 
-**`agent_handler.py` 需要的变更**：
-
-当前 `AgentHandler.handle()` 每次调用 `agent.ainvoke({"messages": [{"role": "user", "content": message}]})` 只传入单条消息，不含历史。需修改为：
-
-```python
-# agent_handler.py — handle() 方法（非完整实现，仅示意变更点）
-async def handle(self, message: str, user_id: str = "anonymous",
-                 session_id: str | None = None) -> str:
-    # 1. 从 Memory 加载历史消息
-    history_messages = []
-    if session_id and self.memory:  # self.memory 来自 Feature 2
-        history = await self.memory.get_conversation_history(
-            user_id=user_id, session_id=session_id, max_turns=10
-        )
-        for turn in history:
-            history_messages.append({"role": "user", "content": turn["user"]})
-            if turn.get("assistant"):
-                history_messages.append({"role": "assistant", "content": turn["assistant"]})
-
-    # 2. 构造完整 messages（历史 + 当前消息）
-    all_messages = history_messages + [{"role": "user", "content": message}]
-
-    result = await self.agent.ainvoke({"messages": all_messages})
-    response = result["messages"][-1].content
-
-    # 3. 保存本轮对话到 Memory
-    if session_id and self.memory:
-        await self.memory.save_conversation_turn(
-            user_id=user_id, session_id=session_id,
-            user_message=message, assistant_response=response,
-        )
-
-    return response
+```
+调用 2': POST /invocations {message: "正文改成'收到，下周三前反馈'"}
+  → Agent 调用 list_emails(folder="drafts", limit=1) → 获取当前草稿
+  → Agent 从草稿中提取 original_email_id
+  → Agent 重新调用 draft_reply(original_email_id, "收到，下周三前反馈")
+  → 新草稿覆盖（实际是新建一条，但最新的就是正确的）
+  → Agent 响应 "已修改：收件人：张三，主题：Re: xxx，正文：收到，下周三前反馈。确认发送请回复'发送'"
 ```
 
-> **注意**：上述代码为示意变更点，具体实现依赖 Feature 2 的 Memory API 最终形态。若 Feature 2 提供了更便捷的 API（如 `MemorySession.get_history()`），优先使用。
-
-**Memory 上下文加载的边界条件**：
+#### 2.3.1 边界条件
 
 | 场景 | 处理方式 |
 |------|---------|
-| `session_id` 为 None（旧客户端或无 session header） | 不加载历史，单次对话。Guard 无法跨调用生效——Agent 应在此情况下降级为"仅草拟不发送"并将草稿内容完全在回复中展示 |
-| Memory 中无历史记录（首次对话） | `history_messages = []`，正常处理 |
-| 用户在新 Session 中直接说"发送"（无前文） | Agent 因上下文中无草稿信息，应回复"我没有找到之前草拟的邮件内容，请问你想发送什么？" |
+| 用户说"发送"但 Drafts 为空 | Agent 回复"我没有找到待发送的草稿邮件。请重新告诉我你想发送什么内容" |
+| 用户在 Drafts 中有多个草稿 | Agent 始终取 `list_emails(folder="drafts", limit=1)` 返回的最新一条 |
+| 用户说"修改"而非"发送" | Agent 获取最新草稿 → 提取 `original_email_id` → 重新调用 `draft_reply` → 展示新版本并等待确认 |
+| 用户直接说"发送"无前文（首次对话） | Agent 因 Drafts 中无相关草稿，回复"我没有找到之前草拟的邮件内容，请问你想发送什么？" |
+| 用户要求发新邮件（非回复） | `draft_reply` 仅用于回复场景；新邮件由 Agent 在回复中直接构造内容展示，用户确认后调用 `send_email`（同流程） |
 
-### 2.4 m365-provider 与 Feature 4 Inbound 的关系
+> **与 deepagents HITL 的关系**：deepagents 底层 LangGraph 支持 `interrupt()` 的 Human-in-the-Loop 原生确认流程。当前 MVP 使用 Drafts 文件夹方案因其零依赖且足够简单。若后续 Memory 功能就绪，可升级为 `interrupt()` 机制以支持更丰富的确认交互（如修改特定字段、带按钮的确认 UI）。
 
-`m365-provider` 是 Outbound 凭据（Agent 代表用户访问 Microsoft Graph API），与 Feature 4 的 Inbound 认证（用户登录 Agent 时用的 Microsoft Entra ID JWT）是**不同的概念**：
+### 2.4 本地开发方案（Chainlit + 硬编码用户）
 
-- **Inbound**（Feature 4）：用户以 Entra ID 身份登录 Agent — `agentarts_config.yaml` 中的 `identity_configuration.authorizer_type: CUSTOM_JWT`
-- **Outbound m365-provider**（本 Feature）：Agent 以用户委托身份访问 Microsoft Graph API — 通过 AgentArts Identity SDK 创建的 OAuth2 Credential Provider
+本 Feature 的开发调试通过 Chainlit 完成，不依赖 Feature 4（Inbound Identity）或 AgentArts Runtime 的完整部署。Chainlit 提供 Web Chat UI，支持单用户模式。
 
-二者可以共享同一个 Azure App Registration（相同的 client_id/tenant），但凭据类型和用途不同。`m365-provider` 可以使用与 Inbound 相同的 App Registration，只需额外授予 `Mail.Read`、`Mail.ReadWrite`、`Mail.Send` 权限。
+**架构**：
+
+```
+chainlit_app.py  ──→  AgentHandler(local_mode=True)
+                          │
+                          ├──→ create_deep_agent(model, system_prompt, tools=[...])
+                          │         │
+                          │         └──→ 工具函数（本地 auth fallback）
+                          │
+                          └──→ 硬编码用户：TEST_USER_ID = "dev-user@personal-assistant.local"
+```
+
+**双路径 Auth 策略**：
+
+工具函数设计为接受可选的凭据参数（`access_token: str | None = None`）。凭据注入有两条路径：
+
+| 路径 | 触发条件 | 凭据来源 | 使用场景 |
+|------|---------|---------|---------|
+| **Production** | 部署在 AgentArts Runtime 上 | `@require_access_token` / `@require_sts_token` 装饰器注入 | 生产环境 |
+| **Local Dev** | `chainlit_app.py` 本地运行 | 工具函数内的 `if token is None` fallback 逻辑 | 本地调试 |
+
+**Local Dev 凭据获取方式**：
+
+- **Microsoft Graph API**：使用 `azure-identity` 的 `DeviceCodeCredential`（交互式设备码授权）。用户在浏览器中输入设备码完成一次授权，token 由 `azure-identity` 自动缓存和刷新。
+- **华为云 OBS**：通过环境变量 `OBS_ACCESS_KEY_ID` / `OBS_SECRET_ACCESS_KEY` 直接使用 AK/SK（或本地配置的 STS endpoint）。
+
+**chainlit_app.py 示例结构**：
+
+```python
+# chainlit_app.py — 本地调试入口
+import chainlit as cl
+from app.agent_handler import AgentHandler
+
+TEST_USER_ID = "dev-user@personal-assistant.local"
+
+@cl.on_chat_start
+async def start():
+    agent = AgentHandler(local_mode=True)
+    cl.user_session.set("agent", agent)
+    cl.user_session.set("user_id", TEST_USER_ID)
+
+@cl.on_message
+async def on_message(message: cl.Message):
+    agent = cl.user_session.get("agent")
+    response = await agent.handle(message.content)
+    await cl.Message(content=response).send()
+```
+
+**工具函数的 Local Dev Fallback**（以 `list_emails` 为例）：
+
+```python
+async def list_emails(folder="inbox", limit=10, access_token: str | None = None):
+    if access_token is None:
+        # Local dev: 使用 DeviceCodeCredential 获取 token
+        from azure.identity import DeviceCodeCredential
+        credential = DeviceCodeCredential(
+            tenant_id=os.environ["AZURE_TENANT_ID"],
+            client_id=os.environ["AZURE_CLIENT_ID"],
+        )
+        token = credential.get_token("https://graph.microsoft.com/Mail.Read")
+        access_token = token.token
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"$top": limit, "$select": "subject,from,receivedDateTime,isRead"},
+        )
+        # ... 处理响应 ...
+```
+
+> **注意**：Production 路径下 `@require_access_token` 装饰器确保 `access_token` 一定不为 `None`，所以 fallback 分支只在本地调试时触发。这种设计让同一份工具代码可以同时用于本地开发和线上部署，无需条件编译或环境检测。
+
+### 2.5 m365-provider 与 Inbound Identity 的关系（供参考）
+
+本 Feature 不依赖 Feature 4（Inbound Identity）。`m365-provider` 是 Outbound 凭据（Agent 代表用户访问 Microsoft Graph API），由 AgentArts Identity SDK 管理，不经过 Personal Assistant 的 Inbound 认证流程。
+
+若将来 Feature 4 已部署，二者的 Azure App Registration 可以共享（相同的 client_id/tenant），但凭据类型和用途不同。`m365-provider` 只需额外授予 `Mail.Read`、`Mail.ReadWrite`、`Mail.Send` 权限。
 
 ---
 
@@ -220,11 +265,12 @@ async def handle(self, message: str, user_id: str = "anonymous",
 
 所有文件均在 `personal-assistant-service/` 目录下创建或修改：
 
-```
+```json
 personal-assistant-service/
-├── pyproject.toml                  # [MODIFY] 新增依赖：agentarts-sdk, esdk-obs-python
+├── pyproject.toml                  # [MODIFY] 新增依赖：agentarts-sdk, esdk-obs-python；dev 依赖：chainlit, azure-identity
 ├── uv.lock                         # [AUTO] 由 uv sync 重新生成
 ├── config.yaml                     # [MODIFY] 添加 OBS 相关配置（endpoint、sts-provider-name）
+├── chainlit_app.py                 # [NEW] Chainlit 本地调试入口（硬编码用户 + local auth）
 ├── app/
 │   ├── __init__.py                 # [EXISTING]
 │   ├── agent_handler.py            # [MODIFY] system prompt 扩展 + tools 列表更新
@@ -243,11 +289,12 @@ personal-assistant-meta/issues/features/feature-10-outbound-email-obs/
 
 | 文件 | 目的 | 预估行数 |
 |------|------|----------|
+| `chainlit_app.py` | Chainlit 本地调试入口，硬编码用户 + local auth fallback | ~40 |
 | `app/tools/__init__.py` | Python 包标记 | 空 |
-| `app/tools/email_tools.py` | 5 个邮件工具函数（`@require_access_token` 装饰） | ~200 |
-| `app/tools/obs_tools.py` | 3 个 OBS 工具函数（`@require_sts_token` 装饰） | ~150 |
+| `app/tools/email_tools.py` | 5 个邮件工具函数（双路径 auth：production decorator / local fallback） | ~250 |
+| `app/tools/obs_tools.py` | 3 个 OBS 工具函数（双路径 auth） | ~200 |
 | `app/agent_handler.py` | system prompt 扩展（+邮件/OBS 能力描述 + Guard 规则）+ tools 列表 | ~30 (增量) |
-| `pyproject.toml` | 新增 `agentarts-sdk>=0.1.3`、`esdk-obs-python>=3.22` | ~3 行 |
+| `pyproject.toml` | 新增 `agentarts-sdk>=0.1.3`、`esdk-obs-python>=3.22`；dev 依赖 `chainlit`、`azure-identity` | ~5 行 |
 | `config.yaml` | 新增 `obs:` section（endpoint、sts_provider_name） | ~5 行 |
 | `tests/test_email_tools.py` | mock Graph API 的单元测试 | ~100 |
 | `tests/test_obs_tools.py` | mock ObsClient 的单元测试 | ~80 |
@@ -616,20 +663,29 @@ self.agent = create_deep_agent(
 
 ### 写操作安全规则（Critical）
 
-以下工具是**写操作**，必须遵守两级确认规则：
+以下工具是**写操作**，必须遵守确认规则：
 
 1. **send_email**：发送邮件
    - **禁止**在用户首次请求时直接调用 `send_email`
-   - **必须先调用 `draft_reply` 或手动构造草稿内容**，展示收件人、主题、正文
-   - 明确告知用户"这是草稿内容，确认后我将发送"
-   - **仅在用户在后续对话中明确确认（如"发送"、"没问题"、"确认"）后**，才调用 `send_email`
-   - 如果用户说"修改一下"或"改成..."，修改草稿内容后再次展示确认，不要发送
+   - **必须先调用 `draft_reply` 创建草稿**（草稿会自动保存到用户的 Drafts 文件夹），展示收件人、主题、正文
+   - 明确告知用户"确认发送请回复'发送'"
+   - **当用户回复"发送"后**（这是一次新的调用，你无法看到之前的对话历史）：
+     1. 调用 `list_emails(folder="drafts", limit=1)` 获取 Drafts 文件夹中最新的草稿
+     2. 调用 `get_email(draft_id)` 读取草稿的收件人、主题、正文
+     3. 调用 `send_email(to=..., subject=..., body=...)` 发送
+   - 如果用户说"修改一下"或"改成..."：
+     1. 调用 `list_emails(folder="drafts", limit=1)` 获取最新草稿
+     2. 从草稿中提取原邮件的 ID
+     3. 重新调用 `draft_reply(original_email_id, modified_body)` 创建新草稿
+     4. 展示新草稿并再次等待确认
 
 示例正确流程：
-- 用户："帮我回张三的邮件，说收到" → 你调用 draft_reply 或手动生成草稿 → 展示 "草拟如下：收件人：张三，主题：Re: ...，正文：...需要修改或直接发送吗？"
-- 用户："发送" → 你调用 send_email
-- 用户："正文改成'收到，谢谢'" → 你修改正文 → 展示 "已修改，收件人：张三... 确认发送吗？"
-- 用户："确认" → 你调用 send_email
+- 用户："帮我回张三的邮件，说收到" → 你调用 `draft_reply` → 展示 "草拟如下：收件人：张三，主题：Re: ...，正文：收到。确认发送请回复'发送'"
+- 用户："发送"（新调用，无对话历史）→ 你调用 `list_emails(folder="drafts", limit=1)` → 获取草稿内容 → 调用 `send_email` → "邮件已发送！"
+- 用户："正文改成'收到，谢谢'" → 你调用 `list_emails(folder="drafts", limit=1)` → 提取 original_email_id → 调用 `draft_reply` → 展示 "已修改：... 确认发送请回复'发送'"
+- 用户："发送" → 你再次 list Drafts → 获取最新草稿 → 调用 `send_email`
+
+> **设计说明**：你无法跨调用记住之前草拟的内容（每次 `/invocations` 调用是独立的），但 `draft_reply` 会自动把草稿保存到 Microsoft 365 的 Drafts 文件夹。利用这个机制，你始终可以通过 `list_emails(folder="drafts", limit=1)` 找到最新的待发送草稿。
 
 ## 行为准则
 - 使用中文回复
@@ -706,11 +762,13 @@ OBS_ENDPOINT, OBS_STS_PROVIDER_NAME = _load_obs_config()
 
 | 验证项 | 说明 |
 |--------|------|
-| 首次请求不直接发送 | 用户说"给张三发邮件"，Agent 应先草拟并确认，不能直接调用 `send_email` |
-| 草稿展示 | Agent 展示完整的收件人、主题、正文 |
-| 修改后再次确认 | 用户修改内容后，Agent 应再次展示并等待确认 |
-| 确认后执行 | 用户明确说"发送"/"确认"后，Agent 调用 `send_email` |
-| 拒绝不执行 | Agent 在未确认时不应调用 `send_email` |
+| 首次请求不直接发送 | 用户说"给张三发邮件"，Agent 应先调用 `draft_reply` 展示草稿，不能直接调用 `send_email` |
+| 草稿展示 | Agent 展示完整的收件人、主题、正文，并明确提示"确认发送请回复'发送'" |
+| 无对话历史时通过 Drafts 恢复 | 用户回复"发送"后（新调用，无上下文），Agent 调用 `list_emails(folder="drafts", limit=1)` 获取最新草稿 |
+| Drafts 中获取草稿内容 | Agent 调用 `get_email(draft_id)` 读取草稿的 to/subject/body，用于构造 `send_email` 参数 |
+| 修改草稿后再次确认 | 用户修改内容后，Agent 重新调用 `draft_reply` 创建新草稿，再次展示并等待确认 |
+| 确认后执行 | 用户明确说"发送"后，Agent 从 Drafts 读取最新草稿并调用 `send_email` |
+| Drafts 为空时拒绝 | Agent 在未找到草稿时应回复"我没有找到待发送的草稿邮件"，不执行发送 |
 
 ---
 
@@ -723,11 +781,11 @@ OBS_ENDPOINT, OBS_STS_PROVIDER_NAME = _load_obs_config()
 | E1 | 查看收件箱 | 用户："帮我看看收件箱" | Agent 调用 `list_emails(folder="inbox")` → 返回格式化的邮件列表（发件人、主题、时间） |
 | E2 | 搜索邮件 | 用户："帮我查一下最近关于项目进度的邮件" | Agent 调用 `search_emails(query="项目进度")` → 返回匹配的邮件列表 |
 | E3 | 查看邮件详情 | 用户："查看第一封邮件的详细内容" | Agent 从上一轮上下文中获取 email_id → 调用 `get_email` → 返回完整正文+附件列表 |
-| E4 | 草拟回复 | 用户："帮我回张三的邮件，说收到" | Agent 调用 `draft_reply` → 展示草稿（收件人、主题、正文）→ 询问是否发送 |
-| E5 | 修改草稿 | 用户（在 E4 后）："正文改成'收到，下周三之前给你反馈'" | Agent 修改正文内容 → 再次展示 → 询问确认 |
-| E6 | 发送邮件 | 用户（在 E5 后）："发送" | Agent 调用 `send_email` → 返回发送成功确认 |
+| E4 | 草拟回复 | 用户："帮我回张三的邮件，说收到" | Agent 调用 `draft_reply` → 展示草稿（收件人、主题、正文）→ 提示"确认发送请回复'发送'" |
+| E5 | 修改草稿 | 用户（在 E4 草稿展示后）："正文改成'收到，下周三之前给你反馈'" | Agent 调用 `list_emails(folder="drafts", limit=1)` → 提取 original_email_id → 重新调用 `draft_reply` → 展示新版本 → 提示确认 |
+| E6 | 发送邮件（新调用，无对话历史） | 用户（在 E5 修改后）："发送" | Agent 调用 `list_emails(folder="drafts", limit=1)` → 获取最新草稿 → `get_email(draft_id)` → `send_email` → 返回发送成功确认 |
 | E7 | 跨 Session 授信 | 第二次对话中用户说"看看收件箱" | Agent 自动获取 access_token（无需重新授权）→ 返回邮件列表 |
-| E8 | Guard 验证 | 用户："给张三发一封主题为'测试'的邮件" | Agent **不应**直接调用 `send_email` → 应先展示草稿并等待确认 |
+| E8 | Guard 验证：拒绝直接发送 | 用户："给张三发一封主题为'测试'的邮件" | Agent **不应**直接调用 `send_email` → 应先调用 `draft_reply` 展示草稿并提示确认 |
 
 #### 5.2 OBS 场景
 
@@ -778,9 +836,16 @@ OBS_ENDPOINT, OBS_STS_PROVIDER_NAME = _load_obs_config()
 | `agentarts-sdk` | `>=0.1.3` | Identity 装饰器（`require_access_token`、`require_sts_token`）和 IdentityClient | `uv add agentarts-sdk>=0.1.3` |
 | `esdk-obs-python` | `>=3.22.0` | 华为云 OBS Python SDK（`from obs import ObsClient`） | `uv add esdk-obs-python>=3.22.0` |
 
-> **`agentarts-sdk`**：当前 `pyproject.toml` 中不包含此依赖。Feature 6（GitHub Tool）和 Feature 8（STS Tool）也会添加此依赖。本 plan 将其作为 Feature 10 的依赖一并声明。
+### 6.2 开发依赖（仅本地调试）
 
-### 6.2 已有依赖（可复用）
+| 包名 | 版本 | 用途 | 安装命令 |
+|------|------|------|----------|
+| `chainlit` | `>=2.0.0` | 本地 Web Chat UI，替代完整 Client 部署 | `uv add --dev chainlit` |
+| `azure-identity` | `>=1.19.0` | Local Dev 的 DeviceCodeCredential，获取 Microsoft Graph API token | `uv add --dev azure-identity` |
+
+> **`azure-identity` 仅用于本地调试**：Production 环境下 token 由 AgentArts `@require_access_token` 装饰器注入，不需要 `azure-identity`。Local Dev 的 `DeviceCodeCredential` fallback 只在 `chainlit_app.py` 本地运行时触发。
+
+### 6.3 已有依赖（可复用）
 
 | 包名 | 用途 |
 |------|------|
@@ -790,7 +855,7 @@ OBS_ENDPOINT, OBS_STS_PROVIDER_NAME = _load_obs_config()
 | `python-dotenv>=1.0.0` | 读取 `.env` 中的 OBS endpoint / client credentials |
 | `pyyaml>=6.0` | 读取 `config.yaml` 中的 OBS 配置 |
 
-### 6.3 `pyproject.toml` 变更
+### 6.4 `pyproject.toml` 变更
 
 ```toml
 # pyproject.toml — [project] section
@@ -799,7 +864,15 @@ dependencies = [
     "agentarts-sdk>=0.1.3",   # AgentArts Identity SDK（装饰器 + IdentityClient）
     "esdk-obs-python>=3.22.0", # 华为云 OBS Python SDK
 ]
+
+[project.optional-dependencies]
+dev = [
+    "chainlit>=2.0.0",        # 本地调试 Web UI
+    "azure-identity>=1.19.0", # 本地调试的 DeviceCodeCredential
+]
 ```
+
+> **零外部 Feature 依赖**：本 Feature 自包含。不依赖 Feature 2（Memory）、Feature 4（Inbound Identity）、Feature 6（GitHub Tool）、Feature 8（STS Tool）或其他未实现的 Feature。两个 Credential Provider 均在本 Feature Step 1 中独立创建。Guard 机制使用 Microsoft Graph Drafts 文件夹。本地调试通过 Chainlit + 硬编码用户完成，无需 Feature 4 的 Inbound 认证。
 
 ---
 
@@ -995,8 +1068,9 @@ print("✅ huaweicloud-sts-provider created successfully")
 | V1 | 依赖安装成功 | `uv sync` | `agentarts-sdk>=0.1.3`、`esdk-obs-python>=3.22.0` 安装无报错 |
 | V2 | ruff check 通过 | `uv run ruff check app/` | 0 errors |
 | V3 | ruff format 通过 | `uv run ruff format --check app/` | 无格式问题 |
-| V4 | 服务启动成功 | `uv run uvicorn app.main:app --port 8080` | 启动无 import 错误（tools 模块正确加载） |
-| V5 | 单元测试通过 | `uv run pytest tests/test_email_tools.py tests/test_obs_tools.py -v` | 所有 mock 测试通过 |
+| V4 | Chainlit 启动成功 | `uv run chainlit run chainlit_app.py` | Chainlit Web UI 正常打开，无 import 错误 |
+| V5 | FastAPI 启动成功 | `uv run uvicorn app.main:app --port 8080` | 启动无 import 错误（tools 模块正确加载） |
+| V6 | 单元测试通过 | `uv run pytest tests/test_email_tools.py tests/test_obs_tools.py -v` | 所有 mock 测试通过 |
 
 ### 9.2 工具可用性验证
 
@@ -1054,5 +1128,5 @@ print("✅ huaweicloud-sts-provider created successfully")
 | AgentArts Python SDK v0.1.3 | `examples/agent_identity/` (oauth2 / sts_token 示例), `examples/agent_tools/` (工具集成示例) |
 | Microsoft Graph API v1.0 | [List Messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages), [Send Mail](https://learn.microsoft.com/en-us/graph/api/user-sendmail) |
 | 华为云 OBS Python SDK | [对象操作](https://support.huaweicloud.com/sdk-python-devg-obs/obs_22_0500.html) |
-| Feature 6（GitHub Tool）Issue | `personal-assistant-meta/issues/features/feature-6-github-tool/issue.md` (User Federation 模式参考) |
-| Feature 8（STS Tool）Issue | `personal-assistant-meta/issues/features/feature-8-sts-tool/issue.md` (STS Provider 复用参考) |
+| Feature 6（GitHub Tool）Issue | `personal-assistant-meta/issues/features/feature-6-github-tool/issue.md` (User Federation 模式参考，非依赖) |
+| Feature 8（STS Tool）Issue | `personal-assistant-meta/issues/features/feature-8-sts-tool/issue.md` (STS Provider 参考，非依赖；本 Feature 自建 Provider) |
