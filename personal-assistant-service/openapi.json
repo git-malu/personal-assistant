@@ -1,0 +1,330 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Personal Assistant",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/ping": {
+      "get": {
+        "summary": "Ping",
+        "description": "Health check endpoint.",
+        "operationId": "ping_api_ping_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invocations": {
+      "post": {
+        "summary": "Invocations",
+        "description": "Synchronous agent invocation endpoint.",
+        "operationId": "invocations_api_invocations_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat/stream": {
+      "get": {
+        "summary": "Chat Stream",
+        "description": "Streaming chat endpoint using Server-Sent Events.",
+        "operationId": "chat_stream_api_chat_stream_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth Login",
+        "description": "Initiate Microsoft Entra ID OAuth login flow.\n\nRedirects the user to the Microsoft Entra ID authorization page.\nIf the user already has a valid session cookie, redirects to /chat instead.",
+        "operationId": "auth_login_api_auth_login_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth Callback",
+        "description": "OAuth callback endpoint.\n\nExchanges the authorization code for tokens, stores user info,\nsets a session cookie, and redirects to /chat.",
+        "operationId": "auth_callback_api_auth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "OAuth authorization code",
+              "title": "Code"
+            },
+            "description": "OAuth authorization code"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "OAuth state parameter for CSRF protection",
+              "title": "State"
+            },
+            "description": "OAuth state parameter for CSRF protection"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "302": {
+            "description": "Redirect to /chat after successful authentication"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth Me",
+        "description": "Return the currently authenticated user's information.\n\nReads identity from session cookie or X-AgentArts-User-Id header.\nReturns 401 if not authenticated.",
+        "operationId": "auth_me_api_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserInfoResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Auth Logout",
+        "description": "Log out the current user by clearing the session cookie.",
+        "operationId": "auth_logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthErrorResponse": {
+        "properties": {
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "error_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "AuthErrorResponse",
+        "description": "OAuth error response."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "UserInfoResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "is_authenticated": {
+            "type": "boolean",
+            "title": "Is Authenticated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "display_name",
+          "email",
+          "channel",
+          "is_authenticated"
+        ],
+        "title": "UserInfoResponse",
+        "description": "GET /api/auth/me response."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

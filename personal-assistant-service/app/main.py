@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
+from app.routes.auth import router as auth_router  # noqa: E402
 from app.spa_middleware import SPAFallbackMiddleware  # noqa: E402
 
 
@@ -90,6 +91,9 @@ async def chat_stream(request: Request, q: str = ""):
         },
     )
 
+
+# ── Auth routes ──
+app.include_router(auth_router)
 
 # === Chainlit Playground（Agent 调试 UI）===
 # Mount 在 API routes 之后、StaticFiles 之前，确保路径优先级正确

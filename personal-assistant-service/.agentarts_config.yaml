@@ -36,6 +36,16 @@ agents:
           value: "deepseek-v4-pro"
         - key: MODEL_URL
           value: "https://api.modelarts-maas.com/openai/v1"
+        - key: MS_ENTRA_CLIENT_ID
+          value: "<Microsoft Entra ID Application (client) ID>"
+        - key: MS_ENTRA_CLIENT_SECRET
+          value: "<Microsoft Entra ID Client Secret>"
+        - key: MS_ENTRA_TENANT_ID
+          value: "<Azure AD Tenant ID>"
+        - key: MS_ENTRA_REDIRECT_URI
+          value: "https://<runtime-domain>/api/auth/callback"
+        - key: SESSION_SECRET
+          value: "<随机生成 64 字符密钥>"
 
       observability:
         tracing:
@@ -49,6 +59,25 @@ agents:
         url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
         commands:
           - "uv sync --frozen --no-dev"
+
+      identity_configuration:
+        # ── Inbound: Custom JWT (Microsoft Entra ID) ──
+        authorizer_type: CUSTOM_JWT
+        authorizer_configuration:
+          custom_jwt:
+            discovery_url: https://login.microsoftonline.com/${MS_ENTRA_TENANT_ID}/v2.0/.well-known/openid-configuration
+            allowed_audience:
+              - "${MS_ENTRA_CLIENT_ID}"
+            allowed_clients:
+              - "${MS_ENTRA_CLIENT_ID}"
+            allowed_scopes:
+              - "openid"
+              - "profile"
+              - "email"
+          # ── Inbound: API Key (开发调试) ──
+          key_auth:
+            api_keys:
+              - "opencode-dev-api-key-2026"
 
       tags:
         - key: app
