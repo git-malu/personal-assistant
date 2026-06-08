@@ -100,7 +100,7 @@ async def playground_redirect():
     return RedirectResponse(url="/playground/")
 
 
-mount_chainlit(app=app, target="app/playground.py", path="/playground")
+mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), path="/playground")
 
 # ---------------------------------------------------------------------------
 # Static file serving for the Web Chat UI
