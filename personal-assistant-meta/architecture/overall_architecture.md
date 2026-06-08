@@ -556,6 +556,8 @@ class PersonalAssistantMemory:
 
 ---
 
+> 完整部署流程（Docker 构建、SWR 推送、OBS 上传、冒烟验证、回滚方案）详见 [agentarts-deploy-runbook.md](devops/agentarts-deploy-runbook.md)。
+
 ## 8. 部署配置
 
 ### 8.1 `agentarts_config.yaml`

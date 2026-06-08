@@ -71,6 +71,8 @@ flowchart LR
 | 推送 SWR | `docker push` + `agentarts launch` | merge 到 main |
 | 冒烟测试 | `curl /invocations` | 部署后 |
 
+> 完整部署操作手册见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)。
+
 ### 2.3 注意事项
 
 - AgentArts 部署需要 ARM64 镜像。CI Runner 必须是 ARM64 机器或使用 QEMU 模拟（`docker buildx`）
@@ -99,7 +101,7 @@ MaaS 的模型部署和 API Key 管理目前通过控制台操作，没有声明
 
 | 场景 | 需要的资源 |
 |------|-----------|
-| Web Chat 前端需要静态托管 | OBS Bucket + CDN 加速域名 |
+| Web Chat 前端需要静态托管 | ✅ OBS Bucket + CDN 加速域名（已实现，由 `personal-assistant-infra/` CDKTF 管理；部署操作见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)） |
 | 用户-渠道 ID 映射需要持久化存储 | RDS（PostgreSQL） |
 | OfficeClaw 需要固定公网入口 | EIP + 带宽配置 |
 | Identity STS Provider 需要授权 | IAM Agency / Role / Policy |
