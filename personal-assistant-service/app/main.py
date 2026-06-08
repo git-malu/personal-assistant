@@ -11,10 +11,8 @@ logger = logging.getLogger("uvicorn")
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
-from app.spa_middleware import SPAFallbackMiddleware  # noqa: E402
 
 
 @asynccontextmanager
@@ -92,7 +90,6 @@ async def chat_stream(request: Request, q: str = ""):
 
 
 # === Chainlit Playground（Agent 调试 UI）===
-# Mount 在 API routes 之后、StaticFiles 之前，确保路径优先级正确
 
 
 @app.get("/playground", include_in_schema=False)
@@ -103,34 +100,3 @@ async def playground_redirect():
 
 mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), path="/playground")
 
-# ---------------------------------------------------------------------------
-# Static file serving for the Web Chat UI
-# ---------------------------------------------------------------------------
-# Strategy:
-#   - Monorepo dev: serves personal-assistant-client/dist/ (npm run build output)
-#   - Docker prod: serves /app/dist/ (copied from client build in Dockerfile)
-#   - Pure API mode: when neither dir exists, no mount is registered;
-#     /api/* endpoints remain functional; frontend runs independently via vite dev server
-#
-# Mount priority: explicit API routes (/api/*) are registered before this catch-all
-# mount, so FastAPI matches them first. Chainlit /playground is also registered
-# before this line, guaranteeing it won't be shadowed.
-#
-_proj_root = Path(__file__).resolve().parent.parent.parent
-STATIC_DIR = _proj_root / "personal-assistant-client" / "dist"
-if not STATIC_DIR.is_dir():
-    STATIC_DIR = Path("dist")  # Docker: /app/dist/
-
-if STATIC_DIR.is_dir():
-    app.mount(
-        "/",
-        StaticFiles(directory=str(STATIC_DIR)),
-        name="web-chat",  # distinct from future Chainlit mount name to avoid collision
-    )
-    app.add_middleware(SPAFallbackMiddleware, static_dir=STATIC_DIR)
-else:
-    logger.warning(
-        f"前端构建产物目录不存在（已尝试: {_proj_root / 'personal-assistant-client' / 'dist'}, dist/）。"
-        "开发模式下请使用 `npm run dev` 在 personal-assistant-client/ 独立启动前端。"
-        "部署模式下请确保 `npm run build` 已在 personal-assistant-client/ 执行。"
-    )

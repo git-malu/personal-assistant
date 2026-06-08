@@ -61,7 +61,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ### 4. 打开浏览器
 
-访问 `http://localhost:8080` 进入 Web Chat 对话界面。
+访问 `http://localhost:8080/playground` 进入 Chainlit 调试界面。API 端点见下方。
 
 ## API 端点
 
@@ -70,7 +70,6 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | 非流式对话，供 AgentArts / OfficeClaw 调用 |
 | `GET` | `/api/chat/stream?q=...` | SSE 流式对话，供 Web Chat 前端使用 |
-| `GET` | `/` | Web Chat 静态页面 |
 
 ### 示例
 
@@ -138,15 +137,15 @@ uv run ruff format --check .
 ## 架构
 
 ```
-Browser ──GET /──→ StaticFiles (web/index.html)
-  │                    │
-  │  SSE ──GET /api/chat/stream?q=...──→ StreamingResponse
-  │                    │
-  │              AgentHandler.handle_stream()
-  │                    │
-  │         deepagents agent.astream_events(v2)
-  │                    │
-  │              MaaS LLM (DeepSeek-V4-Pro)
+Browser ──GET /api/chat/stream?q=...──→ StreamingResponse
+  │
+  │  SSE 响应
+  │
+  │  AgentHandler.handle_stream()
+  │
+  │  deepagents agent.astream_events(v2)
+  │
+  │  MaaS LLM (DeepSeek-V4-Pro)
   │
   └── POST /invocations ──→ AgentHandler.handle() → agent.ainvoke()
 ```

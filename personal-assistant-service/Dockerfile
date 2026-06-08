@@ -10,7 +10,6 @@ RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY personal-assistant-service/app/ ./app/
-COPY personal-assistant-client/dist/ ./dist/
 COPY personal-assistant-service/.agentarts_config.yaml ./
 COPY personal-assistant-service/config.yaml ./
 
