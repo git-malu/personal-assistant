@@ -15,4 +15,5 @@ COPY personal-assistant-service/config.yaml ./
 
 EXPOSE 8080
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the FastAPI application with shell form for reliable startup + stderr capture
+CMD uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 2>&1
