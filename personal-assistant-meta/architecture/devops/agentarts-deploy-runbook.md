@@ -339,7 +339,7 @@ curl -s -X POST "$RUNTIME_DOMAIN/invocations" \
 
 # 5.3 SSE 流式对话 — 增强验证
 # 使用 -N 禁用 curl 输出缓冲，确保实时看到 SSE 事件流
-curl -N -s "$RUNTIME_DOMAIN/api/chat/stream?q=你好" \
+curl -N -s "$RUNTIME_DOMAIN/invocations/stream?q=你好" \
   -H "Accept: text/event-stream"
 # 期望输出：持续输出 data: {...} 行，最终以 data: [DONE] 结束
 # 判定：
@@ -348,10 +348,10 @@ curl -N -s "$RUNTIME_DOMAIN/api/chat/stream?q=你好" \
 #   ✅ 最终以 "data: [DONE]" 结束（非异常断开）
 
 # 5.4 Chainlit Playground 可访问性
-curl -sI "$RUNTIME_DOMAIN/playground/"
+curl -sI "$RUNTIME_DOMAIN/invocations/playground/"
 # 期望：HTTP 200（或 302 重定向到登录页，取决于 Chainlit 配置）
 # 判定：HTTP 状态码为 2xx 或 3xx（非 4xx/5xx）
-# 注意：/playground/ 带 trailing slash 是正确路径；
+# 注意：/invocations/playground/ 带 trailing slash 是正确路径；
 #       如果 IAM authorizer 阻止匿名访问，返回 200 OK 即表示路由可达
 
 # 5.5 CORS 预检请求验证
@@ -368,8 +368,8 @@ curl -sI -X OPTIONS "$RUNTIME_DOMAIN/ping" \
 |------|---------|---------|
 | `/ping` | HTTP 200, `{"status": "ok"}` | 检查 §1.4 代码变更是否已应用；查看 AgentArts 控制台日志 |
 | `/invocations` | HTTP 200, `{"response": "..."}` 有效回复 | 检查 MODEL_API_KEY 是否正确；查看 Trace 定位错误 |
-| `/api/chat/stream` (SSE) | SSE 事件流正常推送，以 `data: [DONE]` 结束 | 检查 SSE endpoint 实现和网络连通性；确认 `Accept: text/event-stream` header |
-| `/playground/` | HTTP 200 或 302，路由可达 | 检查 Chainlit mount 配置；确认 `/playground/` 带 trailing slash |
+| `/invocations/stream` (SSE) | SSE 事件流正常推送，以 `data: [DONE]` 结束 | 检查 SSE endpoint 实现和网络连通性；确认 `Accept: text/event-stream` header |
+| `/invocations/playground/` | HTTP 200 或 302，路由可达 | 检查 Chainlit mount 配置；确认 `/invocations/playground/` 带 trailing slash |
 | CORS preflight | 响应包含 `Access-Control-Allow-Origin` 匹配 OBS 域名 | 检查 §1.5 CORS 中间件是否正确添加和重新部署 |
 
 ---
@@ -697,7 +697,7 @@ curl -sI "$OBS_DOMAIN/chat"
 # 期望：HTTP 200（非 404）
 
 # 13.2.3 CORS 跨域 SSE 请求
-curl -N -s "$RUNTIME_DOMAIN/api/chat/stream?q=ping" \
+curl -N -s "$RUNTIME_DOMAIN/invocations/stream?q=ping" \
   -H "Accept: text/event-stream" \
   -H "Origin: $OBS_DOMAIN"
 # 期望：正常返回 SSE 事件流
@@ -755,7 +755,7 @@ obsutil cp /path/to/old-dist/ obs://personal-assistant-web-chat/ -r -f
 | `/ping` 返回非 200 或超时 | ✅ 回滚 | 检查 §1.4 代码变更；查看容器启动日志 |
 | `/invocations` 返回 5xx | ⚠️ 先诊断 | 可能是 API Key 配置错误；更新环境变量后重启 |
 | `/invocations` 返回 HTML（SPA fallback） | ✅ 回滚 | §1.4 代码变更未应用 |
-| `/api/chat/stream` SSE 无响应 | ⚠️ 先诊断 | 检查 SSE endpoint 和网络；可能无需回滚 |
+| `/invocations/stream` SSE 无响应 | ⚠️ 先诊断 | 检查 SSE endpoint 和网络；可能无需回滚 |
 | 前端页面白屏 | ❌ 不回滚后端 | 检查 dist/ 产出物完整性；重新上传或回滚前端 |
 | 前端 CORS 错误 | ⚠️ 先诊断 | 检查 §1.5 CORS 配置；可能需要 rebuild 镜像 |
 | 前端 SPA 路由 404 | ❌ 不回滚 | OBS Error document 配置问题，修改配置即可 |
@@ -853,7 +853,7 @@ obsutil cp /path/to/old-dist/ obs://personal-assistant-web-chat/ -r -f
 ### 15.11 前端 API base URL
 
 - **问题**：开发模式下 Vite proxy 将 `/api` 代理到 `localhost:8080`。OBS 部署后无 proxy，前端必须使用完整 URL 访问后端。
-- **症状**：前端发送请求到 `/api/chat/stream`（相对路径），实际请求到 OBS 域名而非 AgentArts Runtime
+- **症状**：前端发送请求到 `/invocations/stream`（相对路径），实际请求到 OBS 域名而非 AgentArts Runtime
 - **解决**：
   1. 构建前设置 `VITE_API_BASE_URL` 环境变量
   2. 确保前端代码使用 `import.meta.env.VITE_API_BASE_URL` 拼接 API URL
@@ -970,9 +970,9 @@ sequenceDiagram
     Agent->>Runtime: POST /invocations
     Runtime->>Runtime: AgentHandler.handle()<br/>调用 LLM (MaaS/DeepSeek)
     Runtime-->>Agent: {"response": "..."} ✅
-    Agent->>Runtime: GET /api/chat/stream?q=你好 (Accept: text/event-stream)
+    Agent->>Runtime: GET /invocations/stream?q=你好 (Accept: text/event-stream)
     Runtime-->>Agent: SSE 事件流 (data: ... data: [DONE]) ✅
-    Agent->>Runtime: GET /playground/
+    Agent->>Runtime: GET /invocations/playground/
     Runtime-->>Agent: HTTP 200 ✅
     Agent->>Runtime: OPTIONS /ping (Origin: OBS 域名)
     Runtime-->>Agent: Access-Control-Allow-Origin ✅
@@ -1023,8 +1023,8 @@ sequenceDiagram
 
 - [ ] `GET /ping` 返回 `{"status": "ok"}`（root-level，AgentArts 健康检查）
 - [ ] `POST /invocations` 返回有效 AI 回复（root-level，AgentArts 调用入口）
-- [ ] `GET /api/chat/stream?q=...` SSE 流正常，以 `data: [DONE]` 结束
-- [ ] `GET /playground/` 返回 HTTP 200 或 302（Chainlit 可达）
+- [ ] `GET /invocations/stream?q=...` SSE 流正常，以 `data: [DONE]` 结束
+- [ ] `GET /invocations/playground/` 返回 HTTP 200 或 302（Chainlit 可达）
 - [ ] CORS preflight (`OPTIONS /ping` + Origin header) 返回正确的 `Access-Control-Allow-Origin`
 - [ ] AgentArts 控制台 Runtime 状态 = 运行中
 - [ ] 全链路 Trace 有数据
