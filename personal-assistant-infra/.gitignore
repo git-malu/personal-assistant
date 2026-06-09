@@ -1,9 +1,3 @@
-cdktf.out/
-.gen/
-coverage/
-node_modules/
-dist/
-
 # Local .terraform directories
 .terraform/
 

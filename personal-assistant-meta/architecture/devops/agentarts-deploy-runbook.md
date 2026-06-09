@@ -498,42 +498,72 @@ OBS Bucket 创建有三种方式：
 
 | 方式 | 工具 | 推荐度 | 说明 |
 |------|------|--------|------|
-| **IaC (CDKTF)** | `personal-assistant-infra/` | ⭐⭐⭐ 推荐 | 可版本控制、可复现、可 review |
+| **IaC (OpenTofu + HCL)** | `personal-assistant-infra/` | ⭐⭐⭐ 推荐 | 可版本控制、可复现、可 review |
 | **obsutil CLI** | `obsutil` | ⭐⭐ 可用 | 命令行操作，快速创建 |
 | **华为云 Console** | Web 控制台 | ⭐ 手动 | 适合一次性操作，无法版本控制 |
 
-> **推荐使用 CDKTF**：`personal-assistant-infra/` 目录已就位（见 `personal-assistant-infra/AGENTS.md`），按 ADR-006 使用 CDKTF + TypeScript。如果 infra 目录尚未完成 CDKTF 初始化（当前为 `.gitkeep`），可先用 obsutil 快速创建，后续迁移到 IaC。
+> **推荐使用 OpenTofu + HCL**：`personal-assistant-infra/` 目录已就位（见 `personal-assistant-infra/AGENTS.md`），按 ADR-006 使用 OpenTofu + 原生 HCL。2025-12 CDKTF 归档后已迁移至 OpenTofu（Linux 基金会托管，MPL 协议）。如果 infra 目录尚未完成 `tofu init`，可先用 obsutil 快速创建，后续迁移到 IaC。
 
-### 11.2 方式一：IaC (CDKTF) — 推荐
+### 11.2 方式一：IaC (OpenTofu + HCL) — 推荐
 
-如果 `personal-assistant-infra/` 已初始化 CDKTF，在 `stacks/pa-stack.ts` 中添加 OBS Bucket 定义：
+如果 `personal-assistant-infra/` 已初始化 OpenTofu，OBS Bucket 定义位于以下文件：
 
-```typescript
-// personal-assistant-infra/stacks/pa-stack.ts
-import { Construct } from "constructs";
-import { ObsBucket } from "@cdktf-provider-huaweicloud/obs";
+**`obs.tf`** — OBS Bucket 资源：
 
-export class PersonalAssistantStack extends TerraformStack {
-  constructor(scope: Construct, id: string) {
-    super(scope, id);
+```hcl
+# personal-assistant-infra/obs.tf
+resource "huaweicloud_obs_bucket" "web_chat" {
+  bucket     = "personal-assistant-web-chat"
+  acl        = "public-read"
+  versioning = true
 
-    new ObsBucket(this, "web-chat", {
-      bucket: "personal-assistant-web-chat",
-      acl: "public-read",
-      region: "cn-southwest-2",
-      website: {
-        indexDocument: "index.html",
-        errorDocument: "index.html",  // SPA 路由回退！
-      },
-      // 可选：版本控制
-      versioning: true,
-      // 可选：日志记录
-      logging: {
-        targetBucket: "pa-logs",
-        targetPrefix: "obs-access/",
-      },
-    });
+  website {
+    index_document = "index.html"
+    error_document = "index.html" # SPA fallback
   }
+}
+```
+
+**`main.tf`** — Provider 配置：
+
+```hcl
+# personal-assistant-infra/main.tf
+terraform {
+  required_providers {
+    huaweicloud = {
+      source  = "huaweicloud/huaweicloud"
+      version = "~> 1.92"
+    }
+  }
+}
+
+provider "huaweicloud" {
+  region     = var.region
+  access_key = var.ak
+  secret_key = var.sk
+}
+```
+
+**`variables.tf`** — 凭据变量（敏感，通过 `terraform.tfvars` 或环境变量注入）：
+
+```hcl
+# personal-assistant-infra/variables.tf
+variable "ak" {
+  description = "HuaweiCloud Access Key (AK)"
+  type        = string
+  sensitive   = true
+}
+
+variable "sk" {
+  description = "HuaweiCloud Secret Key (SK)"
+  type        = string
+  sensitive   = true
+}
+
+variable "region" {
+  description = "HuaweiCloud 区域"
+  type        = string
+  default     = "cn-southwest-2"
 }
 ```
 
@@ -541,13 +571,22 @@ export class PersonalAssistantStack extends TerraformStack {
 
 ```bash
 cd personal-assistant-infra
-npm install
-npx cdktf synth    # 生成 Terraform JSON
-npx cdktf diff     # 查看变更计划
-npx cdktf deploy   # 执行部署
+
+# 首次或 provider 变更后
+tofu init
+
+# 验证语法和格式
+tofu validate
+tofu fmt -check
+
+# 预览变更（需先配置凭据：TF_VAR_ak / TF_VAR_sk 环境变量或 terraform.tfvars）
+tofu plan
+
+# 执行部署
+tofu apply
 ```
 
-> ⚠️ **Provider 版本注意**：根据 `@cdktf-provider-huaweicloud` 的版本，`region` 可能需要在 `HuaweiCloudProvider` 层配置，而非在单个 resource 上。`index_document` / `error_document` 等属性名也可能因 provider 版本而异（snake_case vs camelCase）。建议在执行前查阅 provider 的 [Terraform Registry 文档](https://registry.terraform.io/providers/huaweicloud/huaweicloud/latest/docs/resources/obs_bucket) 确认属性名。
+> ⚠️ **凭据配置**：AK/SK 通过 `TF_VAR_ak` / `TF_VAR_sk` 环境变量或 `terraform.tfvars`（gitignored）注入，与之前 CDKTF 时期的 `HUAWEICLOUD_SDK_AK` / `HUAWEICLOUD_SDK_SK` 不同。Provider 版本锁定在 `.terraform.lock.hcl`（git tracked），确保跨环境一致性。Provider 文档见 [OpenTofu Registry](https://search.opentofu.org/provider/opentofu/huaweicloud)。
 
 ### 11.3 方式二：obsutil CLI
 
@@ -1059,7 +1098,7 @@ sequenceDiagram
 3. **移除冗余 artifact_source.commands**：确认部署流程仅依赖 Dockerfile 构建后，移除 `.agentarts_config.yaml` 中 `artifact_source.commands` 块（见 §15.8）
 4. **安全加固**：确认 `.agentarts_config.yaml` 不会因 git 操作泄露；考虑使用 CI/CD secret 管理环境变量
 5. **自动化**：在 CI pipeline 中集成 docker build → push → launch → smoke 流程（参考 `cicd.md` §2.2）
-6. **IaC 完善**：如果 OBS Bucket 通过 Console/obsutil 手动创建，迁移到 `personal-assistant-infra/` CDKTF 管理（参考 §11.2）
+6. **IaC 完善**：如果 OBS Bucket 通过 Console/obsutil 手动创建，迁移到 `personal-assistant-infra/` OpenTofu + HCL 管理（参考 §11.2）
 7. **前端环境变量标准化**：确保前端代码统一使用 `import.meta.env.VITE_API_BASE_URL` 拼接 API URL（当前为首次部署，可能使用临时硬编码）
 8. **OBS 缓存策略**：批量设置 JS/CSS bundle 长缓存 + `index.html` no-cache（见 §12.2，非阻塞但推荐）
 9. **前端 .env.production**：添加到 `.gitignore`，避免 Runtime 域名泄露到仓库

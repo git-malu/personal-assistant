@@ -1,6 +1,6 @@
 # Personal Assistant Infra
 
-CDKTF + TypeScript 管理华为云基础资源。Provider 为 `huaweicloud/huaweicloud`（v1.92+），通过 `cdktf get` 生成本地 TypeScript bindings。
+OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweicloud`（`~> 1.92`）。
 
 ## 管理的资源
 
@@ -12,58 +12,55 @@ CDKTF + TypeScript 管理华为云基础资源。Provider 为 `huaweicloud/huawe
 
 ## 前置条件
 
-- **Node.js** ≥ 18，**npm** ≥ 9
-- **HuaweiCloud credentials**：`HUAWEICLOUD_SDK_AK` / `HUAWEICLOUD_SDK_SK` 环境变量
-- **IAM 权限**：OBS FullAccess（当前必需），SWR FullAccess（后续使用）
-- **Terraform CLI**：用于 provider bindings 生成（`cdktf get`），部署本身不直接依赖
+- **OpenTofu CLI** ≥ 1.6（Linux 基金会托管，MPL 协议）：`brew install opentofu`
+- **华为云凭据**：AK/SK（通过 `terraform.tfvars` 或环境变量 `TF_VAR_ak` / `TF_VAR_sk` 注入）
+- **IAM 权限**：OBS FullAccess（当前必需）
 
 ## 快速开始
 
 ```bash
 cd personal-assistant-infra
 
-# 安装依赖
-npm install
+# 初始化（首次或 provider 版本变更时）
+tofu init
 
-# 生成/更新 provider bindings（首次或 provider 版本变更时）
-npx cdktf get
-```
+# 语法验证
+tofu validate
 
-## 验证
+# 格式检查与自动修复
+tofu fmt -check
+tofu fmt
 
-```bash
-# TypeScript 类型检查
-npx tsc --noEmit
-
-# 生成 Terraform JSON → cdktf.out/
-npx cdktf synth
-
-# 运行单元测试（Jest + cdktf snapshot）
-npm test
+# 预览变更计划（需要华为云凭据）
+tofu plan
 ```
 
 ## 部署
 
 ```bash
-# 1. 配置华为云凭据
-export HUAWEICLOUD_SDK_AK="<your-ak>"
-export HUAWEICLOUD_SDK_SK="<your-sk>"
+# 1. 配置华为云凭据（二选一）
+# 方式 A：通过 terraform.tfvars（推荐）
+cat > terraform.tfvars <<EOF
+ak = "your-ak"
+sk = "your-sk"
+EOF
 
-# 2. 预览变更计划
-npx cdktf diff
+# 方式 B：通过环境变量
+export TF_VAR_ak="<your-ak>"
+export TF_VAR_sk="<your-sk>"
 
-# 3. 执行部署
-npx cdktf deploy
+# 2. 执行部署
+tofu apply
 ```
 
 ## 销毁
 
 ```bash
 # ⚠️ 删除 OBS bucket 及所有内容。生产环境慎用。
-npx cdktf destroy
+tofu destroy
 ```
 
-## 部署后快速验证
+## 部署后验证
 
 ```bash
 # 静态网站主页可访问
@@ -79,34 +76,27 @@ curl -sI https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuawei
 
 ```
 personal-assistant-infra/
-├── main.ts                 # CDKTF App entry point
-├── stacks/
-│   ├── pa-stack.ts         # PersonalAssistantStack — OBS bucket + provider
-│   └── __tests__/
-│       └── pa-stack.test.ts # Unit tests (Jest + cdktf snapshot)
-├── constructs/
-│   └── .gitkeep            # Placeholder for future reusable constructs
-├── package.json            # cdktf + constructs + devDependencies
-├── tsconfig.json           # TypeScript config (ES2022, commonjs, strict)
-├── cdktf.json              # CDKTF provider config (huaweicloud/huaweicloud)
-├── jest.config.js          # Jest config (ts-jest preset)
-├── .gitignore              # Excludes cdktf.out/ .gen/ coverage/ node_modules/ dist/
-├── AGENTS.md               # IaC 开发规范
-└── README.md               # 本文件
+├── main.tf                # Terraform/Provider 配置 + Backend
+├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
+├── variables.tf           # 变量声明（ak, sk, region）
+├── outputs.tf             # Stack outputs（website_endpoint 等）
+├── terraform.tfvars       # 变量赋值（gitignored，含敏感信息）
+├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
+├── .terraform/            # Provider 缓存（gitignored）
+├── .gitignore
+├── AGENTS.md              # IaC 开发规范
+└── README.md              # 本文件
 ```
 
-> `cdktf.out/`、`.gen/`、`coverage/`、`node_modules/`、`dist/` 为构建产物，已通过 `.gitignore` 排除。
+## 迁移记录
+
+2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
 
 ## 相关文档
 
 | 文档 | 说明 |
 |------|------|
-| [Chore-1 部署 Runbook](../personal-assistant-meta/issues/chores/chore-1-agentarts-deploy/plan.md) | 首次部署操作手册（含 OBS Bucket 创建 §12） |
-| [ADR-006 IaC 选型](../personal-assistant-meta/architecture/ADR/ADR-006-iac-cdktf-typescript.md) | CDKTF + TypeScript 技术决策 |
+| [ADR-006 IaC 选型](../personal-assistant-meta/architecture/ADR/ADR-006-iac-cdktf-typescript.md) | OpenTofu + HCL 技术决策 |
+| [CI/CD 架构](../personal-assistant-meta/architecture/devops/cicd.md) | 分层部署策略与 IaC 触发时机 |
 | [Overall Architecture](../personal-assistant-meta/architecture/overall_architecture.md) | 系统整体架构 |
 | [Infra AGENTS.md](./AGENTS.md) | IaC 开发约定与规范 |
-
-## 已知限制
-
-- **Terraform state 为本地存储**：OBS backend（`pa-terraform-state` bucket）为最终目标，但需要预置 state bucket（chicken-and-egg 问题）。首次部署后迁移。见 `stacks/pa-stack.ts` 中的 TODO 注释及 runbook §19。
-- **无 CI/CD 集成**：当前部署为手动 CLI 操作。CI pipeline 集成见 `cicd.md`。

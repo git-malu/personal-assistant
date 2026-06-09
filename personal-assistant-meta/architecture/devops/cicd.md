@@ -31,7 +31,7 @@ flowchart TB
 
     Layer1 -->|agentarts_config.yaml| CI1["agentarts launch"]
     Layer2 -->|控制台 / API| CI2["手动 / 未来自动化"]
-    Layer3 -->|Terraform / RFS| CI3["未来引入"]
+    Layer3 -->|OpenTofu / RFS| CI3["OpenTofu / RFS"]
 ```
 
 ---
@@ -190,45 +190,29 @@ terraform {
   required_providers {
     huaweicloud = {
       source  = "huaweicloud/huaweicloud"
-      version = "~> 1.60"
+      version = "~> 1.92"
     }
   }
-  backend "s3" {
-    bucket = "pa-terraform-state"
-    key    = "prod/terraform.tfstate"
-    region = "cn-southwest-2"
-  }
+  # State 当前为本地存储。
+  # OBS backend 为长期目标，详见 ADR-006。
 }
 
 provider "huaweicloud" {
-  region = "cn-southwest-2"
+  region     = var.region
+  access_key = var.ak
+  secret_key = var.sk
 }
 
 # Web Chat 前端静态托管
 resource "huaweicloud_obs_bucket" "web_chat" {
-  bucket = "personal-assistant-web-chat"
-  acl    = "public-read"
+  bucket     = "personal-assistant-web-chat"
+  acl        = "public-read"
+  versioning = true
 
   website {
     index_document = "index.html"
-    error_document = "index.html"
+    error_document = "index.html" # SPA fallback
   }
-}
-
-# 用户-渠道映射数据库
-resource "huaweicloud_rds_instance" "user_mapping" {
-  name              = "pa-user-mapping"
-  flavor            = "rds.pg.n1.large.2"
-  availability_zone = ["cn-southwest-2a"]
-
-  db {
-    type     = "PostgreSQL"
-    version  = "14"
-    password = var.db_password
-  }
-
-  vpc_id    = huaweicloud_vpc.main.id
-  subnet_id = huaweicloud_vpc_subnet.main.id
 }
 ```
 
