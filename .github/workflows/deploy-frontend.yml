@@ -72,10 +72,10 @@ jobs:
 
       - name: Smoke test
         run: |
-          OBS_DOMAIN="https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
+          DOMAIN="https://chat.resource-governance.cloud"
 
           # index.html accessible
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$OBS_DOMAIN/index.html")
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$DOMAIN/index.html")
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ index.html returned $HTTP_CODE"
             exit 1
@@ -83,11 +83,11 @@ jobs:
           echo "✅ index.html: 200"
 
           # SPA fallback: /chat should return 200 (not 404)
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$OBS_DOMAIN/chat")
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$DOMAIN/chat")
           if [ "$HTTP_CODE" != "200" ]; then
             echo "⚠️  SPA fallback returned $HTTP_CODE (check OBS Error document config)"
           else
             echo "✅ SPA fallback (/chat): 200"
           fi
 
-          echo "✅ Frontend deployed: $OBS_DOMAIN"
+          echo "✅ Frontend deployed: $DOMAIN"

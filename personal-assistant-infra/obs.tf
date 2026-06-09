@@ -13,3 +13,7 @@ resource "huaweicloud_obs_bucket" "web_chat" {
     error_document = "index.html" # SPA fallback: 所有路由返回 index.html
   }
 }
+
+# 🔧 自定义域名绑定不支持 Terraform，需手动在 OBS 控制台操作：
+#   控制台 → OBS → personal-assistant-web-chat → 域名管理 → 绑定用户域名
+#   输入: chat.resource-governance.cloud
