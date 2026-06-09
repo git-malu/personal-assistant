@@ -68,7 +68,7 @@ jobs:
       - name: Upload to OBS
         working-directory: personal-assistant-client
         run: |
-          obsutil cp dist/ obs://personal-assistant-web-chat/ -r -f
+          cd dist && obsutil cp ./ obs://personal-assistant-web-chat/ -r -f -acl=public-read
           echo "✅ Uploaded to obs://personal-assistant-web-chat/"
 
       - name: Set cache headers
