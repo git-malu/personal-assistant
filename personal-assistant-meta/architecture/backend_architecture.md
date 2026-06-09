@@ -12,12 +12,10 @@
 flowchart TB
     subgraph Container["AgentArts 容器 :8080"]
         subgraph Routes["路由层"]
-            Ping["GET /ping<br/>健康检查"]
-            Chat_Stream["GET /chat/stream<br/>SSE 流式对话"]
-            Playground["GET /playground<br/>Chainlit 调试 UI"]
+            Ping["GET /ping<br/>健康检查（平台内部）"]
             Invoke["POST /invocations<br/>AgentArts / OfficeClaw 调用"]
-            FS_Webhook["POST /feishu/webhook<br/>飞书事件回调"]
-            Auth_CB["GET /auth/callback<br/>OAuth 回调"]
+            Chat_Stream["GET /invocations/stream<br/>SSE 流式对话"]
+            Playground["GET /invocations/playground<br/>Chainlit 调试 UI"]
         end
 
         subgraph Handler["Agent 处理逻辑"]
@@ -51,6 +49,34 @@ flowchart TB
 ---
 
 ## 2. 路由设计
+
+### 2.1 AgentArts Gateway 路由约束
+
+AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求，Gateway 只转发 `/invocations` 路径（默认 `ACCURATE_MATCH`）或其子路径（`PREFIX_MATCH`）：
+
+```
+浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
+                       │
+                  PREFIX_MATCH: /invocations/* → ✅ 转发
+                  其他路径: /playground, /api/* → ❌ 404 No matching policy found
+```
+
+**关键约束**：
+- `/ping` 是平台内部健康检查端点，**不走 Gateway**，AgentArts 控制面直接调容器。必须保留在根路径。
+- `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**。
+- **所有面向外部客户端的路由**必须收敛到 `/invocations/*` 前缀下——Gateway 无法配置自定义路由表或 wildcard。
+
+配置方式（`.agentarts_config.yaml`）：
+
+```yaml
+runtime:
+  invoke_config:
+    protocol: HTTP
+    port: 8080
+    url_match_type: PREFIX_MATCH  # 启用 /invocations/* 子路径转发
+```
+
+### 2.2 路由表
 
 ```python
 from fastapi import FastAPI, Request
@@ -105,7 +131,7 @@ async def oauth_callback(code: str):
     response.set_cookie("session", token["id_token"])
     return response
 
-@app.get("/chat/stream")
+@app.get("/invocations/stream")
 async def chat_stream(q: str, request: Request):
     """SSE 流式对话 — 给浏览器前端推送逐 token 响应"""
     user_id = get_user_from_cookie(request)
@@ -113,15 +139,19 @@ async def chat_stream(q: str, request: Request):
         agent_handler.handle_stream(message=q, user_id=user_id),
         media_type="text/event-stream",
     )
+
+# Chainlit 调试 UI（挂载在 /invocations 前缀下）
+mount_chainlit(app=app, target=..., path="/invocations/playground")
 ```
 
-| 路由 | 方法 | 调用方 | 用途 |
-|------|------|--------|------|
-| `/ping` | GET | AgentArts 平台 | 健康检查 |
-| `/invocations` | POST | AgentArts / OfficeClaw | Agent 对话 |
-| `/feishu/webhook` | POST | 飞书服务器 | 飞书事件回调 |
-| `/auth/callback` | GET | 浏览器 | OAuth 回调 (Microsoft Entra ID) |
-| `/chat/stream` | GET | 浏览器 | SSE 流式对话 |
+| 路由 | 方法 | 调用方 | 用途 | Gateway 可见 |
+|------|------|--------|------|-------------|
+| `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
+| `/invocations` | POST | AgentArts SDK / OfficeClaw | Agent 对话 | ✅ |
+| `/invocations/stream` | GET | 浏览器 | SSE 流式对话 | ✅（PREFIX_MATCH） |
+| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅（PREFIX_MATCH） |
+
+> **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
 
 ---
 
@@ -307,11 +337,13 @@ personal-assistant/
 
 | AgentArtsRuntimeApp | 本方案 (FastAPI) |
 |---------------------|------------------|
-| 仅提供 `/ping` + `/invocations` | 自由定义任意路由 |
-| 不能添加 OAuth 回调 | `/auth/callback` |
-| 不能添加 SSE 流式 | `/chat/stream` |
-| 不能添加飞书 Webhook | `/feishu/webhook` |
+| 仅提供 `/ping` + `/invocations` | 可定义任意路由 |
+| 不能添加 OAuth 回调 | `/auth/callback`（仅本地调试可用） |
+| 不能添加 SSE 流式 | `/invocations/stream`（PREFIX_MATCH） |
+| 不能添加飞书 Webhook | 飞书通过平台 MCP Gateway 集成 |
 | `agentarts dev` 启动 | `uvicorn main:app --port 8080` |
 | `agentarts launch` 自动部署 | 同样可以用 `agentarts launch` |
 
-AgentArts 平台只看容器 `:8080` 上有没有 `/ping` 和 `/invocations`，不关心 HTTP Server 用什么框架启动。FastAPI 完全可以替代 AgentArtsRuntimeApp。
+AgentArts 平台只看容器 `:8080` 上有没有 `/ping` 和 `/invocations`，不关心 HTTP Server 用什么框架启动。
+
+> ⚠️ **关键限制**：虽然 FastAPI 可以定义任意路由，但 AgentArts Gateway **只转发 `/invocations/*` 路径**（需启用 `PREFIX_MATCH`）。本地 `agentarts dev` 时所有路由可达，生产部署后只有 `/ping`（平台内部）和 `/invocations/*`（Gateway 转发）能通。路由设计必须遵守此约束。常见陷阱见 [AgentArts 部署 runbook §15.12](agentarts-deploy-runbook.md#1512-runtimearch-与镜像架构不一致)。
