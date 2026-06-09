@@ -30,7 +30,7 @@ export const chatAdapter: ChatModelAdapter = {
       lastUserMessage?.content.find((p) => p.type === "text")?.text ?? "";
 
     const response = await fetch(
-      `${baseUrl}/api/chat/stream?q=${encodeURIComponent(query)}`,
+      `${baseUrl}/invocations/stream?q=${encodeURIComponent(query)}`,
       {
         headers: { Accept: "text/event-stream" },
         signal: abortSignal,

@@ -129,7 +129,7 @@ async def test_invocations_missing_message_returns_400(client):
 async def test_invocations_whitespace_only_passes_through(client, fake_handler):
     """Whitespace-only message is NOT rejected — app uses `if not message`
     which treats whitespace as truthy. This is an inconsistency with
-    /api/chat/stream which uses `q.strip()`. Should be fixed upstream.
+    /invocations/stream which uses `q.strip()`. Should be fixed upstream.
     """
     response = await client.post("/invocations", json={"message": "   "})
     # Currently passes through; should be 400 after fix
@@ -174,14 +174,14 @@ async def test_lifespan_sets_agent_handler(fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/chat/stream
+# GET /invocations/stream
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_chat_stream_returns_sse(client):
-    """GET /api/chat/stream?q=hello returns 200 with text/event-stream."""
-    response = await client.get("/api/chat/stream?q=hello")
+    """GET /invocations/stream?q=hello returns 200 with text/event-stream."""
+    response = await client.get("/invocations/stream?q=hello")
     assert response.status_code == 200
     content_type = response.headers["content-type"]
     assert "text/event-stream" in content_type, f"Got: {content_type}"
@@ -196,7 +196,7 @@ async def test_chat_stream_returns_sse(client):
 @pytest.mark.asyncio
 async def test_chat_stream_content_format(client):
     """Verify SSE stream contains properly formatted JSON events."""
-    response = await client.get("/api/chat/stream?q=hello")
+    response = await client.get("/invocations/stream?q=hello")
     assert response.status_code == 200
 
     body = response.text
@@ -218,24 +218,24 @@ async def test_chat_stream_content_format(client):
 
 @pytest.mark.asyncio
 async def test_chat_stream_empty_query_returns_400(client):
-    """GET /api/chat/stream?q= (empty) returns 400."""
-    response = await client.get("/api/chat/stream?q=")
+    """GET /invocations/stream?q= (empty) returns 400."""
+    response = await client.get("/invocations/stream?q=")
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_chat_stream_missing_query_returns_400(client):
-    """GET /api/chat/stream without query param returns 400."""
-    response = await client.get("/api/chat/stream")
+    """GET /invocations/stream without query param returns 400."""
+    response = await client.get("/invocations/stream")
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_chat_stream_whitespace_query_returns_400(client):
-    """GET /api/chat/stream?q=%20%20 (spaces) returns 400."""
-    response = await client.get("/api/chat/stream?q=%20%20")
+    """GET /invocations/stream?q=%20%20 (spaces) returns 400."""
+    response = await client.get("/invocations/stream?q=%20%20")
     assert response.status_code == 400
 
 
@@ -245,27 +245,27 @@ async def test_chat_stream_whitespace_query_returns_400(client):
 
 
 class TestChainlitPlaygroundMount:
-    """Tests for the Chainlit /playground mount (Feature 1.4)."""
+    """Tests for the Chainlit /invocations/playground mount (Feature 1.4)."""
 
     def test_playground_mount_exists(self):
-        """FastAPI app includes a Mount at path /playground for Chainlit."""
+        """FastAPI app includes a Mount at path /invocations/playground for Chainlit."""
         from app.main import app
 
         mounts = [r for r in app.routes if isinstance(r, Mount)]
-        playground_routes = [m for m in mounts if m.path == "/playground"]
+        playground_routes = [m for m in mounts if m.path == "/invocations/playground"]
         assert len(playground_routes) == 1, (
-            f"Expected 1 Mount at /playground, got {len(playground_routes)}. "
+            f"Expected 1 Mount at /invocations/playground, got {len(playground_routes)}. "
             f"All mounts: {[(m.path, m.name) for m in mounts]}"
         )
 
     def test_playground_mount_is_chainlit_app(self):
-        """The /playground Mount wraps a Chainlit FastAPI sub-application."""
+        """The /invocations/playground Mount wraps a Chainlit FastAPI sub-application."""
         from fastapi import FastAPI
 
         from app.main import app
 
         mounts = [r for r in app.routes if isinstance(r, Mount)]
-        playground_routes = [m for m in mounts if m.path == "/playground"]
+        playground_routes = [m for m in mounts if m.path == "/invocations/playground"]
         playground_mount = playground_routes[0]
 
         assert isinstance(playground_mount.app, FastAPI), (
@@ -287,7 +287,7 @@ class TestChainlitPlaygroundMount:
 
     @pytest.mark.asyncio
     async def test_playground_redirect_trailing_slash(self):
-        """GET /playground (no trailing slash) returns 307 redirect to /playground/."""
+        """GET /invocations/playground (no trailing slash) returns 307 redirect to /invocations/playground/."""
         import httpx
 
         from app.main import app
@@ -296,13 +296,13 @@ class TestChainlitPlaygroundMount:
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", follow_redirects=False
         ) as ac:
-            response = await ac.get("/playground")
+            response = await ac.get("/invocations/playground")
             assert response.status_code == 307, (
                 f"Expected 307 Temporary Redirect, got {response.status_code}"
             )
             location = response.headers.get("location")
-            assert location == "/playground/", (
-                f"Expected location=/playground/, got location={location!r}"
+            assert location == "/invocations/playground/", (
+                f"Expected location=/invocations/playground/, got location={location!r}"
             )
 
 

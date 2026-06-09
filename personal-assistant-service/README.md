@@ -61,7 +61,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ### 4. 打开浏览器
 
-访问 `http://localhost:8080/playground` 进入 Chainlit 调试界面。API 端点见下方。
+访问 `http://localhost:8080/invocations/playground` 进入 Chainlit 调试界面。API 端点见下方。
 
 ## API 端点
 
@@ -69,7 +69,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 |------|------|------|
 | `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | 非流式对话，供 AgentArts / OfficeClaw 调用 |
-| `GET` | `/api/chat/stream?q=...` | SSE 流式对话，供 Web Chat 前端使用 |
+| `GET` | `/invocations/stream?q=...` | SSE 流式对话，供 Web Chat 前端使用 |
 
 ### 示例
 
@@ -83,7 +83,7 @@ curl -X POST http://localhost:8080/invocations \
   -d '{"message":"你好"}'
 
 # SSE 流式对话
-curl -N "http://localhost:8080/api/chat/stream?q=你好"
+curl -N "http://localhost:8080/invocations/stream?q=你好"
 ```
 
 ### SSE 数据格式
@@ -137,7 +137,7 @@ uv run ruff format --check .
 ## 架构
 
 ```
-Browser ──GET /api/chat/stream?q=...──→ StreamingResponse
+Browser ──GET /invocations/stream?q=...──→ StreamingResponse
   │
   │  SSE 响应
   │

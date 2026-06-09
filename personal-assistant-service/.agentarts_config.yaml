@@ -24,7 +24,7 @@ agents:
         protocol: HTTP
         port: 8080
         file_transfer_config: null
-        url_match_type: ACCURATE_MATCH
+        url_match_type: PREFIX_MATCH
       network_config:
         network_mode: PUBLIC
         vpc_config:

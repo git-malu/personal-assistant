@@ -75,7 +75,7 @@ async def invocations(request: Request):
     return {"response": result}
 
 
-@app.get("/api/chat/stream")
+@app.get("/invocations/stream")
 async def chat_stream(request: Request, q: str = ""):
     """Streaming chat endpoint using Server-Sent Events."""
     if not q.strip():
@@ -101,11 +101,11 @@ async def chat_stream(request: Request, q: str = ""):
 # === Chainlit Playground（Agent 调试 UI）===
 
 
-@app.get("/playground", include_in_schema=False)
+@app.get("/invocations/playground", include_in_schema=False)
 async def playground_redirect():
     """Redirect /playground to /playground/ (Chainlit mount requires trailing slash)."""
-    return RedirectResponse(url="/playground/")
+    return RedirectResponse(url="/invocations/playground/")
 
 
-mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), path="/playground")
+mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), path="/invocations/playground")
 

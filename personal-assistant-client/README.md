@@ -106,7 +106,7 @@ npm run test:watch
 ## 架构
 
 ```
-浏览器 ──GET /──→ Vite Dev Server (:5173) ──proxy /api/*──→ FastAPI (:8080)
+浏览器 ──GET /──→ Vite Dev Server (:5173) ──proxy /api/*, /invocations/*──→ FastAPI (:8080)
   │                    │                                    │
   │  React App         │                                    │
   │  ├─ ChatContainer  │                                    │
@@ -114,7 +114,7 @@ npm run test:watch
   │  │  │  └─ MessageBubble × N                             │
   │  │  │     └─ StreamingText (react-markdown)             │
   │  │  └─ ChatInput    │                                    │
-  │  └─ useChat hook ───┘── EventSource ── SSE ────────────→ /api/chat/stream
+  │  └─ useChat hook ───┘── EventSource ── SSE ────────────→ /invocations/stream
   │                                                                   │
   └── 生产模式 ──GET /──→ FastAPI StaticFiles ── serve dist/ ──→ 同上
 ```

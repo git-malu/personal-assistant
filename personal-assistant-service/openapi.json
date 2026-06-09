@@ -39,11 +39,11 @@
         }
       }
     },
-    "/api/chat/stream": {
+    "/invocations/stream": {
       "get": {
         "summary": "Chat Stream",
         "description": "Streaming chat endpoint using Server-Sent Events.",
-        "operationId": "chat_stream_api_chat_stream_get",
+        "operationId": "chat_stream_invocations_stream_get",
         "parameters": [
           {
             "name": "q",

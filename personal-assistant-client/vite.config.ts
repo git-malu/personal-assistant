@@ -26,10 +26,14 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '/playground': {
+      '/invocations/playground': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         ws: true,
+      },
+      '/invocations': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
       },
     },
   },
