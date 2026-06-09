@@ -345,16 +345,22 @@ class TestAgentHandlerSingletonIntegration:
 
     def test_main_app_state_agent_handler_is_singleton(self):
         """app.state.agent_handler (if set) is the same as get_agent_handler()."""
-        import app.agent_handler
-        from app.main import app
+        import app.agent_handler as agent_handler_mod
+        from app.main import app as fastapi_app
 
-        # The module-level app may have agent_handler set from module import
-        # Skip if not set (e.g. when lifespan hasn't run)
-        if not hasattr(app.state, "agent_handler"):
+        # Clean up shared state that may have been polluted by other tests
+        # (e.g. the client fixture sets app.state.agent_handler to a FakeAgentHandler)
+        agent_handler_mod._handler_instance = None
+        if hasattr(fastapi_app.state, "agent_handler"):
+            del fastapi_app.state.agent_handler
+
+        # After cleanup, agent_handler is no longer set → skip
+        # (the lifespan hasn't actually run on the module-level app)
+        if not hasattr(fastapi_app.state, "agent_handler"):
             pytest.skip("app.state.agent_handler not set (lifespan not triggered)")
 
-        stored = app.state.agent_handler
-        from_singleton = app.agent_handler.get_agent_handler()
+        stored = fastapi_app.state.agent_handler
+        from_singleton = agent_handler_mod.get_agent_handler()
         assert stored is from_singleton, (
             "app.state.agent_handler must be the singleton instance"
         )

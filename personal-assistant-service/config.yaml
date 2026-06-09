@@ -11,3 +11,9 @@ llm:
       base_url: https://api.deepseek.com
       api_key_env: DEEPSEEK_API_KEY
       model: deepseek-chat
+
+# ── OBS 对象存储配置 ──
+# 详见 Feature 10: Outbound Email + OBS
+obs:
+  endpoint: https://obs.cn-southwest-2.myhuaweicloud.com
+  sts_provider_name: huaweicloud-sts-provider

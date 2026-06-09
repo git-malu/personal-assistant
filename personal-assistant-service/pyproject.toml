@@ -12,6 +12,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
     "chainlit>=2.11.1",
+    "agentarts-sdk>=0.1.3",
+    "esdk-obs-python>=3.22.0",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,7 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
+    "azure-identity>=1.19.0",
 ]
 
 [tool.ruff.lint]

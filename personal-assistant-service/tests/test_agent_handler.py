@@ -40,7 +40,12 @@ class TestAgentHandlerInit:
         kwargs = mock_create_agent.call_args[1]
         assert kwargs["model"] is mock_model
         assert kwargs["system_prompt"] == SYSTEM_PROMPT
-        assert kwargs["tools"] == []
+        # Feature 10 added 8 tools (5 email + 3 OBS) — verify they are present
+        tool_names = [t.__name__ for t in kwargs["tools"]]
+        assert "list_emails" in tool_names
+        assert "send_email" in tool_names
+        assert "list_obs_objects" in tool_names
+        assert len(kwargs["tools"]) == 8
 
         # Verify handler stores model and agent references
         assert handler.model is mock_model
