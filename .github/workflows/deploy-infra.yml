@@ -1,0 +1,55 @@
+name: Deploy Infrastructure
+
+on:
+  pull_request:
+    paths:
+      - "personal-assistant-infra/**"
+      - ".github/workflows/deploy-infra.yml"
+  push:
+    branches: [main]
+    paths:
+      - "personal-assistant-infra/**"
+      - ".github/workflows/deploy-infra.yml"
+  workflow_dispatch:
+
+jobs:
+  tofu:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "~> 1.9"
+
+      - name: tofu init
+        working-directory: personal-assistant-infra
+        run: tofu init
+
+      - name: tofu validate
+        working-directory: personal-assistant-infra
+        run: tofu validate
+
+      - name: tofu fmt check
+        working-directory: personal-assistant-infra
+        run: tofu fmt -check -recursive
+
+      - name: tofu plan
+        working-directory: personal-assistant-infra
+        env:
+          TF_VAR_ak: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          TF_VAR_sk: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          TF_VAR_region: "cn-southwest-2"
+        run: tofu plan -input=false
+
+      - name: tofu apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: personal-assistant-infra
+        env:
+          TF_VAR_ak: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          TF_VAR_sk: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          TF_VAR_region: "cn-southwest-2"
+        run: tofu apply -auto-approve -input=false

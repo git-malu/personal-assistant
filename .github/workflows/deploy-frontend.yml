@@ -1,0 +1,106 @@
+name: Deploy Frontend to OBS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "personal-assistant-client/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: personal-assistant-client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: personal-assistant-client
+        run: npm ci
+
+      - name: Type check
+        working-directory: personal-assistant-client
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: personal-assistant-client
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - name: Verify build output
+        working-directory: personal-assistant-client
+        run: |
+          test -f dist/index.html || (echo "❌ dist/index.html missing" && exit 1)
+          echo "✅ Build output:"
+          ls -la dist/
+
+      - name: Install obsutil
+        run: |
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "aarch64" ]; then
+            OBSUTIL_ARCH="arm64"
+          else
+            OBSUTIL_ARCH="amd64"
+          fi
+          curl -fsSL "https://obs-community.obs.cn-north-1.myhuaweicloud.com/obsutil/current/obsutil_linux_${OBSUTIL_ARCH}.tar.gz" -o obsutil.tar.gz
+          tar -xzf obsutil.tar.gz
+          sudo mv obsutil_linux_${OBSUTIL_ARCH}_*/obsutil /usr/local/bin/obsutil
+          rm -rf obsutil.tar.gz obsutil_linux_${OBSUTIL_ARCH}_*
+          obsutil version
+
+      - name: Configure obsutil
+        run: |
+          obsutil config \
+            -i="${{ secrets.HUAWEICLOUD_SDK_AK }}" \
+            -k="${{ secrets.HUAWEICLOUD_SDK_SK }}" \
+            -e="obs.cn-southwest-2.myhuaweicloud.com"
+
+      - name: Upload to OBS
+        working-directory: personal-assistant-client
+        run: |
+          obsutil cp dist/ obs://personal-assistant-web-chat/ -r -f
+          echo "✅ Uploaded to obs://personal-assistant-web-chat/"
+
+      - name: Set cache headers
+        run: |
+          # index.html: no-cache (ensure users always get latest version)
+          obsutil set-object-property obs://personal-assistant-web-chat/index.html \
+            --cache-control="no-cache, no-store, must-revalidate" || true
+
+          # assets/: long cache (content-hash filenames are immutable)
+          for f in $(obsutil ls obs://personal-assistant-web-chat/assets/ -r -s | awk '{print $5}'); do
+            obsutil set-object-property "$f" \
+              --cache-control="public, max-age=31536000, immutable" || true
+          done
+
+      - name: Smoke test
+        run: |
+          OBS_DOMAIN="https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
+
+          # index.html accessible
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$OBS_DOMAIN/index.html")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ index.html returned $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ index.html: 200"
+
+          # SPA fallback: /chat should return 200 (not 404)
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$OBS_DOMAIN/chat")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "⚠️  SPA fallback returned $HTTP_CODE (check OBS Error document config)"
+          else
+            echo "✅ SPA fallback (/chat): 200"
+          fi
+
+          echo "✅ Frontend deployed: $OBS_DOMAIN"
