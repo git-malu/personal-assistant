@@ -27,6 +27,64 @@ AgentArts 部署后发现以下现象：
 2. `/ping` 是 AgentArts 平台内部健康检查端点，不走 Gateway，必须保留在根路径
 3. `POST /invocations` 是 AgentArts SDK 的 invoke 入口，必须保留在根路径
 
+### Gateway URL 匹配模式详解
+
+AgentArts API Gateway 是部署在容器前面的唯一入口，所有外部请求（浏览器、`agentarts invoke`、InvokeRuntime API）都经过它。Gateway 决定了**哪些 URL 路径能被转发到容器**——不匹配的请求直接在 Gateway 层被拒绝（`404 No matching policy found`），连容器都到达不了。
+
+#### `ACCURATE_MATCH`（默认值）
+
+精确匹配，仅转发路径**严格等于** `/invocations` 的请求：
+
+```
+✅ POST /invocations              → 转发到容器 :8080/invocations
+❌ GET  /invocations/             → 404（多了个斜杠）
+❌ GET  /invocations/stream       → 404（子路径）
+❌ GET  /invocations/playground   → 404（子路径）
+❌ GET  /api/chat/stream          → 404（不同路径）
+❌ GET  /playground               → 404（不同路径）
+```
+
+> `/ping` 不受影响——它是 AgentArts 控制面直接调容器做健康检查的，不走 Gateway。
+
+**适用场景**：纯 SDK Agent（`AgentArtsRuntimeApp`），只有 `/invocations` 一个入口，通过 `agentarts invoke` 或 OfficeClaw 调用。
+
+#### `PREFIX_MATCH`
+
+前缀匹配，转发所有以 `/invocations/` 开头的请求：
+
+```
+✅ POST /invocations              → 转发到容器 :8080/invocations
+✅ GET  /invocations/stream       → 转发到容器 :8080/invocations/stream
+✅ GET  /invocations/stream?q=hi  → 转发（query 不影响路径匹配）
+✅ GET  /invocations/playground   → 转发到容器 :8080/invocations/playground
+✅ GET  /invocations/anything     → 转发到容器 :8080/invocations/anything
+❌ GET  /playground               → 404（不以 /invocations/ 开头）
+❌ GET  /api/chat/stream          → 404（不以 /invocations/ 开头）
+```
+
+**适用场景**：Custom Container 模式（自己写 FastAPI），需要在 Gateway 后暴露多个自定义路由。
+
+#### 本项目的影响
+
+| 路由 | 用途 | `ACCURATE_MATCH` | `PREFIX_MATCH` |
+|------|------|:---:|:---:|
+| `POST /invocations` | AgentArts SDK invoke 入口 | ✅ | ✅ |
+| `GET /invocations/stream` | SSE 流式对话（Web Chat 前端） | ❌ | ✅ |
+| `GET /invocations/playground` | Chainlit 调试 UI | ❌ | ✅ |
+
+用 `ACCURATE_MATCH` 时，3 条路由只有 1 条能通。**必须用 `PREFIX_MATCH`** 并把所有面向外部的路由收敛到 `/invocations/*` 前缀下。
+
+#### Gateway 不支持的能力
+
+```
+❌ Wildcard:      /invocations/*/detail
+❌ 正则匹配:       /invocations/\d+
+❌ 自定义路由表:   多条规则（如同时转发 /api/* 和 /webhook/*）
+❌ 多前缀:        同时转发 /invocations/* 和 /playground/*
+```
+
+只有两个枚举值，没有中间地带。这意味着 `/auth/callback`（OAuth 回调）、`/feishu/webhook`（飞书事件）等需要独立 URL 的路由无法通过 Gateway 暴露——这类功能必须在浏览器侧处理（前端发起 OAuth），或通过 OfficeClaw 长连接模式绕过公网 URL 需求。
+
 ---
 
 ## 范围
