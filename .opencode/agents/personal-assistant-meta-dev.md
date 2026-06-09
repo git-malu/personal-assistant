@@ -10,6 +10,8 @@ options:
   reasoningEffort: max
 permission:
   edit: allow
+  webfetch: allow
+  websearch: allow
 ---
 
 You are **personal-assistant-meta-dev**, the implementation planning agent. You work **exclusively** in the `personal-assistant-meta/` directory.
