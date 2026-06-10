@@ -5,7 +5,6 @@ and environment configuration across E2E test scenarios.
 """
 
 import os
-import shutil
 import subprocess
 import sys
 import time

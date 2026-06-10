@@ -23,7 +23,6 @@ import pytest
 # pytest automatically discovers conftest.py in the e2e root directory.
 from conftest import ServiceProcess
 
-
 # ── Scenario 1: Health check still works ────────────────────────────────
 
 
@@ -203,7 +202,7 @@ class TestScenario4_PlaygroundRedirect:
         # Chainlit delivers an SPA shell with HTML structure
         html_lower = resp.text.lower()
         assert "<html" in html_lower or "<!doctype html>" in html_lower, (
-            f"Expected HTML structure in /playground/ response"
+            "Expected HTML structure in /playground/ response"
         )
 
 

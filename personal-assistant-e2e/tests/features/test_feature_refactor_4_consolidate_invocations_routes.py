@@ -22,7 +22,6 @@ import pytest
 # Import shared ServiceProcess fixture from e2e conftest.
 from conftest import ServiceProcess
 
-
 # ── Scenario 1: Health check endpoint unchanged ──────────────────────────
 
 
@@ -293,7 +292,7 @@ class TestScenario5_PlaygroundRedirectNewPath:
         # Chainlit delivers an SPA shell with HTML structure
         html_lower = resp.text.lower()
         assert "<html" in html_lower or "<!doctype html>" in html_lower, (
-            f"Expected HTML structure in /invocations/playground/ response"
+            "Expected HTML structure in /invocations/playground/ response"
         )
 
     def test_playground_survives_multiple_requests(self, service_url):

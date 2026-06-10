@@ -191,7 +191,6 @@ class TestScenario1_CORSIntegration:
         The lifespan does NOT run under TestClient, so AgentHandler is never
         instantiated — we bypass it entirely by setting app.state.agent_handler.
         """
-        import os
 
         class MockAgentHandler:
             async def handle(self, message, user_id="anonymous", session_id=None):
@@ -262,10 +261,10 @@ class TestScenario1_CORSIntegration:
             f"got {acao!r}"
         )
         assert "access-control-allow-methods" in resp.headers, (
-            f"Preflight response missing Access-Control-Allow-Methods header"
+            "Preflight response missing Access-Control-Allow-Methods header"
         )
         assert resp.headers.get("access-control-allow-credentials") == "true", (
-            f"Preflight response missing Access-Control-Allow-Credentials: true"
+            "Preflight response missing Access-Control-Allow-Credentials: true"
         )
 
 
@@ -415,7 +414,7 @@ class TestScenario3_InfraStackValidity:
         assert cdktf_out.is_dir(), f"cdktf.out/ not found after synth at {cdktf_out}"
 
         stack_dirs = list(cdktf_out.glob("stacks/*"))
-        assert len(stack_dirs) > 0, f"No stack directories found in cdktf.out/stacks/"
+        assert len(stack_dirs) > 0, "No stack directories found in cdktf.out/stacks/"
 
     def test_synthesized_json_has_obs_bucket_config(self):
         """The synthesized Terraform JSON contains expected OBS bucket settings."""
