@@ -1,6 +1,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from json import JSONDecodeError
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,8 +12,8 @@ logger = logging.getLogger("uvicorn")
 
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 
@@ -63,11 +64,35 @@ async def ping():
     return {"status": "ok"}
 
 
-@app.post("/invocations")
+@app.post(
+    "/invocations",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["message"],
+                        "properties": {
+                            "message": {"type": "string"},
+                            "stream": {"type": "boolean", "default": False},
+                        },
+                    }
+                }
+            },
+        }
+    },
+)
 async def invocations(request: Request):
-    """Synchronous agent invocation endpoint."""
-    body = await request.json()
+    """Agent invocation endpoint, supporting sync JSON and SSE streaming."""
+    try:
+        body = await request.json()
+    except JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from e
+
     message = body.get("message", "")
+    stream = body.get("stream", False)
     user_id = request.headers.get("X-AgentArts-User-Id", "anonymous")
     session_id = request.headers.get("X-AgentArts-Session-Id")
 
@@ -75,6 +100,28 @@ async def invocations(request: Request):
         raise HTTPException(status_code=400, detail="message is required")
 
     handler: AgentHandler = request.app.state.agent_handler
+
+    if stream:
+        if not message.strip():
+            raise HTTPException(status_code=400, detail="message is required")
+
+        async def event_generator():
+            async for sse_data in handler.handle_stream(
+                message=message,
+                user_id=user_id,
+            ):
+                yield sse_data
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     result = await handler.handle(
         message=message,
         user_id=user_id,
@@ -82,29 +129,6 @@ async def invocations(request: Request):
     )
 
     return {"response": result}
-
-
-@app.get("/invocations/stream")
-async def chat_stream(request: Request, q: str = ""):
-    """Streaming chat endpoint using Server-Sent Events."""
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="query parameter 'q' is required")
-
-    handler: AgentHandler = request.app.state.agent_handler
-
-    async def event_generator():
-        async for sse_data in handler.handle_stream(message=q, user_id="anonymous"):
-            yield sse_data
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 # === Chainlit Playground（Agent 调试 UI）===
@@ -116,5 +140,8 @@ async def playground_redirect():
     return RedirectResponse(url="/invocations/playground/")
 
 
-mount_chainlit(app=app, target=str(Path(__file__).parent / "playground.py"), path="/invocations/playground")
-
+mount_chainlit(
+    app=app,
+    target=str(Path(__file__).parent / "playground.py"),
+    path="/invocations/playground",
+)

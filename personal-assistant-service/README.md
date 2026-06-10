@@ -68,8 +68,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
-| `POST` | `/invocations` | 非流式对话，供 AgentArts / OfficeClaw 调用 |
-| `GET` | `/invocations/stream?q=...` | SSE 流式对话，供 Web Chat 前端使用 |
+| `POST` | `/invocations` | 统一对话入口；不传 `stream` 或 `stream:false` 返回 JSON，`stream:true` 返回 SSE |
 
 ### 示例
 
@@ -83,7 +82,10 @@ curl -X POST http://localhost:8080/invocations \
   -d '{"message":"你好"}'
 
 # SSE 流式对话
-curl -N "http://localhost:8080/invocations/stream?q=你好"
+curl -N -X POST http://localhost:8080/invocations \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message":"你好","stream":true}'
 ```
 
 ### SSE 数据格式
@@ -147,7 +149,7 @@ uv run ruff format --check .
 ## 架构
 
 ```
-Browser ──GET /invocations/stream?q=...──→ StreamingResponse
+Browser ──POST /invocations {"stream":true}──→ StreamingResponse
   │
   │  SSE 响应
   │
@@ -157,7 +159,7 @@ Browser ──GET /invocations/stream?q=...──→ StreamingResponse
   │
   │  MaaS LLM (DeepSeek-V4-Pro)
   │
-  └── POST /invocations ──→ AgentHandler.handle() → agent.ainvoke()
+  └── POST /invocations {"stream":false} ──→ AgentHandler.handle() → agent.ainvoke()
 ```
 
 ## 后续 Feature

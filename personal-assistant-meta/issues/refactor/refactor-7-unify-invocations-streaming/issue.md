@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: done
 ---
 
 # Refactor 7: 统一 `/invocations` 为单一路由 — POST body 区分 sync/stream
@@ -85,20 +85,20 @@ Content-Type: application/json
 
 ### Backend
 
-- [ ] `POST /invocations` 接收 `{"message": "hello"}` → 返回 `{"response": "..."}`（同步，行为不变）
-- [ ] `POST /invocations` 接收 `{"message": "hello", "stream": false}` → 同上
-- [ ] `POST /invocations` 接收 `{"message": "hello", "stream": true}` → 返回 `text/event-stream`，逐 token SSE 推送
-- [ ] `POST /invocations` 不传 `message` → 返回 400
-- [ ] `POST /invocations` JSON 格式错误 → 返回 400
-- [ ] 旧路由 `GET /invocations/stream` 已删除 → 返回 404 或 405
-- [ ] FastAPI `/docs` 自动生成的双模式文档正确
+- [x] `POST /invocations` 接收 `{"message": "hello"}` → 返回 `{"response": "..."}`（同步，行为不变）
+- [x] `POST /invocations` 接收 `{"message": "hello", "stream": false}` → 同上
+- [x] `POST /invocations` 接收 `{"message": "hello", "stream": true}` → 返回 `text/event-stream`，逐 token SSE 推送
+- [x] `POST /invocations` 不传 `message` → 返回 400
+- [x] `POST /invocations` JSON 格式错误 → 返回 400
+- [x] 旧路由 `GET /invocations/stream` 已删除 → 返回 404 或 405
+- [x] FastAPI `/docs` 自动生成的双模式文档正确
 
 ### Client
 
-- [ ] `chatAdapter.run()` 发送 `POST` 到 `/invocations`，body 含 `{"message": "...", "stream": true}`
-- [ ] 请求包含 `Content-Type: application/json` 和 `Accept: text/event-stream`
-- [ ] SSE token 解析行为与变更前一致（增量 token 累积、completion status、错误处理）
-- [ ] abort signal 正确传递
+- [x] `chatAdapter.run()` 发送 `POST` 到 `/invocations`，body 含 `{"message": "...", "stream": true}`
+- [x] 请求包含 `Content-Type: application/json` 和 `Accept: text/event-stream`
+- [x] SSE token 解析行为与变更前一致（增量 token 累积、completion status、错误处理）
+- [x] abort signal 正确传递
 
 ### 部署验证
 
@@ -147,17 +147,17 @@ Content-Type: application/json
 
 ### 7.1 Backend — 合并路由
 
-- [ ] `app/main.py`：删除 `@app.get("/invocations/stream")` handler（第 87-107 行）
-- [ ] `app/main.py`：扩展 `invocations()` handler，读取 `stream` 字段
+- [x] `app/main.py`：删除 `@app.get("/invocations/stream")` handler（第 87-107 行）
+- [x] `app/main.py`：扩展 `invocations()` handler，读取 `stream` 字段
   - `stream` 为 `false` 或不传 → 保持现有同步行为
   - `stream` 为 `true` → 返回 `StreamingResponse`（复用原 SSE handler 逻辑）
   - JSON 解析失败 → 返回 400
-- [ ] 后端单测：覆盖 `stream: true` SSE 流式输出、`stream: false` 同步输出、无 `stream` 字段向后兼容
+- [x] 后端单测：覆盖 `stream: true` SSE 流式输出、`stream: false` 同步输出、无 `stream` 字段向后兼容
 
 ### 7.2 Client — 适配新接口
 
-- [ ] `chat-adapter.ts`：fetch 改为 `POST /invocations`，`Content-Type: application/json`，body `{"message": query, "stream": true}`
-- [ ] `chat-adapter.test.ts`：更新所有测试 case
+- [x] `chat-adapter.ts`：fetch 改为 `POST /invocations`，`Content-Type: application/json`，body `{"message": query, "stream": true}`
+- [x] `chat-adapter.test.ts`：更新所有测试 case
   - URL 断言：`/invocations`（非 `/invocations/stream`）
   - Method 断言：`POST`
   - Body 断言：`{"message": "...", "stream": true}`
@@ -165,8 +165,8 @@ Content-Type: application/json
 
 ### 7.3 文档更新
 
-- [ ] `backend_architecture.md` §2.2 路由表：移除 `GET /invocations/stream`；更新 `POST /invocations` 描述为双模式
-- [ ] `backend_architecture.md` §2.1 Gateway 约束：明确 `url_match_type: ACCURATE_MATCH` 仅转发 `/invocations` 精确路径，子路径不可用
+- [x] `backend_architecture.md` §2.2 路由表：移除 `GET /invocations/stream`；更新 `POST /invocations` 描述为双模式
+- [x] `backend_architecture.md` §2.1 Gateway 约束：明确 `url_match_type: ACCURATE_MATCH` 仅转发 `/invocations` 精确路径，子路径不可用
 
 ### 7.4 部署 Smoke Test
 

@@ -82,7 +82,7 @@ describe("chatAdapter", () => {
   });
 
   describe("URL construction", () => {
-    it("uses /invocations/stream path with encoded query", async () => {
+    it("uses POST /invocations with stream body", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([]),
@@ -93,8 +93,12 @@ describe("chatAdapter", () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toContain("/invocations/stream?q=");
-      expect(url).toContain("Hello%20World!");
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      expect(url).toBe("/invocations");
+      expect(init.method).toBe("POST");
+      expect(init.body).toBe(
+        JSON.stringify({ message: "Hello World!", stream: true }),
+      );
     });
 
     it("builds URL with empty baseUrl when VITE_API_BASE_URL is unset", async () => {
@@ -108,10 +112,10 @@ describe("chatAdapter", () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toMatch(/^\/invocations\/stream\?q=/);
+      expect(url).toBe("/invocations");
     });
 
-    it("sends Accept: text/event-stream header", async () => {
+    it("sends streaming headers", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([]),
@@ -121,7 +125,10 @@ describe("chatAdapter", () => {
       await collectResults("header test");
 
       const init = mockFetch.mock.calls[0][1] as RequestInit;
-      expect(init.headers).toEqual({ Accept: "text/event-stream" });
+      expect(init.headers).toEqual({
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      });
     });
 
     it("passes the abort signal to fetch", async () => {
@@ -312,7 +319,9 @@ describe("chatAdapter", () => {
       }
 
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toContain("/invocations/stream?q=");
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      expect(url).toBe("/invocations");
+      expect(init.body).toBe(JSON.stringify({ message: "", stream: true }));
     });
   });
 });

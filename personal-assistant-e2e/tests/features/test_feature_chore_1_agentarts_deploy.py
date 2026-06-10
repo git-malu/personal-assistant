@@ -1,7 +1,7 @@
 """E2E tests for Chore 1 — AgentArts Deploy.
 
 Verifies the three-domain integration deployed in the chore/agentarts-deploy branch:
-- Service: CORS middleware, /ping health check, /api/chat/stream SSE endpoint
+- Service: CORS middleware, /ping health check, POST /invocations SSE mode
 - Client: SSE chat adapter (TypeScript), VITE_API_BASE_URL env injection, utils.ts
 - Infra: CDKTF stack (OBS bucket for static website hosting)
 
@@ -297,12 +297,16 @@ class TestScenario2_SSEBackendIntegration:
         sp.stop()
 
     def test_sse_endpoint_returns_200_or_500_not_crash(self, service_url):
-        """GET /api/chat/stream?q=test returns a response (200 or 500 — not crash).
+        """POST /invocations stream=true returns a response (200 or 500 — not crash).
 
         With a dummy API key, the LLM may fail (500), but the endpoint
         plumbing must work and not crash the process.
         """
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=test")
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "test", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         assert resp.status_code in (200, 500), (
             f"Expected 200 or 500 from SSE endpoint, "
             f"got {resp.status_code}: {resp.text[:200]}"
@@ -310,7 +314,11 @@ class TestScenario2_SSEBackendIntegration:
 
     def test_sse_content_type_is_event_stream(self, service_url):
         """When SSE responds successfully, content-type is text/event-stream."""
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=hello")
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "hello", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         # If LLM works (200), verify content-type. If LLM fails (500), skip.
         if resp.status_code == 200:
             content_type = resp.headers.get("content-type", "")
@@ -318,23 +326,30 @@ class TestScenario2_SSEBackendIntegration:
                 f"Expected text/event-stream, got: {content_type}"
             )
 
-    def test_sse_empty_query_returns_400(self, service_url):
-        """GET /api/chat/stream?q= (empty) returns 400."""
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=")
+    def test_sse_empty_message_returns_400(self, service_url):
+        """POST /invocations stream=true with empty message returns 400."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "", "stream": True},
+        )
         assert resp.status_code == 400, (
-            f"Expected 400 for empty query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
         )
 
-    def test_sse_missing_query_returns_400(self, service_url):
-        """GET /api/chat/stream without q param returns 400."""
-        resp = httpx.get(f"{service_url}/api/chat/stream")
+    def test_sse_missing_message_returns_400(self, service_url):
+        """POST /invocations stream=true without message returns 400."""
+        resp = httpx.post(f"{service_url}/invocations", json={"stream": True})
         assert resp.status_code == 400, (
-            f"Expected 400 for missing query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
 
     def test_sse_has_correct_streaming_headers(self, service_url):
         """SSE response includes proper streaming headers."""
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=hello")
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "hello", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         if resp.status_code == 200:
             assert resp.headers.get("cache-control") == "no-cache"
             assert resp.headers.get("connection") == "keep-alive"
@@ -680,8 +695,11 @@ class TestScenario4_FrontendBuild:
         assert "chatAdapter" in content, (
             "chat-adapter.ts should export chatAdapter"
         )
-        assert "/api/chat/stream" in content, (
-            "chat-adapter.ts should call /api/chat/stream endpoint"
+        assert "/invocations" in content, (
+            "chat-adapter.ts should call /invocations endpoint"
+        )
+        assert "stream: true" in content, (
+            "chat-adapter.ts should request streaming via JSON body"
         )
         assert "text/event-stream" in content, (
             "chat-adapter.ts should accept text/event-stream"

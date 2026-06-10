@@ -2,7 +2,6 @@
 
 import json
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -103,6 +102,19 @@ async def test_invocations_returns_response(client, fake_handler):
 
 
 @pytest.mark.asyncio
+async def test_invocations_stream_false_returns_response(client, fake_handler):
+    """POST /invocations with stream=false keeps synchronous behavior."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "Hello, assistant!", "stream": False},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"response": "Hello, I am your assistant!"}
+    assert len(fake_handler.handle_calls) == 1
+    assert fake_handler.stream_calls == []
+
+
+@pytest.mark.asyncio
 async def test_invocations_defaults_to_anonymous_user(client, fake_handler):
     """POST /invocations without X-AgentArts-User-Id defaults to 'anonymous'."""
     await client.post("/invocations", json={"message": "Hi"})
@@ -126,10 +138,21 @@ async def test_invocations_missing_message_returns_400(client):
 
 
 @pytest.mark.asyncio
+async def test_invocations_invalid_json_returns_400(client):
+    """POST /invocations with invalid JSON returns 400."""
+    response = await client.post(
+        "/invocations",
+        content="{not-json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid JSON body"
+
+
+@pytest.mark.asyncio
 async def test_invocations_whitespace_only_passes_through(client, fake_handler):
     """Whitespace-only message is NOT rejected — app uses `if not message`
-    which treats whitespace as truthy. This is an inconsistency with
-    /invocations/stream which uses `q.strip()`. Should be fixed upstream.
+    which treats whitespace as truthy for synchronous invocations.
     """
     response = await client.post("/invocations", json={"message": "   "})
     # Currently passes through; should be 400 after fix
@@ -174,19 +197,24 @@ async def test_lifespan_sets_agent_handler(fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# GET /invocations/stream
+# POST /invocations with stream=true
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_returns_sse(client):
-    """GET /invocations/stream?q=hello returns 200 with text/event-stream."""
-    response = await client.get("/invocations/stream?q=hello")
+async def test_invocations_stream_returns_sse(client, fake_handler):
+    """POST /invocations with stream=true returns text/event-stream."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "hello", "stream": True},
+        headers={"X-AgentArts-User-Id": "user-1"},
+    )
     assert response.status_code == 200
     content_type = response.headers["content-type"]
     assert "text/event-stream" in content_type, f"Got: {content_type}"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
+    assert fake_handler.stream_calls == [("hello", "user-1")]
 
     body = response.text
     assert "data:" in body
@@ -194,9 +222,12 @@ async def test_chat_stream_returns_sse(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_content_format(client):
+async def test_invocations_stream_content_format(client):
     """Verify SSE stream contains properly formatted JSON events."""
-    response = await client.get("/invocations/stream?q=hello")
+    response = await client.post(
+        "/invocations",
+        json={"message": "hello", "stream": True},
+    )
     assert response.status_code == 200
 
     body = response.text
@@ -217,26 +248,39 @@ async def test_chat_stream_content_format(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_empty_query_returns_400(client):
-    """GET /invocations/stream?q= (empty) returns 400."""
-    response = await client.get("/invocations/stream?q=")
+async def test_invocations_stream_empty_message_returns_400(client):
+    """POST /invocations with stream=true and empty message returns 400."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "", "stream": True},
+    )
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_missing_query_returns_400(client):
-    """GET /invocations/stream without query param returns 400."""
-    response = await client.get("/invocations/stream")
+async def test_invocations_stream_missing_message_returns_400(client):
+    """POST /invocations with stream=true and missing message returns 400."""
+    response = await client.post("/invocations", json={"stream": True})
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_whitespace_query_returns_400(client):
-    """GET /invocations/stream?q=%20%20 (spaces) returns 400."""
-    response = await client.get("/invocations/stream?q=%20%20")
+async def test_invocations_stream_whitespace_message_returns_400(client):
+    """POST /invocations with stream=true and whitespace message returns 400."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "  ", "stream": True},
+    )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_old_invocations_stream_route_returns_404(client):
+    """GET /invocations/stream is removed for AgentArts ACCURATE_MATCH."""
+    response = await client.get("/invocations/stream?q=hello")
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -254,12 +298,13 @@ class TestChainlitPlaygroundMount:
         mounts = [r for r in app.routes if isinstance(r, Mount)]
         playground_routes = [m for m in mounts if m.path == "/invocations/playground"]
         assert len(playground_routes) == 1, (
-            f"Expected 1 Mount at /invocations/playground, got {len(playground_routes)}. "
+            "Expected 1 Mount at /invocations/playground, "
+            f"got {len(playground_routes)}. "
             f"All mounts: {[(m.path, m.name) for m in mounts]}"
         )
 
     def test_playground_mount_is_chainlit_app(self):
-        """The /invocations/playground Mount wraps a Chainlit FastAPI sub-application."""
+        """The /invocations/playground Mount wraps a Chainlit FastAPI app."""
         from fastapi import FastAPI
 
         from app.main import app
@@ -287,7 +332,7 @@ class TestChainlitPlaygroundMount:
 
     @pytest.mark.asyncio
     async def test_playground_redirect_trailing_slash(self):
-        """GET /invocations/playground (no trailing slash) returns 307 redirect to /invocations/playground/."""
+        """GET /invocations/playground redirects to /invocations/playground/."""
         import httpx
 
         from app.main import app
@@ -345,16 +390,19 @@ class TestAgentHandlerSingletonIntegration:
 
     def test_main_app_state_agent_handler_is_singleton(self):
         """app.state.agent_handler (if set) is the same as get_agent_handler()."""
-        import app.agent_handler
-        from app.main import app
+        import app.agent_handler as agent_handler_module
+        from app.main import app as fastapi_app
 
         # The module-level app may have agent_handler set from module import
         # Skip if not set (e.g. when lifespan hasn't run)
-        if not hasattr(app.state, "agent_handler"):
+        if not hasattr(fastapi_app.state, "agent_handler"):
             pytest.skip("app.state.agent_handler not set (lifespan not triggered)")
 
-        stored = app.state.agent_handler
-        from_singleton = app.agent_handler.get_agent_handler()
+        stored = fastapi_app.state.agent_handler
+        if not isinstance(stored, agent_handler_module.AgentHandler):
+            pytest.skip("app.state.agent_handler was injected by a test fixture")
+
+        from_singleton = agent_handler_module.get_agent_handler()
         assert stored is from_singleton, (
             "app.state.agent_handler must be the singleton instance"
         )
@@ -600,4 +648,3 @@ class TestCORSEnvVar:
         finally:
             monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
             importlib.reload(app_main)
-

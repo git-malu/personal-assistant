@@ -10,7 +10,7 @@ After refactor-2:
 Test scenarios (all subprocess-based, using ServiceProcess from conftest.py):
   1. Health check still works — GET /ping → 200 {"status": "ok"}
   2. Invocations endpoint works — POST /invocations → non-5xx response
-  3. SSE streaming still works — GET /api/chat/stream?q=hello → SSE response
+  3. SSE streaming still works — POST /invocations {"stream": true} → SSE response
   4. Playground redirect works — GET /playground → 307 redirect to /playground/
   5. Chainlit UI loads — GET /playground/ → Chainlit UI (non-5xx)
   6. Root returns 404 (KEY CHANGE) — GET / → 404
@@ -130,25 +130,32 @@ class TestScenario3_SSEStreaming:
         sp.stop()
 
     def test_sse_streaming_endpoint_responds(self, service_url):
-        """GET /api/chat/stream?q=hello returns a response (non-5xx)."""
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=hello")
+        """POST /invocations stream=true returns a response (non-5xx)."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "hello", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         assert resp.status_code < 500, (
             f"SSE streaming should not cause server error, "
             f"got {resp.status_code}: {resp.text[:200]}"
         )
 
-    def test_sse_empty_query_returns_400(self, service_url):
-        """SSE streaming with empty query returns 400."""
-        resp = httpx.get(f"{service_url}/api/chat/stream?q=")
+    def test_sse_empty_message_returns_400(self, service_url):
+        """SSE streaming with empty message returns 400."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "", "stream": True},
+        )
         assert resp.status_code == 400, (
-            f"Expected 400 for empty query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
         )
 
-    def test_sse_missing_query_returns_400(self, service_url):
-        """SSE streaming without q param returns 400."""
-        resp = httpx.get(f"{service_url}/api/chat/stream")
+    def test_sse_missing_message_returns_400(self, service_url):
+        """SSE streaming without message returns 400."""
+        resp = httpx.post(f"{service_url}/invocations", json={"stream": True})
         assert resp.status_code == 400, (
-            f"Expected 400 for missing query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
 
 
@@ -279,7 +286,7 @@ class TestScenario6_RootReturns404:
         )
 
     def test_other_endpoints_unaffected_by_root_404(self, service_url):
-        """After refactor, /ping and /api/chat/stream still work even though / is 404."""
+        """After refactor, /ping and /invocations still work even though / is 404."""
         # Verify / is 404
         resp_root = httpx.get(f"{service_url}/")
         assert resp_root.status_code == 404, (

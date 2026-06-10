@@ -16,8 +16,8 @@ personal-assistant-client/
 │   │   ├── MessageBubble.tsx      # 消息气泡（user 蓝 / assistant 灰，Markdown 渲染）
 │   │   ├── MessageList.tsx        # 消息列表容器（自动滚底）
 │   │   └── StreamingText.tsx      # 流式文本渲染（逐 token + 光标动画）
-│   ├── hooks/
-│   │   └── useChat.ts             # SSE 连接管理 hook（EventSource + 并发保护）
+│   ├── lib/
+│   │   └── chat-adapter.ts        # assistant-ui ChatModelAdapter（fetch POST + SSE）
 │   ├── types/
 │   │   └── chat.ts                # Message、SSEEvent 类型定义
 │   ├── App.tsx                    # 根组件
@@ -106,7 +106,7 @@ npm run test:watch
 ## 架构
 
 ```
-浏览器 ──GET /──→ Vite Dev Server (:5173) ──proxy /api/*, /invocations/*──→ FastAPI (:8080)
+浏览器 ──GET /──→ Vite Dev Server (:5173) ──proxy /invocations──→ FastAPI (:8080)
   │                    │                                    │
   │  React App         │                                    │
   │  ├─ ChatContainer  │                                    │
@@ -114,14 +114,14 @@ npm run test:watch
   │  │  │  └─ MessageBubble × N                             │
   │  │  │     └─ StreamingText (react-markdown)             │
   │  │  └─ ChatInput    │                                    │
-  │  └─ useChat hook ───┘── EventSource ── SSE ────────────→ /invocations/stream
+  │  └─ assistant-ui runtime ─┘── fetch POST + SSE ───────→ /invocations
   │                                                                   │
   └── 生产模式 ──GET /──→ FastAPI StaticFiles ── serve dist/ ──→ 同上
 ```
 
 ## SSE 协议
 
-前端通过原生 `EventSource` 消费后端的 SSE 流：
+前端通过 `fetch` 向 `POST /invocations` 发送 `{"message":"...","stream":true}`，并消费响应体中的 SSE 流：
 
 ```
 data: {"token":"你","done":false}
