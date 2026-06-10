@@ -20,5 +20,8 @@
       "agent": "personal-assistant-cleanup",
       "subtask": true
     }
-  }
+  },
+  "plugin": [
+    "opencode-websearch-cited@latest"
+  ]
 }
