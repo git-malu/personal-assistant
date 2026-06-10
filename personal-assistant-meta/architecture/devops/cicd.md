@@ -91,9 +91,9 @@ MaaS 的模型部署和 API Key 管理目前通过控制台操作，没有声明
 
 ---
 
-## 4. Layer 3 — 华为云基础资源（未来）
+## 4. Layer 3 — 华为云基础资源
 
-当项目需要 `agentarts_config.yaml` 管不到的华为云基础资源时，引入 IaC。
+当项目需要 `agentarts_config.yaml` 管不到的华为云基础资源时，由 OpenTofu 管理。当前已管理 OBS 静态托管和 DNS 记录。
 
 ### 4.1 触发时机
 
@@ -193,12 +193,21 @@ terraform {
       version = "~> 1.92"
     }
   }
-  # State 当前为本地存储。
-  # OBS backend 为长期目标，详见 ADR-006。
+
+  backend "s3" {
+    bucket                      = "pa-terraform-state"
+    key                         = "prod/terraform.tfstate"
+    region                      = "cn-southwest-2"
+    endpoint                    = "https://obs.cn-southwest-2.myhuaweicloud.com"
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+  }
 }
 
 provider "huaweicloud" {
-  region     = var.region
+  region = var.region
 }
 
 # Web Chat 前端静态托管
@@ -222,4 +231,4 @@ resource "huaweicloud_obs_bucket" "web_chat" {
 |------|----------|----------|----------|
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
-| Layer 3 — 基础资源 | OpenTofu + HCL（`personal-assistant-infra/`） | `tofu apply` | 首次创建 + 偶尔变更 |
+| Layer 3 — 基础资源 | OpenTofu + HCL（`personal-assistant-infra/`），State 存储在 OBS | `tofu apply` | 首次创建 + 偶尔变更 |

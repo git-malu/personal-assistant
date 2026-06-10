@@ -1,12 +1,15 @@
 # Personal Assistant Infra
 
-OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweicloud`（`~> 1.92`）。
+OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweicloud`（`~> 1.92`）。State 通过 OBS S3-compatible backend 持久化存储（`pa-terraform-state` bucket）。
 
 ## 管理的资源
 
 | Resource | Type | Name | Region | Config |
 |----------|------|------|--------|--------|
 | OBS Bucket | `huaweicloud_obs_bucket` | `personal-assistant-web-chat` | `cn-southwest-2` | ACL=public-read, versioning=true, static website hosting (SPA: error_document=index.html) |
+| DNS Zone | `huaweicloud_dns_zone` | `resource-governance.cloud` | — | 华为云购买域名时自动创建，由 tofu 管理 |
+| DNS Recordset | `huaweicloud_dns_recordset` | `chat.resource-governance.cloud` | — | CNAME → OBS website endpoint |
+| OBS State Bucket | — | `pa-terraform-state` | `cn-southwest-2` | 由 CI `aws s3 mb` 创建，不归 tofu 管理 |
 
 > 更多资源（RDS、IAM、VPC、EIP、CDN）将随项目增长逐步添加。
 
@@ -14,14 +17,21 @@ OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweiclo
 
 - **OpenTofu CLI** ≥ 1.6（Linux 基金会托管，MPL 协议）：`brew install opentofu`
 - **华为云凭据**：AK/SK（通过 Provider 原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入）
-- **IAM 权限**：OBS FullAccess（当前必需）
+- **OBS Backend 凭据**：同上 AK/SK，额外设置 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`（OBS 兼容 S3 API，需要 AWS SDK 格式的凭据变量）
+- **IAM 权限**：OBS FullAccess + DNS FullAccess（当前必需）
 
 ## 快速开始
 
 ```bash
 cd personal-assistant-infra
 
-# 初始化（首次或 provider 版本变更时）
+# 配置凭据（Provider + OBS Backend 共用同一套 AK/SK）
+export HW_ACCESS_KEY="<your-access-key>"
+export HW_SECRET_KEY="<your-secret-key>"
+export AWS_ACCESS_KEY_ID="$HW_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$HW_SECRET_KEY"
+
+# 初始化（首次或 provider 版本变更时；从 OBS 拉取 state）
 tofu init
 
 # 语法验证
@@ -38,16 +48,19 @@ tofu plan
 ## 部署
 
 ```bash
-# 1. 配置华为云凭据
-# HuaweiCloud Provider 通过原生环境变量读取凭据：
+# 1. 配置凭据
 export HW_ACCESS_KEY="<your-access-key>"
 export HW_SECRET_KEY="<your-secret-key>"
+export AWS_ACCESS_KEY_ID="$HW_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$HW_SECRET_KEY"
 
 # 2. 执行部署
 tofu apply
 ```
 
 > ⚠️ 如果你本地存在旧的 `terraform.tfvars` 文件且其中包含 `ak`/`sk` 变量赋值，请手动删除这些项——`ak`/`sk` 变量已不再声明，否则 `tofu plan` 会产生 "Undeclared variables" 警告。
+>
+> **State 存储**：tfstate 保存在 OBS bucket `pa-terraform-state`（S3-compatible backend），不再使用本地文件。CI 和本地共享同一份 state，无需每次 import 已有资源。
 
 ## 销毁
 
@@ -66,17 +79,21 @@ curl -sI https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuawei
 # SPA 路由回退（关键测试）
 curl -sI https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com/chat
 # Expected: HTTP 200（非 404）
+
+# 自定义域名 CNAME 解析
+curl -sI https://chat.resource-governance.cloud/
+# Expected: HTTP 200
 ```
 
 ## 目录结构
 
 ```
 personal-assistant-infra/
-├── main.tf                # Terraform/Provider 配置 + Backend
+├── main.tf                # Terraform/Provider 配置 + OBS Backend
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
-├── variables.tf           # 变量声明（region）
+├── dns.tf                 # DNS Zone + CNAME 记录
+├── variables.tf           # 变量声明（region, dns_zone_id）
 ├── outputs.tf             # Stack outputs（website_endpoint 等）
-├── terraform.tfvars       # 变量赋值（gitignored，不再用于 AK/SK 凭据）
 ├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
 ├── .terraform/            # Provider 缓存（gitignored）
 ├── .gitignore
@@ -85,6 +102,10 @@ personal-assistant-infra/
 ```
 
 ## 迁移记录
+
+2026-06-10：State 从本地迁移到 OBS S3-compatible backend（`pa-terraform-state`）。消除 CI ephemeral state 导致的重复 import 问题。
+
+2026-06-10：华为云凭据从 `TF_VAR_ak`/`TF_VAR_sk` 切换为 Provider 原生 `HW_ACCESS_KEY`/`HW_SECRET_KEY`。
 
 2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
 

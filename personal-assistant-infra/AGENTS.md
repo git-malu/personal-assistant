@@ -34,18 +34,18 @@ personal-assistant-infra/*.tf                       → 华为云基础资源层
 | **IaC 工具** | OpenTofu + HCL | ADR-006（修订 2026-06-09），Linux 基金会托管，100% Terraform 兼容 |
 | **语言** | HCL（HashiCorp Configuration Language） | IaC 行业标准，1-2 天上手 |
 | **Provider** | `huaweicloud/huaweicloud` | HuaweiCloud Terraform Provider |
-| **状态管理** | 本地 `.tfstate`（短期）；OBS backend（长期目标） | 同原 CDKTF 策略 |
+| **状态管理** | OBS S3-compatible backend（`pa-terraform-state`） | 本地 state 仅用于一次性 bootstrap；CI 和本地共享远程 state |
 | **验证** | `tofu validate` + `tofu plan` | CLI 内置 |
 
 ## 目录结构
 
 ```
 personal-assistant-infra/
-├── main.tf                # Terraform/Provider 配置 + Backend
+├── main.tf                # Terraform/Provider 配置 + OBS Backend
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
-├── variables.tf           # 变量声明（region）
+├── dns.tf                 # DNS Zone + CNAME 记录
+├── variables.tf           # 变量声明（region, dns_zone_id）
 ├── outputs.tf             # Stack outputs（website_endpoint 等）
-├── terraform.tfvars       # 变量赋值（gitignored，不再用于 AK/SK 凭据）
 ├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
 ├── .terraform/            # Provider 缓存（gitignored）
 ├── .gitignore
