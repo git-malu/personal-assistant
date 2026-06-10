@@ -117,7 +117,11 @@ docker run --rm -p 8080:8080 -e MODEL_API_KEY="<your-key>" personal-assistant:de
 部署到 AgentArts 后，可通过 `agentarts invoke` 命令直接测试线上 Agent：
 
 ```bash
+# 通过 IAM 签名认证（AgentArts Gateway 自动处理）
 agentarts invoke '{"message":"你好，简单介绍一下你自己"}' --agent personal-assistant
+
+# 或者使用 bearer token 认证（API Key 需替换为实际值）
+agentarts invoke '{"message":"hello world"}' --bearer-token <your-bearer-token>
 ```
 
 > **注意**：`agentarts invoke` 自动带 IAM 签名认证，可直接通过 AgentArts Gateway 调用。裸 `curl` 命令在生产环境不可用。
