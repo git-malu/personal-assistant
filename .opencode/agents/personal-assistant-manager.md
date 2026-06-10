@@ -99,7 +99,11 @@ This is a **single Git repository**. We are in a **git worktree** — `main` is 
    ```bash
    git checkout -B <feature-branch> main
    ```
-3. Report: `Repo setup complete — on branch <feature-branch> (from local main @ <latest-commit-short-hash>)`.
+3. **Update GitNexus index.** Re-analyze the codebase so the knowledge graph reflects the current branch state.
+   ```bash
+   npx gitnexus analyze --skip-agents-md --skip-skills
+   ```
+4. Report: `Repo setup complete — on branch <feature-branch> (from local main @ <latest-commit-short-hash>)`.
 
 ### 1. META PHASE — Delegate to personal-assistant-meta-manager
 
