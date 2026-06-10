@@ -32,11 +32,12 @@ agents:
           subnet_id: null
           security_group_id: []
       identity_configuration:
-        authorizer_type: KEY_AUTH
+        authorizer_type: API_KEY
         authorizer_configuration:
           key_auth:
             api_keys:
-              - "pa-dev-api-key-2026"
+            - api_key: pa-dev-api-key-2026
+              api_key_name: dev-key
       observability:
         tracing:
           enabled: true
