@@ -102,28 +102,35 @@ grep -n '@app\.\(get\|post\)\("/\(ping\|invocations\)"\)' personal-assistant-ser
 
 **文件**：`personal-assistant-service/app/main.py`
 
-在 line 39 (`)`) 之后插入：
+在 `app = FastAPI(...)` 之后、`app.add_middleware` 之前添加：
 
 ```python
-from fastapi.middleware.cors import CORSMiddleware  # 需添加到顶部 import 区域（line 12 附近）
+import os
 
-# 在 app = FastAPI(...) 之后（line 39 之后）添加：
+_default_origins = [
+    "https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
+]
+_env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
+_allowed_origins = (
+    [o.strip() for o in _env_origins.split(",")] if _env_origins else _default_origins
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["<obs-bucket-domain>"],  # 🔴 部署时必须替换为实际 OBS 静态网站域名
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 ```
 
-**import 行需要添加到文件顶部**（line 12 附近）：
+**import 行需要添加到文件顶部**（line 1 附近）：
 
 ```python
-from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # 新增
-from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
+import os
 ```
+
+> 其他导入（`from fastapi.middleware.cors import CORSMiddleware` 等）已在现有代码中，无需额外添加。
 
 ### OBS 域名获取
 
@@ -137,14 +144,31 @@ https://<bucket-name>.obs-website.cn-southwest-2.myhuaweicloud.com
 
 **注意**：静态网站托管域名与普通 OBS endpoint 不同——静态网站使用 `.obs-website.` 而非 `.obs.` 子域名。
 
+### 环境变量 `CORS_ALLOWED_ORIGINS`
+
+AgentArts Runtime 环境变量配置（在 `.agentarts_config.yaml` 的 `environment_variables` 中）：
+
+```yaml
+- key: CORS_ALLOWED_ORIGINS
+  value: "https://<obs-domain>,https://<netlify-domain>.netlify.app"
+```
+
+- 多个 origin 用英文逗号分隔（不包含空格，代码自动 strip）
+- 如果不设置此环境变量，fallback 到 OBS 默认域名
+- Netlify 域名格式：`https://<site-name>.netlify.app`
+
 ### 验证
 
 ```bash
-# 部署后，从 OBS 域名发起跨域请求验证 CORS 头
+# 部署后，从 OBS 域名和 Netlify 域名分别发起跨域请求验证 CORS 头
 curl -sI -X OPTIONS "<runtime-domain>/ping" \
   -H "Origin: https://<bucket-name>.obs-website.cn-southwest-2.myhuaweicloud.com" \
   -H "Access-Control-Request-Method: GET"
-# 期望：响应头包含 Access-Control-Allow-Origin: <obs-domain>
+
+curl -sI -X OPTIONS "<runtime-domain>/ping" \
+  -H "Origin: https://<site-name>.netlify.app" \
+  -H "Access-Control-Request-Method: GET"
+# 两者均期望：响应头包含 Access-Control-Allow-Origin: <对应的 origin>
 ```
 
 ---

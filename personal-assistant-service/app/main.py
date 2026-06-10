@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,9 +40,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_default_origins = [
+    "https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
+]
+_env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
+_allowed_origins = (
+    [o.strip() for o in _env_origins.split(",")] if _env_origins else _default_origins
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

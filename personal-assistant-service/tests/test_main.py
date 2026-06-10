@@ -385,7 +385,7 @@ class TestCORSMiddlewareRegistration:
         )
 
     def test_cors_middleware_allow_origins(self):
-        """The CORSMiddleware should allow the OBS static website origin."""
+        """CORSMiddleware should allow the OBS static website origin (at minimum)."""
         from fastapi.middleware.cors import CORSMiddleware
 
         from app.main import app
@@ -394,9 +394,9 @@ class TestCORSMiddlewareRegistration:
         assert len(cors_mws) == 1, (
             f"Expected exactly one CORSMiddleware, got {len(cors_mws)}"
         )
-        assert cors_mws[0].kwargs["allow_origins"] == [ALLOWED_ORIGIN], (
-            f"Expected allow_origins=[{ALLOWED_ORIGIN!r}], "
-            f"got {cors_mws[0].kwargs['allow_origins']!r}"
+        origins = cors_mws[0].kwargs["allow_origins"]
+        assert ALLOWED_ORIGIN in origins, (
+            f"Expected {ALLOWED_ORIGIN!r} to be in allow_origins, got {origins!r}"
         )
 
     def test_cors_middleware_allow_credentials(self):
@@ -537,4 +537,67 @@ class TestCORSHeadersOnNormalRequests:
         assert "access-control-allow-origin" not in response.headers, (
             "Should NOT set CORS headers when no Origin is sent"
         )
+
+
+class TestCORSEnvVar:
+    """Test CORS_ALLOWED_ORIGINS environment variable behavior (feature-12)."""
+
+    def test_cors_allowed_origins_from_env_var(self, monkeypatch):
+        """When CORS_ALLOWED_ORIGINS is set, use it as comma-separated list."""
+        import importlib
+
+        from app import main as app_main
+
+        monkeypatch.setenv(
+            "CORS_ALLOWED_ORIGINS",
+            "https://a.example.com,https://b.example.com",
+        )
+        importlib.reload(app_main)
+
+        try:
+            from fastapi.middleware.cors import CORSMiddleware
+
+            cors_mws = [
+                mw for mw in app_main.app.user_middleware if mw.cls is CORSMiddleware
+            ]
+            origins = cors_mws[0].kwargs["allow_origins"]
+            assert origins == ["https://a.example.com", "https://b.example.com"]
+        finally:
+            # Cleanup: reload without the env var to restore default state
+            monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
+            importlib.reload(app_main)
+
+    def test_cors_empty_env_var_behavior(self, monkeypatch):
+        """When CORS_ALLOWED_ORIGINS is set to empty string, falls back to defaults.
+
+        An empty string is falsy in Python, so the condition
+        ``if _env_origins`` evaluates to False and _default_origins is used.
+        This is safe — an empty env var means "not configured", same as absent.
+        """
+        import importlib
+
+        from app import main as app_main
+
+        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "")
+        importlib.reload(app_main)
+
+        try:
+            from fastapi.middleware.cors import CORSMiddleware
+
+            cors_mws = [
+                mw for mw in app_main.app.user_middleware if mw.cls is CORSMiddleware
+            ]
+            origins = cors_mws[0].kwargs["allow_origins"]
+            # Empty string → falsy → falls back to default origins (same as unset)
+            assert ALLOWED_ORIGIN in origins, (
+                f"Empty CORS_ALLOWED_ORIGINS should fall back to defaults "
+                f"(containing {ALLOWED_ORIGIN!r}), got {origins!r}"
+            )
+            # Verify it does NOT accidentally allow all origins
+            assert "*" not in origins, (
+                f"Empty CORS_ALLOWED_ORIGINS must not produce wildcard, got {origins!r}"
+            )
+        finally:
+            monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
+            importlib.reload(app_main)
 

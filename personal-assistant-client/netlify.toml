@@ -1,0 +1,16 @@
+# Netlify 部署配置 — personal-assistant-client
+#
+# Netlify 自动检测 monorepo 结构（base 指向子目录），
+# 在 git push 到 main 后自动构建并部署。
+#
+# SPA 路由回退：所有非文件路径请求返回 /index.html (200)
+
+[build]
+  base = "personal-assistant-client"
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
