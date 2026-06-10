@@ -12,13 +12,16 @@ terraform {
     }
   }
 
-  # State 当前为本地存储。
-  # OBS backend（pa-terraform-state bucket）为长期目标，需在首次部署后迁移（chicken-and-egg 问题）。
-  # backend "s3" {
-  #   bucket = "pa-terraform-state"
-  #   key    = "prod/terraform.tfstate"
-  #   region = "cn-southwest-2"
-  # }
+  backend "s3" {
+    bucket                      = "pa-terraform-state"
+    key                         = "prod/terraform.tfstate"
+    region                      = "cn-southwest-2"
+    endpoint                    = "https://obs.cn-southwest-2.myhuaweicloud.com"
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+  }
 }
 
 provider "huaweicloud" {

@@ -12,9 +12,23 @@ on:
       - ".github/workflows/deploy-infra.yml"
   workflow_dispatch:
 
+# 防止并发执行导致 state 冲突
+concurrency:
+  group: deploy-infra
+  cancel-in-progress: false
+
 jobs:
   tofu:
     runs-on: ubuntu-latest
+
+    env:
+      # OBS S3-compatible backend 认证
+      AWS_ACCESS_KEY_ID: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+      # HuaweiCloud Provider 认证
+      HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+      HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+      TF_VAR_region: "cn-southwest-2"
 
     steps:
       - name: Checkout
@@ -24,6 +38,12 @@ jobs:
         uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: "~> 1.9"
+
+      - name: Ensure state bucket exists
+        run: |
+          aws s3 mb s3://pa-terraform-state \
+            --endpoint-url=https://obs.cn-southwest-2.myhuaweicloud.com \
+            --region cn-southwest-2 2>/dev/null || true
 
       - name: tofu init
         working-directory: personal-assistant-infra
@@ -37,26 +57,11 @@ jobs:
         working-directory: personal-assistant-infra
         run: tofu fmt -check -recursive
 
-      - name: Import existing DNS zone
-        working-directory: personal-assistant-infra
-        env:
-          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
-          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
-        run: tofu import huaweicloud_dns_zone.main ff8080829e039233019eac11e92057f8
-
       - name: tofu plan
         working-directory: personal-assistant-infra
-        env:
-          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
-          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
-          TF_VAR_region: "cn-southwest-2"
         run: tofu plan -input=false
 
       - name: tofu apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: personal-assistant-infra
-        env:
-          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
-          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
-          TF_VAR_region: "cn-southwest-2"
         run: tofu apply -auto-approve -input=false
