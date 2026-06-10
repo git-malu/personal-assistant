@@ -29,13 +29,15 @@ export const chatAdapter: ChatModelAdapter = {
     const query: string =
       lastUserMessage?.content.find((p) => p.type === "text")?.text ?? "";
 
-    const response = await fetch(
-      `${baseUrl}/invocations/stream?q=${encodeURIComponent(query)}`,
-      {
-        headers: { Accept: "text/event-stream" },
-        signal: abortSignal,
+    const response = await fetch(`${baseUrl}/invocations`, {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ message: query, stream: true }),
+      signal: abortSignal,
+    });
 
     if (!response.ok) {
       throw new Error(`Chat API error: ${response.status} ${response.statusText}`);

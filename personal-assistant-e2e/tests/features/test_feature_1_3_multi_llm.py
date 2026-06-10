@@ -262,13 +262,15 @@ class TestScenario1_DefaultProviderMaaS:
             _stop_service(proc)
 
     def test_chat_stream_endpoint_returns_sse(self, http_client):
-        """GET /api/chat/stream returns SSE (Server-Sent Events) content type."""
+        """POST /invocations with stream=true returns SSE content type."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
-            resp = http_client.get(
-                f"http://127.0.0.1:{self.PORT}/api/chat/stream?q=Hello"
+            resp = http_client.post(
+                f"http://127.0.0.1:{self.PORT}/invocations",
+                json={"message": "Hello", "stream": True},
+                headers={"Accept": "text/event-stream"},
             )
             assert resp.status_code in (200, 500)
             if resp.status_code == 200:
@@ -277,14 +279,15 @@ class TestScenario1_DefaultProviderMaaS:
         finally:
             _stop_service(proc)
 
-    def test_chat_stream_empty_query_returns_400(self, http_client):
-        """GET /api/chat/stream without q param returns 400."""
+    def test_chat_stream_empty_message_returns_400(self, http_client):
+        """POST /invocations with stream=true and empty message returns 400."""
         proc = _start_service(self.PORT, env={
             "MAAS_API_KEY": "dummy-e2e-test-key",
         })
         try:
-            resp = http_client.get(
-                f"http://127.0.0.1:{self.PORT}/api/chat/stream"
+            resp = http_client.post(
+                f"http://127.0.0.1:{self.PORT}/invocations",
+                json={"message": "", "stream": True},
             )
             assert resp.status_code == 400
         finally:
@@ -380,13 +383,15 @@ llm:
             _stop_service(proc)
 
     def test_deepseek_stream_endpoint(self, http_client):
-        """GET /api/chat/stream works with deepseek provider."""
+        """POST /invocations with stream=true works with deepseek provider."""
         proc = _start_service(self.PORT, env={
             "DEEPSEEK_API_KEY": "dummy-deepseek-e2e-key",
         })
         try:
-            resp = http_client.get(
-                f"http://127.0.0.1:{self.PORT}/api/chat/stream?q=Hello"
+            resp = http_client.post(
+                f"http://127.0.0.1:{self.PORT}/invocations",
+                json={"message": "Hello", "stream": True},
+                headers={"Accept": "text/event-stream"},
             )
             assert resp.status_code in (200, 500)
             if resp.status_code == 200:

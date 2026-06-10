@@ -1,17 +1,17 @@
-"""E2E tests for Refactor-4: Consolidate Routes Under /invocations Prefix.
+"""E2E tests for /invocations route compatibility.
 
-After refactor-4:
-- GET /api/chat/stream → GET /invocations/stream (SSE streaming chat)
+Current route contract after refactor-7:
+- Web Chat streaming uses POST /invocations with {"stream": true}
 - GET /playground → GET /invocations/playground (Chainlit redirect)
 - Chainlit mount: /playground → /invocations/playground
 - GET /ping — unchanged (platform internal)
 - POST /invocations — unchanged (AgentArts SDK invoke)
-- .agentarts_config.yaml: url_match_type: PREFIX_MATCH, arch: arm64
+- .agentarts_config.yaml: url_match_type: ACCURATE_MATCH, arch: arm64
 
 Test scenarios (all subprocess-based, using ServiceProcess from conftest.py):
   1. Health check endpoint unchanged — GET /ping → 200 {"status": "ok"}
   2. Sync invocation endpoint unchanged — POST /invocations → non-5xx response
-  3. SSE streaming at new path /invocations/stream — GET /invocations/stream?q=你好 → SSE response
+  3. SSE streaming on /invocations — POST /invocations {"stream": true} → SSE response
   4. Old route /api/chat/stream returns 404 — GET /api/chat/stream?q=test → 404
   5. Playground redirect at new path /invocations/playground — GET /invocations/playground → redirect
 """
@@ -110,13 +110,13 @@ class TestScenario2_SyncInvocation:
         )
 
 
-# ── Scenario 3: SSE streaming at new path /invocations/stream ────────────
+# ── Scenario 3: SSE streaming on POST /invocations ───────────────────────
 
 
 @pytest.mark.feature
 @pytest.mark.slow
 class TestScenario3_SSEStreamingNewPath:
-    """Verify SSE streaming chat works at new path /invocations/stream."""
+    """Verify SSE streaming chat works on POST /invocations."""
 
     PORT = 18802
 
@@ -129,16 +129,24 @@ class TestScenario3_SSEStreamingNewPath:
         sp.stop()
 
     def test_sse_streaming_new_path_responds(self, service_url):
-        """GET /invocations/stream?q=你好 returns a response (non-5xx)."""
-        resp = httpx.get(f"{service_url}/invocations/stream?q=你好")
+        """POST /invocations with stream=true returns a response."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "你好", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         assert resp.status_code < 500, (
             f"SSE streaming should not cause server error, "
             f"got {resp.status_code}: {resp.text[:200]}"
         )
 
     def test_sse_streaming_content_type(self, service_url):
-        """GET /invocations/stream?q=hello returns text/event-stream content-type."""
-        resp = httpx.get(f"{service_url}/invocations/stream?q=hello")
+        """POST /invocations stream=true returns text/event-stream content-type."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "hello", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         # Only verify content-type if the response succeeded (200)
         if resp.status_code == 200:
             content_type = resp.headers.get("content-type", "")
@@ -147,17 +155,20 @@ class TestScenario3_SSEStreamingNewPath:
             )
 
     def test_sse_empty_query_returns_400(self, service_url):
-        """SSE streaming with empty query returns 400."""
-        resp = httpx.get(f"{service_url}/invocations/stream?q=")
+        """SSE streaming with empty message returns 400."""
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "", "stream": True},
+        )
         assert resp.status_code == 400, (
-            f"Expected 400 for empty query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
         )
 
     def test_sse_missing_query_returns_400(self, service_url):
-        """SSE streaming without q param returns 400."""
-        resp = httpx.get(f"{service_url}/invocations/stream")
+        """SSE streaming without message returns 400."""
+        resp = httpx.post(f"{service_url}/invocations", json={"stream": True})
         assert resp.status_code == 400, (
-            f"Expected 400 for missing query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
 
 
@@ -204,7 +215,7 @@ class TestScenario4_OldRouteReturns404:
         )
 
     def test_new_route_works_old_route_404(self, service_url):
-        """New route /invocations/stream works while old /api/chat/stream is 404."""
+        """POST /invocations stream works while old child routes are 404."""
         # Old route is 404
         resp_old = httpx.get(f"{service_url}/api/chat/stream?q=test")
         assert resp_old.status_code == 404, (
@@ -212,10 +223,20 @@ class TestScenario4_OldRouteReturns404:
         )
 
         # New route works
-        resp_new = httpx.get(f"{service_url}/invocations/stream?q=test")
+        resp_new = httpx.post(
+            f"{service_url}/invocations",
+            json={"message": "test", "stream": True},
+            headers={"Accept": "text/event-stream"},
+        )
         assert resp_new.status_code < 500, (
-            f"New route /invocations/stream should work, "
+            f"POST /invocations stream should work, "
             f"got {resp_new.status_code}: {resp_new.text[:200]}"
+        )
+
+        resp_old_child = httpx.get(f"{service_url}/invocations/stream?q=test")
+        assert resp_old_child.status_code == 404, (
+            f"Expected 404 from removed /invocations/stream, "
+            f"got {resp_old_child.status_code}"
         )
 
         # Health check still works too

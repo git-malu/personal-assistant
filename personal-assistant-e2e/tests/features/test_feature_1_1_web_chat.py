@@ -18,7 +18,7 @@ Test scenarios from plan:
   5. Error Handling — Empty query returns proper error
   6. Production Build — npm run build generates dist/
   7. Chainlit Coexistence — /playground endpoint availability
-  8. StaticFiles Mount — /, /ping, /api/chat/stream all work
+  8. StaticFiles Mount — /, /ping, /invocations stream mode all work
 """
 
 import json
@@ -126,6 +126,15 @@ def _stop_service(proc: subprocess.Popen):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+
+
+async def _post_stream(client: httpx.AsyncClient, message: str) -> httpx.Response:
+    """Call the unified streaming invocation endpoint."""
+    return await client.post(
+        "/invocations",
+        json={"message": message, "stream": True},
+        headers={"Accept": "text/event-stream"},
+    )
 
 
 def _backup_config():
@@ -302,8 +311,8 @@ class TestScenario2_SSEStreamingChat:
 
     @pytest.mark.asyncio
     async def test_sse_content_type_and_headers(self, test_app_client):
-        """GET /api/chat/stream?q=Hello returns text/event-stream with correct headers."""
-        resp = await test_app_client.get("/api/chat/stream?q=Hello")
+        """POST /invocations stream=true returns text/event-stream headers."""
+        resp = await _post_stream(test_app_client, "Hello")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
 
         content_type = resp.headers.get("content-type", "")
@@ -315,7 +324,7 @@ class TestScenario2_SSEStreamingChat:
     @pytest.mark.asyncio
     async def test_sse_data_prefix_format(self, test_app_client):
         """SSE events use 'data: ' prefix with valid JSON payload."""
-        resp = await test_app_client.get("/api/chat/stream?q=Hello")
+        resp = await _post_stream(test_app_client, "Hello")
         assert resp.status_code == 200
 
         body = resp.text
@@ -339,7 +348,7 @@ class TestScenario2_SSEStreamingChat:
     @pytest.mark.asyncio
     async def test_sse_streams_multiple_events(self, test_app_client, fake_handler):
         """Streaming produces multiple token events and a final done event."""
-        resp = await test_app_client.get("/api/chat/stream?q=Hello")
+        resp = await _post_stream(test_app_client, "Hello")
         assert resp.status_code == 200
 
         body = resp.text
@@ -364,7 +373,7 @@ class TestScenario2_SSEStreamingChat:
     @pytest.mark.asyncio
     async def test_sse_with_chinese_text(self, test_app_client):
         """SSE streaming works with Chinese text (UTF-8)."""
-        resp = await test_app_client.get("/api/chat/stream?q=你好世界")
+        resp = await _post_stream(test_app_client, "你好世界")
         assert resp.status_code == 200
 
         body = resp.text
@@ -377,8 +386,8 @@ class TestScenario2_SSEStreamingChat:
 
     @pytest.mark.asyncio
     async def test_sse_with_special_characters(self, test_app_client):
-        """SSE streaming handles special characters in query."""
-        resp = await test_app_client.get("/api/chat/stream?q=Hello!+@#$%")
+        """SSE streaming handles special characters in message body."""
+        resp = await _post_stream(test_app_client, "Hello!+@#$%")
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
@@ -502,7 +511,7 @@ class TestScenario4_MultiTurnConversation:
         messages = ["Hello", "How are you?", "What time is it?"]
 
         for i, msg in enumerate(messages):
-            resp = await test_app_client.get(f"/api/chat/stream?q={msg}")
+            resp = await _post_stream(test_app_client, msg)
             assert resp.status_code == 200, f"Message {i} ('{msg}') failed: {resp.status_code}"
             assert "text/event-stream" in resp.headers.get("content-type", "")
 
@@ -522,7 +531,7 @@ class TestScenario4_MultiTurnConversation:
         """Rapid successive requests don't crash the service."""
         # Send 10 requests quickly
         for i in range(10):
-            resp = await test_app_client.get(f"/api/chat/stream?q=msg{i}")
+            resp = await _post_stream(test_app_client, f"msg{i}")
             # Only check status — the test verifies stability
             assert resp.status_code in (200, 400), (
                 f"Request {i} failed with unexpected status {resp.status_code}"
@@ -537,18 +546,21 @@ class TestScenario5_ErrorHandling:
     """Verify proper error handling for invalid inputs."""
 
     @pytest.mark.asyncio
-    async def test_empty_query_returns_400(self, test_app_client):
-        """GET /api/chat/stream?q= (empty) returns 400 with meaningful error."""
-        resp = await test_app_client.get("/api/chat/stream?q=")
+    async def test_empty_message_returns_400(self, test_app_client):
+        """POST /invocations stream=true with empty message returns 400."""
+        resp = await test_app_client.post(
+            "/invocations",
+            json={"message": "", "stream": True},
+        )
         assert resp.status_code == 400, (
-            f"Expected 400 for empty query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
         )
 
         # Try to parse JSON error detail
         try:
             data = resp.json()
             assert "detail" in data
-            assert "required" in data["detail"].lower() or "q" in data["detail"].lower()
+            assert "required" in data["detail"].lower() or "message" in data["detail"].lower()
         except Exception:
             # At minimum the response should not be a crash (5xx)
             assert resp.status_code < 500, (
@@ -556,30 +568,36 @@ class TestScenario5_ErrorHandling:
             )
 
     @pytest.mark.asyncio
-    async def test_missing_query_returns_400(self, test_app_client):
-        """GET /api/chat/stream without q param returns 400."""
-        resp = await test_app_client.get("/api/chat/stream")
+    async def test_missing_message_returns_400(self, test_app_client):
+        """POST /invocations stream=true without message returns 400."""
+        resp = await test_app_client.post("/invocations", json={"stream": True})
         assert resp.status_code == 400, (
-            f"Expected 400 for missing query, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_query_returns_400(self, test_app_client):
-        """GET /api/chat/stream?q=%20%20 (spaces) returns 400."""
-        resp = await test_app_client.get("/api/chat/stream?q=%20%20")
+    async def test_whitespace_only_message_returns_400(self, test_app_client):
+        """POST /invocations stream=true with whitespace message returns 400."""
+        resp = await test_app_client.post(
+            "/invocations",
+            json={"message": "  ", "stream": True},
+        )
         assert resp.status_code == 400, (
-            f"Expected 400 for whitespace-only query, got {resp.status_code}"
+            f"Expected 400 for whitespace-only message, got {resp.status_code}"
         )
 
     @pytest.mark.asyncio
     async def test_service_does_not_crash_after_invalid_request(self, test_app_client):
         """After receiving 400, the service still handles valid requests."""
         # Send invalid request first
-        resp_bad = await test_app_client.get("/api/chat/stream?q=")
+        resp_bad = await test_app_client.post(
+            "/invocations",
+            json={"message": "", "stream": True},
+        )
         assert resp_bad.status_code == 400
 
         # Then send valid request
-        resp_good = await test_app_client.get("/api/chat/stream?q=valid")
+        resp_good = await _post_stream(test_app_client, "valid")
         assert resp_good.status_code == 200
         assert "data:" in resp_good.text
 
@@ -806,12 +824,14 @@ class TestScenario8_StaticFilesMount:
         finally:
             _stop_service(proc)
 
-    def test_api_chat_stream_works_with_static_mounted(self, http_client):
-        """GET /api/chat/stream?q=test works when static files are mounted."""
+    def test_invocations_stream_works_with_static_mounted(self, http_client):
+        """POST /invocations stream=true works when static files are mounted."""
         proc = _start_service(self.PORT)
         try:
-            resp = http_client.get(
-                f"http://127.0.0.1:{self.PORT}/api/chat/stream?q=test"
+            resp = http_client.post(
+                f"http://127.0.0.1:{self.PORT}/invocations",
+                json={"message": "test", "stream": True},
+                headers={"Accept": "text/event-stream"},
             )
             # With dummy API key, LLM may fail (500) but the endpoint should respond
             assert resp.status_code in (200, 500), (

@@ -18,9 +18,9 @@ flowchart TB
     end
 
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
-        APIGW["API Gateway<br/>defaultgw-xxx...<br/>IAM 签名认证<br/>仅转发 /invocations/*"]
+        APIGW["API Gateway<br/>defaultgw-xxx...<br/>IAM 签名认证<br/>仅转发 /invocations"]
         subgraph Container["容器 :8080"]
-            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/stream<br/>/invocations/playground"]
+            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/playground（本地）"]
             Handler["Agent 处理逻辑<br/>deepagents 编排"]
             SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
         end
@@ -54,7 +54,7 @@ flowchart TB
 | 层 | 负责 | 详细文档 |
 |----|------|----------|
 | **前端** | 消息通道、用户交互界面 | `frontend_architecture.md` |
-| **API Gateway** | IAM 签名认证、路由转发（仅 `/invocations/*`） | `cloud-service/agentarts.md` §9 |
+| **API Gateway** | IAM 签名认证、路由转发（生产仅 `/invocations` 精确路径） | `cloud-service/agentarts.md` §9 |
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
 | **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
 

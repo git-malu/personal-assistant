@@ -13,8 +13,7 @@ flowchart TB
     subgraph Container["AgentArts 容器 :8080"]
         subgraph Routes["路由层"]
             Ping["GET /ping<br/>健康检查（平台内部）"]
-            Invoke["POST /invocations<br/>AgentArts / OfficeClaw 调用"]
-            Chat_Stream["GET /invocations/stream<br/>SSE 流式对话"]
+            Invoke["POST /invocations<br/>同步 JSON / SSE 流式对话"]
             Playground["GET /invocations/playground<br/>Chainlit 调试 UI"]
         end
 
@@ -52,19 +51,20 @@ flowchart TB
 
 ### 2.1 AgentArts Gateway 路由约束
 
-AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求，Gateway 只转发 `/invocations` 路径（默认 `ACCURATE_MATCH`）或其子路径（`PREFIX_MATCH`）：
+AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前只能可靠使用 `ACCURATE_MATCH`，Gateway 仅转发 `/invocations` 精确路径；`PREFIX_MATCH` 尚未上线，不能依赖 `/invocations/*` 子路径转发。
 
 ```
 浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
                        │
-                   PREFIX_MATCH: /invocations/* → ✅ 转发
-                   其他路径（非 /invocations/* 前缀）→ ❌ 404 No matching policy found
+                   ACCURATE_MATCH: /invocations → ✅ 转发
+                   /invocations/* 子路径 → ❌ 404 No matching policy found
 ```
 
 **关键约束**：
 - `/ping` 是平台内部健康检查端点，**不走 Gateway**，AgentArts 控制面直接调容器。必须保留在根路径。
-- `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**。
-- **所有面向外部客户端的路由**必须收敛到 `/invocations/*` 前缀下——Gateway 无法配置自定义路由表或 wildcard。
+- `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
+- **所有面向外部客户端的生产调用**必须收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
+- `/invocations/playground` 仅用于本地调试；生产 Gateway 不转发该子路径。
 
 配置方式（`.agentarts_config.yaml`）：
 
@@ -73,7 +73,7 @@ runtime:
   invoke_config:
     protocol: HTTP
     port: 8080
-    url_match_type: PREFIX_MATCH  # 启用 /invocations/* 子路径转发
+    url_match_type: ACCURATE_MATCH  # 仅转发 /invocations 精确路径
 ```
 
 ### 2.2 路由表
@@ -93,11 +93,21 @@ async def ping():
 
 @app.post("/invocations")
 async def agent_arts_invoke(request: Request):
-    """AgentArts Runtime / OfficeClaw 统一调用入口"""
+    """AgentArts Runtime / OfficeClaw / Web Chat 统一调用入口"""
     payload = await request.json()
+
+    if payload.get("stream") is True:
+        return StreamingResponse(
+            agent_handler.handle_stream(
+                message=payload.get("message", ""),
+                user_id=request.headers.get("X-AgentArts-User-Id", "anonymous"),
+            ),
+            media_type="text/event-stream",
+        )
+
     result = await agent_handler.handle(
         message=payload.get("message", ""),
-        user_id=request.headers.get("X-AgentArts-User-Id"),
+        user_id=request.headers.get("X-AgentArts-User-Id", "anonymous"),
         session_id=request.headers.get("X-AgentArts-Session-Id"),
     )
     return {"response": result}
@@ -121,7 +131,7 @@ async def feishu_webhook(request: Request):
     await send_feishu_reply(body, reply)
     return {"code": 0}
 
-# ── Web Chat ──
+# ── Web Chat OAuth（当前不通过 AgentArts Gateway 暴露）──
 
 @app.get("/auth/callback")
 async def oauth_callback(code: str):
@@ -131,25 +141,15 @@ async def oauth_callback(code: str):
     response.set_cookie("session", token["id_token"])
     return response
 
-@app.get("/invocations/stream")
-async def chat_stream(q: str, request: Request):
-    """SSE 流式对话 — 给浏览器前端推送逐 token 响应"""
-    user_id = get_user_from_cookie(request)
-    return StreamingResponse(
-        agent_handler.handle_stream(message=q, user_id=user_id),
-        media_type="text/event-stream",
-    )
-
-# Chainlit 调试 UI（挂载在 /invocations 前缀下）
+# Chainlit 调试 UI（本地调试；生产 ACCURATE_MATCH Gateway 不转发该子路径）
 mount_chainlit(app=app, target=..., path="/invocations/playground")
 ```
 
 | 路由 | 方法 | 调用方 | 用途 | Gateway 可见 |
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
-| `/invocations` | POST | AgentArts SDK / OfficeClaw | Agent 对话 | ✅ |
-| `/invocations/stream` | GET | 浏览器 | SSE 流式对话 | ✅（PREFIX_MATCH） |
-| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅（PREFIX_MATCH） |
+| `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（ACCURATE_MATCH） |
+| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI，仅本地可用 | ❌ 生产 Gateway 不转发子路径 |
 
 > **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
 
@@ -339,11 +339,11 @@ personal-assistant/
 |---------------------|------------------|
 | 仅提供 `/ping` + `/invocations` | 可定义任意路由 |
 | 不能添加 OAuth 回调 | `/auth/callback`（仅本地调试可用） |
-| 不能添加 SSE 流式 | `/invocations/stream`（PREFIX_MATCH） |
+| 不能添加 SSE 流式 | `POST /invocations` + `stream: true` |
 | 不能添加飞书 Webhook | 飞书通过平台 MCP Gateway 集成 |
 | `agentarts dev` 启动 | `uvicorn main:app --port 8080` |
 | `agentarts launch` 自动部署 | 同样可以用 `agentarts launch` |
 
 AgentArts 平台只看容器 `:8080` 上有没有 `/ping` 和 `/invocations`，不关心 HTTP Server 用什么框架启动。
 
-> ⚠️ **关键限制**：虽然 FastAPI 可以定义任意路由，但 AgentArts Gateway **只转发 `/invocations/*` 路径**（需启用 `PREFIX_MATCH`）。本地 `agentarts dev` 时所有路由可达，生产部署后只有 `/ping`（平台内部）和 `/invocations/*`（Gateway 转发）能通。路由设计必须遵守此约束。常见陷阱见 [AgentArts 部署 runbook §15.12](agentarts-deploy-runbook.md#1512-runtimearch-与镜像架构不一致)。
+> ⚠️ **关键限制**：虽然 FastAPI 可以定义任意路由，但 AgentArts Gateway 生产环境当前只可靠转发 `/invocations` 精确路径（`ACCURATE_MATCH`）。本地 `agentarts dev` 时所有路由可达；生产部署后外部客户端必须通过 `POST /invocations` 单一路径访问，`/invocations/*` 子路径会被 Gateway 拒绝。常见陷阱见 [AgentArts 部署 runbook §15.12](agentarts-deploy-runbook.md#1512-runtimearch-与镜像架构不一致)。
