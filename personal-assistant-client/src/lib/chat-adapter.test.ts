@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { chatAdapter } from "./chat-adapter";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
@@ -325,6 +325,134 @@ describe("chatAdapter", () => {
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(url).toBe("/invocations");
       expect(init.body).toBe(JSON.stringify({ message: "", stream: true }));
+    });
+  });
+
+  describe("session ID header", () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    it("sends x-hw-agentarts-session-id header with each request", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("test session");
+
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers).toHaveProperty("x-hw-agentarts-session-id");
+      expect(headers["x-hw-agentarts-session-id"]).toBeTruthy();
+    });
+
+    it("uses same session ID across multiple requests", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("request 1");
+      await collectResults("request 2");
+
+      const headers1 = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      const headers2 = mockFetch.mock.calls[1][1].headers as Record<string, string>;
+
+      expect(headers1["x-hw-agentarts-session-id"]).toBe(
+        headers2["x-hw-agentarts-session-id"],
+      );
+    });
+
+    it("session ID is a valid UUID v4 format", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("uuid test");
+
+      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      const sessionId = headers["x-hw-agentarts-session-id"];
+
+      // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+      const uuidV4Regex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(sessionId).toMatch(uuidV4Regex);
+    });
+
+    it("persists session ID in localStorage under agentarts-session-id key", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("persist test");
+
+      const stored = localStorage.getItem("agentarts-session-id");
+      expect(stored).toBeTruthy();
+
+      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      expect(stored).toBe(headers["x-hw-agentarts-session-id"]);
+    });
+
+    it("reuses existing session ID from localStorage", async () => {
+      // Simulate a previously stored session ID
+      const existingId = "12345678-1234-4123-8123-123456789abc";
+      localStorage.setItem("agentarts-session-id", existingId);
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("reuse test");
+
+      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      expect(headers["x-hw-agentarts-session-id"]).toBe(existingId);
+    });
+
+    it("falls back to non-persisted UUID when localStorage throws", async () => {
+      // Simulate localStorage being completely unavailable (e.g., SecurityError)
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+      const setItemSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("fallback test");
+
+      // Should still receive a session ID header even when localStorage fails
+      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      expect(headers).toHaveProperty("x-hw-agentarts-session-id");
+      const sessionId = headers["x-hw-agentarts-session-id"];
+      expect(sessionId).toBeTruthy();
+
+      // The fallback ID should be a valid UUID v4
+      const uuidV4Regex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(sessionId).toMatch(uuidV4Regex);
+
+      // setItem should never have been called (no persistence in fallback)
+      expect(setItemSpy).not.toHaveBeenCalled();
+
+      vi.restoreAllMocks();
     });
   });
 });
