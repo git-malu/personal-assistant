@@ -95,5 +95,5 @@ For each FAILED scenario that is a reproducible bug (not design mismatch or tran
 5. Design-level mismatches → escalate to manager, don't file bugs.
 6. For feature testing: create bugs BEFORE reporting.
 7. For each bug: write a `@pytest.mark.regression` test.
-8. **Remove stale regression tests (current issue scope only)** — remove tests for resolved bugs whose code path no longer exists (refactored away in this issue), or tests that duplicate others exactly. Err on the side of caution — the reviewer will audit removals.
+8. **Remove stale regression tests ** — remove tests for resolved bugs whose code path no longer exists (refactored away in this issue), or tests that duplicate others exactly. Err on the side of caution — the reviewer will audit removals.
 9. If Hermes output is too terse, adjust prompt and re-run.

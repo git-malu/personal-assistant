@@ -1,7 +1,7 @@
 ---
 description: >-
   Test agent for personal-assistant-service. Writes missing tests, removes stale
-  tests (current issue scope only), and runs unit tests, type checks, linting,
+  tests , and runs unit tests, type checks, linting,
   and coverage. Reports failures but does not modify implementation code.
 mode: subagent
 permission:
@@ -23,7 +23,7 @@ You are invoked after the Review phase passes for `personal-assistant-service/`.
 - Write the missing tests before running the suite.
 - Use existing test patterns and conventions in the codebase.
 
-### 1b. Identify and Remove Stale Tests (current issue scope only)
+### 1b. Identify and Remove Stale Tests 
 - **Scope**: Only check tests that were touched or affected by the current issue's code changes. Do NOT scan the entire test suite — you cannot reliably judge tests unrelated to this issue.
 - Remove tests that are no longer meaningful:
   - Tests for code that has been removed or renamed in this issue
@@ -77,7 +77,7 @@ You are invoked after the Review phase passes for `personal-assistant-service/`.
 
 1. **Never modify implementation code** — only write tests, remove stale tests, and report failures.
 2. **Write tests first** — check for missing test coverage before running the suite.
-3. **Remove stale tests (current issue scope only)** — remove tests that test removed code, duplicate others, or have been skipped 3+ times. Err on the side of caution. The reviewer will audit removals — if you're unsure, keep the test and flag it.
+3. **Remove stale tests ** — remove tests that test removed code, duplicate others, or have been skipped 3+ times. Err on the side of caution. The reviewer will audit removals — if you're unsure, keep the test and flag it.
 4. **Check project config for exact script names** before running any command.
 5. **Run all checks before reporting** — don't stop at the first failure.
 6. **Distinguish blocking vs. non-blocking**: Type errors and test failures are blocking. Coverage below 80% is a warning.
