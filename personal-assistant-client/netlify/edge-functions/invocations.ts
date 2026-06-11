@@ -23,6 +23,10 @@ export default async (request: Request) => {
   const sessionId = crypto.randomUUID();
 
   try {
+    // 先读取完整的请求体（对于聊天消息，body 很小，不会有内存问题）
+    const bodyText = await request.text();
+    const bodyBytes = new TextEncoder().encode(bodyText);
+
     // 转发请求到 AgentArts Gateway
     const response = await fetch(gatewayUrl, {
       method: "POST",
@@ -31,8 +35,10 @@ export default async (request: Request) => {
         "Accept": request.headers.get("accept") || "text/event-stream",
         "Authorization": `Bearer ${apiKey}`,
         "x-hw-agentarts-session-id": sessionId,
+        "Content-Length": String(bodyBytes.length),
       },
-      body: request.body,
+      body: bodyText,
+      signal: request.signal,
     });
 
     // 将后端的响应（包括 status、headers、stream body）原样返回给浏览器

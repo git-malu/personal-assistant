@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -124,11 +125,15 @@ async def invocations(request: Request):
             raise HTTPException(status_code=400, detail="message is required")
 
         async def event_generator():
-            async for sse_data in handler.handle_stream(
-                message=message,
-                user_id=user_id,
-            ):
-                yield sse_data
+            try:
+                async for sse_data in handler.handle_stream(
+                    message=message,
+                    user_id=user_id,
+                ):
+                    yield sse_data
+            except Exception as e:
+                logger.error(f"Stream generator error: {e}", exc_info=True)
+                yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
         return StreamingResponse(
             event_generator(),

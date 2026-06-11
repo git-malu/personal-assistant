@@ -29,31 +29,33 @@ export const chatAdapter: ChatModelAdapter = {
     const query: string =
       lastUserMessage?.content.find((p) => p.type === "text")?.text ?? "";
 
-    const response = await fetch(`${baseUrl}/invocations`, {
-      method: "POST",
-      headers: {
-        Accept: "text/event-stream",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ message: query, stream: true }),
-      signal: abortSignal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("No response body");
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = "";
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
-    let isDone = false;
 
     try {
+      const response = await fetch(`${baseUrl}/invocations`, {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message: query, stream: true }),
+        signal: abortSignal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+      }
+
+      reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let isDone = false;
+
       while (!isDone) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -97,7 +99,7 @@ export const chatAdapter: ChatModelAdapter = {
         }
       }
     } finally {
-      reader.releaseLock();
+      reader?.releaseLock();
     }
 
     yield {
