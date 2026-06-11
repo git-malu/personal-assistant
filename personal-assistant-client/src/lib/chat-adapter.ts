@@ -9,6 +9,19 @@ const baseUrl: string = (
   import.meta.env.VITE_API_BASE_URL ?? ""
 ).replace(/\/$/, "");
 
+function getSessionId(): string {
+  try {
+    const existing = localStorage.getItem("agentarts-session-id");
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    localStorage.setItem("agentarts-session-id", id);
+    return id;
+  } catch {
+    // Fallback: return a non-persisted session ID when localStorage is unavailable
+    return crypto.randomUUID();
+  }
+}
+
 /**
  * ChatModelAdapter that connects to the backend SSE API.
  *
@@ -37,6 +50,7 @@ export const chatAdapter: ChatModelAdapter = {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
         "Authorization": "Bearer pa-dev-api-key-2026",
+        "x-hw-agentarts-session-id": getSessionId(),
       };
 
       const response = await fetch(`${baseUrl}/invocations`, {
