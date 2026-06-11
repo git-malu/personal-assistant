@@ -125,10 +125,14 @@ describe("chatAdapter", () => {
       await collectResults("header test");
 
       const init = mockFetch.mock.calls[0][1] as RequestInit;
-      expect(init.headers).toEqual({
-        Accept: "text/event-stream",
-        "Content-Type": "application/json",
-      });
+      expect(init.headers).toEqual(
+        expect.objectContaining({
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          Authorization: "Bearer pa-dev-api-key-2026",
+          "x-hw-agentarts-session-id": expect.any(String),
+        })
+      );
     });
 
     it("passes the abort signal to fetch", async () => {

@@ -33,12 +33,16 @@ export const chatAdapter: ChatModelAdapter = {
     let fullText = "";
 
     try {
+      const headers: Record<string, string> = {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+        "Authorization": "Bearer pa-dev-api-key-2026",
+        "x-hw-agentarts-session-id": crypto.randomUUID(),
+      };
+
       const response = await fetch(`${baseUrl}/invocations`, {
         method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({ message: query, stream: true }),
         signal: abortSignal,
       });
