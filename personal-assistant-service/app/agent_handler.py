@@ -60,7 +60,10 @@ class AgentHandler:
         result = await self.agent.ainvoke(
             {"messages": [{"role": "user", "content": message}]}
         )
-        return result["messages"][-1].content
+        messages = result.get("messages", [])
+        if not messages:
+            raise RuntimeError("Agent returned empty response")
+        return messages[-1].content
 
     async def handle_stream(
         self, message: str, user_id: str = "anonymous"

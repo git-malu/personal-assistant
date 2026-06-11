@@ -145,11 +145,15 @@ async def invocations(request: Request):
             },
         )
 
-    result = await handler.handle(
-        message=message,
-        user_id=user_id,
-        session_id=session_id,
-    )
+    try:
+        result = await handler.handle(
+            message=message,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception as e:
+        logger.error(f"Agent handler error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     return {"response": result}
 
