@@ -37,7 +37,6 @@ export const chatAdapter: ChatModelAdapter = {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
         "Authorization": "Bearer pa-dev-api-key-2026",
-        "x-hw-agentarts-session-id": "test-session-001",
       };
 
       const response = await fetch(`${baseUrl}/invocations`, {

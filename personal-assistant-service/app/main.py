@@ -99,8 +99,8 @@ async def invocations(request: Request):
 
     message = body.get("message", "")
     stream = body.get("stream", False)
-    user_id = request.headers.get("X-AgentArts-User-Id", "anonymous")
-    session_id = request.headers.get("X-AgentArts-Session-Id")
+    user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
+    session_id = request.headers.get("x-hw-agentarts-session-id")
     set_cookie = None
 
     # Cookie fallback: only when header is missing
