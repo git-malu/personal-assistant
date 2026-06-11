@@ -1,4 +1,5 @@
 import json
+import os
 from collections.abc import AsyncGenerator
 
 from deepagents import create_deep_agent
@@ -47,18 +48,53 @@ class AgentHandler:
 
     def __init__(self):
         self.model = get_model()  # 默认使用 config.yaml 中 llm.default 指定的 provider
+        self.checkpointer = self._init_checkpointer()
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt=SYSTEM_PROMPT,
             tools=[],
+            checkpointer=self.checkpointer,
         )
+
+    def _init_checkpointer(self):
+        """按环境变量选择 Checkpointer 后端。
+
+        优先级: POSTGRES_DSN > SQLITE_DB_PATH > InMemorySaver（默认）
+        """
+        # PostgresSaver — 生产环境（留桩，未测试）
+        if os.environ.get("POSTGRES_DSN"):
+            from langgraph.checkpoint.postgres import PostgresSaver
+
+            return PostgresSaver.from_conn_string(os.environ["POSTGRES_DSN"])
+
+        # AsyncSqliteSaver — 本地持久化
+        if os.environ.get("SQLITE_DB_PATH"):
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            return AsyncSqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
+
+        # InMemorySaver — 默认（开发/调试/测试）
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        return InMemorySaver()
+
+    @staticmethod
+    def _build_config(user_id: str, session_id: str | None = None) -> dict:
+        """构造 LangGraph config，thread_id = {user_id}:{session_id}。
+
+        user-scoped thread_id 从源头防止跨用户 session 泄露。
+        """
+        sid = session_id or "default"
+        return {"configurable": {"thread_id": f"{user_id}:{sid}"}}
 
     async def handle(
         self, message: str, user_id: str = "anonymous", session_id: str | None = None
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
+        config = self._build_config(user_id, session_id)
         result = await self.agent.ainvoke(
-            {"messages": [{"role": "user", "content": message}]}
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
         )
         messages = result.get("messages", [])
         if not messages:
@@ -66,13 +102,16 @@ class AgentHandler:
         return messages[-1].content
 
     async def handle_stream(
-        self, message: str, user_id: str = "anonymous"
+        self, message: str, user_id: str = "anonymous",
+        session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from the agent using astream_events v2."""
+        config = self._build_config(user_id, session_id)
         try:
             async for event in self.agent.astream_events(
                 {"messages": [{"role": "user", "content": message}]},
                 version="v2",
+                config=config,
             ):
                 kind = event["event"]
                 if kind == "on_chat_model_stream":

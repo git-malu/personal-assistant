@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
@@ -14,7 +15,11 @@ logger = logging.getLogger("uvicorn")
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import (  # noqa: E402
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 
@@ -94,8 +99,23 @@ async def invocations(request: Request):
 
     message = body.get("message", "")
     stream = body.get("stream", False)
-    user_id = request.headers.get("X-AgentArts-User-Id", "anonymous")
-    session_id = request.headers.get("X-AgentArts-Session-Id")
+    user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
+    session_id = request.headers.get("x-hw-agentarts-session-id")
+    set_cookie = None
+
+    # Cookie fallback: only when header is missing
+    if not session_id:
+        fallback_id = request.cookies.get("x-anonymous-session-id")
+        if fallback_id:
+            session_id = fallback_id
+        else:
+            session_id = str(uuid.uuid4())
+            # Gate on ENV=development: only set cookie in dev
+            if os.environ.get("ENV") == "development":
+                set_cookie = (
+                    f"x-anonymous-session-id={session_id}; "
+                    f"Path=/; HttpOnly; SameSite=Lax"
+                )
 
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
@@ -111,20 +131,25 @@ async def invocations(request: Request):
                 async for sse_data in handler.handle_stream(
                     message=message,
                     user_id=user_id,
+                    session_id=session_id,
                 ):
                     yield sse_data
             except Exception as e:
                 logger.error(f"Stream generator error: {e}", exc_info=True)
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
+        stream_headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+        if set_cookie:
+            stream_headers["Set-Cookie"] = set_cookie
+
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+            headers=stream_headers,
         )
 
     try:
@@ -137,7 +162,10 @@ async def invocations(request: Request):
         logger.error(f"Agent handler error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return {"response": result}
+    headers = {}
+    if set_cookie:
+        headers["Set-Cookie"] = set_cookie
+    return JSONResponse(content={"response": result}, headers=headers)
 
 
 # === Chainlit Playground（Agent 调试 UI）===

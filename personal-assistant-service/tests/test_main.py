@@ -29,8 +29,13 @@ class FakeAgentHandler:
         self.handle_calls.append((message, user_id, session_id))
         return self._handle_response
 
-    async def handle_stream(self, message: str, user_id: str = "anonymous"):
-        self.stream_calls.append((message, user_id))
+    async def handle_stream(
+        self,
+        message: str,
+        user_id: str = "anonymous",
+        session_id: str | None = None,
+    ):
+        self.stream_calls.append((message, user_id, session_id))
         yield 'data: {"token": "Hello", "done": false}\n\n'
         yield 'data: {"token": " world", "done": false}\n\n'
         yield 'data: {"token": "", "done": true}\n\n'
@@ -87,8 +92,8 @@ async def test_invocations_returns_response(client, fake_handler):
         "/invocations",
         json={"message": "Hello, assistant!"},
         headers={
-            "X-AgentArts-User-Id": "user-1",
-            "X-AgentArts-Session-Id": "sess-abc",
+            "X-HW-AgentGateway-User-Id": "user-1",
+            "x-hw-agentarts-session-id": "sess-abc",
         },
     )
     assert response.status_code == 200
@@ -99,6 +104,59 @@ async def test_invocations_returns_response(client, fake_handler):
     assert fake_handler.handle_calls[0][0] == "Hello, assistant!"
     assert fake_handler.handle_calls[0][1] == "user-1"
     assert fake_handler.handle_calls[0][2] == "sess-abc"
+
+
+# ---------------------------------------------------------------------------
+# Header handling tests
+# ---------------------------------------------------------------------------
+
+
+class TestHeaderHandling:
+    """Verify the /invocations endpoint reads AgentArts Gateway headers.
+
+    - session_id: from x-hw-agentarts-session-id header (or cookie/uuid4 fallback)
+    - user_id: from X-HW-AgentGateway-User-Id header (or "anonymous" default)
+    """
+
+    # ── session_id ──────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_session_id_from_official_header(self, client, fake_handler):
+        """Official header x-hw-agentarts-session-id is recognized."""
+        await client.post(
+            "/invocations",
+            json={"message": "Hi"},
+            headers={"x-hw-agentarts-session-id": "sess-123"},
+        )
+        assert fake_handler.handle_calls[0][2] == "sess-123"
+
+    @pytest.mark.asyncio
+    async def test_cookie_fallback_in_development(
+        self, client, fake_handler, monkeypatch
+    ):
+        """When ENV=development and no session header, Set-Cookie is returned."""
+        monkeypatch.setenv("ENV", "development")
+        response = await client.post("/invocations", json={"message": "Hi"})
+        assert "Set-Cookie" in response.headers
+        assert "x-anonymous-session-id=" in response.headers["Set-Cookie"]
+
+    # ── user_id ─────────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_user_id_from_official_gateway_header(self, client, fake_handler):
+        """Official header X-HW-AgentGateway-User-Id is recognized."""
+        await client.post(
+            "/invocations",
+            json={"message": "Hi"},
+            headers={"X-HW-AgentGateway-User-Id": "user-x"},
+        )
+        assert fake_handler.handle_calls[0][1] == "user-x"
+
+    @pytest.mark.asyncio
+    async def test_user_id_anonymous_default(self, client, fake_handler):
+        """No user-id headers → defaults to 'anonymous'."""
+        await client.post("/invocations", json={"message": "Hi"})
+        assert fake_handler.handle_calls[0][1] == "anonymous"
 
 
 @pytest.mark.asyncio
@@ -112,13 +170,6 @@ async def test_invocations_stream_false_returns_response(client, fake_handler):
     assert response.json() == {"response": "Hello, I am your assistant!"}
     assert len(fake_handler.handle_calls) == 1
     assert fake_handler.stream_calls == []
-
-
-@pytest.mark.asyncio
-async def test_invocations_defaults_to_anonymous_user(client, fake_handler):
-    """POST /invocations without X-AgentArts-User-Id defaults to 'anonymous'."""
-    await client.post("/invocations", json={"message": "Hi"})
-    assert fake_handler.handle_calls[0][1] == "anonymous"
 
 
 @pytest.mark.asyncio
@@ -207,14 +258,17 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
     response = await client.post(
         "/invocations",
         json={"message": "hello", "stream": True},
-        headers={"X-AgentArts-User-Id": "user-1"},
+        headers={
+            "X-HW-AgentGateway-User-Id": "user-1",
+            "x-hw-agentarts-session-id": "sess-test",
+        },
     )
     assert response.status_code == 200
     content_type = response.headers["content-type"]
     assert "text/event-stream" in content_type, f"Got: {content_type}"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
-    assert fake_handler.stream_calls == [("hello", "user-1")]
+    assert fake_handler.stream_calls == [("hello", "user-1", "sess-test")]
 
     body = response.text
     assert "data:" in body
@@ -373,6 +427,7 @@ class TestAgentHandlerSingletonIntegration:
         try:
             test_app = FastAPI()
             with patch("pathlib.Path.exists", return_value=False):
+
                 async def _run():
                     async with lifespan(test_app):
                         stored = test_app.state.agent_handler
@@ -383,6 +438,7 @@ class TestAgentHandlerSingletonIntegration:
                         )
 
                 import asyncio
+
                 asyncio.run(_run())
         finally:
             # Clean up
@@ -491,12 +547,8 @@ class TestCORSPreflight:
         assert response.status_code == 200
 
         assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        assert (
-            response.headers.get("access-control-allow-credentials") == "true"
-        )
-        assert "GET" in response.headers.get(
-            "access-control-allow-methods", ""
-        )
+        assert response.headers.get("access-control-allow-credentials") == "true"
+        assert "GET" in response.headers.get("access-control-allow-methods", "")
 
     @pytest.mark.asyncio
     async def test_preflight_options_ping_with_disallowed_origin(self, client):
@@ -526,17 +578,13 @@ class TestCORSPreflight:
                 "Origin": ALLOWED_ORIGIN,
                 "Access-Control-Request-Method": "POST",
                 "Access-Control-Request-Headers": (
-                    "content-type,x-agentarts-user-id"
+                    "content-type,X-HW-AgentGateway-User-Id"
                 ),
             },
         )
         assert response.status_code == 200
-        assert (
-            response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        )
-        assert (
-            response.headers.get("access-control-allow-credentials") == "true"
-        )
+        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
+        assert response.headers.get("access-control-allow-credentials") == "true"
 
 
 class TestCORSHeadersOnNormalRequests:
@@ -551,12 +599,8 @@ class TestCORSHeadersOnNormalRequests:
         )
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
-        assert (
-            response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        )
-        assert (
-            response.headers.get("access-control-allow-credentials") == "true"
-        )
+        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
+        assert response.headers.get("access-control-allow-credentials") == "true"
 
     @pytest.mark.asyncio
     async def test_post_invocations_includes_cors_headers(self, client):
@@ -566,16 +610,12 @@ class TestCORSHeadersOnNormalRequests:
             json={"message": "Hello, assistant!"},
             headers={
                 "Origin": ALLOWED_ORIGIN,
-                "X-AgentArts-User-Id": "user-1",
+                "X-HW-AgentGateway-User-Id": "user-1",
             },
         )
         assert response.status_code == 200
-        assert (
-            response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        )
-        assert (
-            response.headers.get("access-control-allow-credentials") == "true"
-        )
+        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
+        assert response.headers.get("access-control-allow-credentials") == "true"
 
     @pytest.mark.asyncio
     async def test_get_ping_without_origin_header_omits_cors(self, client):

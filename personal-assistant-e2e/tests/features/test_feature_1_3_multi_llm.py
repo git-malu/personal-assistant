@@ -366,7 +366,7 @@ llm:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "你好，DeepSeek"},
-                headers={"X-AgentArts-User-Id": "test-user"},
+                headers={"X-HW-AgentGateway-User-Id": "test-user"},
             )
             # With dummy key, LLM may return error; accept any HTTP status
             # that proves the request pipeline is functional

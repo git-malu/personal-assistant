@@ -37,10 +37,18 @@ async def on_message(message: cl.Message):
     callback = cl.LangchainCallbackHandler()
 
     try:
+        # Generate or retrieve session_id from Chainlit session
+        session_id = cl.user_session.get("id")  # Chainlit built-in session ID
+
+        config = RunnableConfig(
+            callbacks=[callback],
+            configurable={"thread_id": f"playground:{session_id}"},
+        )
+
         # 使用 ainvoke 获取完整结果，callback 自动捕获中间步骤
         result = await handler.agent.ainvoke(
             {"messages": [{"role": "user", "content": message.content}]},
-            config=RunnableConfig(callbacks=[callback]),
+            config=config,
         )
 
         # 输出最终回复

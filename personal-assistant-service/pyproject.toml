@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
     "chainlit>=2.11.1",
+    "langgraph-checkpoint-sqlite>=3.1.0",
 ]
 
 [tool.ruff.lint]

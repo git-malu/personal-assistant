@@ -10,10 +10,16 @@ from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
 
 @pytest.fixture
 def mock_deps():
-    """Mock get_model and create_deep_agent to avoid real API calls."""
+    """Mock get_model, create_deep_agent, and _init_checkpointer.
+
+    Avoids real API calls and real checkpointer initialization.
+    """
     with (
         patch("app.agent_handler.get_model") as mock_get_model,
         patch("app.agent_handler.create_deep_agent") as mock_create_agent,
+        patch.object(
+            AgentHandler, "_init_checkpointer", return_value=MagicMock()
+        ) as mock_init_cp,
     ):
         mock_model = MagicMock()
         mock_get_model.return_value = mock_model
@@ -21,14 +27,16 @@ def mock_deps():
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
 
-        yield mock_get_model, mock_create_agent, mock_model, mock_agent
+        yield mock_get_model, mock_create_agent, mock_model, mock_agent, mock_init_cp
 
 
 class TestAgentHandlerInit:
     """Tests for AgentHandler.__init__."""
 
     def test_initializes_with_correct_model_config(self, mock_deps):
-        mock_get_model, mock_create_agent, mock_model, mock_agent = mock_deps
+        mock_get_model, mock_create_agent, mock_model, mock_agent, mock_init_cp = (
+            mock_deps
+        )
 
         handler = AgentHandler()
 
@@ -41,13 +49,15 @@ class TestAgentHandlerInit:
         assert kwargs["model"] is mock_model
         assert kwargs["system_prompt"] == SYSTEM_PROMPT
         assert kwargs["tools"] == []
+        assert "checkpointer" in kwargs
+        assert kwargs["checkpointer"] is mock_init_cp.return_value
 
         # Verify handler stores model and agent references
         assert handler.model is mock_model
         assert handler.agent is mock_agent
 
     def test_agent_handler_uses_get_model(self, mock_deps):
-        mock_get_model, mock_create_agent, mock_model, mock_agent = mock_deps
+        mock_get_model, mock_create_agent, mock_model, mock_agent, _ = mock_deps
 
         AgentHandler()
 
@@ -63,7 +73,7 @@ class TestHandle:
 
     @pytest.mark.asyncio
     async def test_handle_returns_agent_response(self, mock_deps):
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -87,7 +97,7 @@ class TestHandle:
 
     @pytest.mark.asyncio
     async def test_handle_default_user_id(self, mock_deps):
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -106,12 +116,12 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_yields_sse_events(self, mock_deps):
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
         # Mock astream_events to yield streaming chunks
-        async def mock_astream_events(_input, version="v2"):
+        async def mock_astream_events(_input, version="v2", config=None):
             chunk1 = MagicMock()
             chunk1.content = "Hello"
             yield {"event": "on_chat_model_stream", "data": {"chunk": chunk1}}
@@ -145,11 +155,11 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_skips_empty_tokens(self, mock_deps):
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
-        async def mock_astream_events(_input, version="v2"):
+        async def mock_astream_events(_input, version="v2", config=None):
             # Empty token should be skipped
             chunk_empty = MagicMock()
             chunk_empty.content = ""
@@ -178,11 +188,11 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_error_yields_sse_error_event(self, mock_deps):
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
-        async def mock_astream_events_error(_input, version="v2"):
+        async def mock_astream_events_error(_input, version="v2", config=None):
             raise ConnectionError("API connection failed")
             yield  # unreachable
 
@@ -202,11 +212,11 @@ class TestHandleStream:
         self, mock_deps
     ):
         """Test that handle_stream uses str(chunk) when chunk lacks .content."""
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
-        async def mock_astream_events(_input, version="v2"):
+        async def mock_astream_events(_input, version="v2", config=None):
             # Chunk without .content attribute (will use str(chunk))
             chunk_no_content = object()  # has no .content
             yield {
@@ -228,11 +238,11 @@ class TestHandleStream:
     @pytest.mark.asyncio
     async def test_handle_stream_ignores_non_stream_events(self, mock_deps):
         """Test that only on_chat_model_stream events produce SSE data."""
-        _, _, _, mock_agent = mock_deps
+        _, _, _, mock_agent, _ = mock_deps
 
         handler = AgentHandler()
 
-        async def mock_astream_events(_input, version="v2"):
+        async def mock_astream_events(_input, version="v2", config=None):
             # Various non-stream events
             yield {"event": "on_chain_start", "data": {}}
             yield {"event": "on_tool_start", "data": {}}
