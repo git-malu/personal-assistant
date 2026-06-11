@@ -222,6 +222,24 @@ flowchart LR
 
 ### 6.1 整体拓扑
 
+#### 当前部署：Netlify + Edge Function 认证代理
+
+当前 Web Chat 前端部署在 Netlify，通过 Edge Function 注入 AgentArts Gateway 认证 header 后转发 API 请求。详见 [ADR-014](../ADR/ADR-014-netlify-edge-function-auth-proxy.md)。
+
+```
+浏览器 ──→ Netlify (agentarts-personal-assistant.netlify.app)
+              │  / → SPA 静态文件
+              │  /invocations → Edge Function → 注入 Authorization → AgentArts Gateway
+```
+
+| 维度 | 说明 |
+|------|------|
+| **同源** | 浏览器只调 Netlify 域名，零跨域 |
+| **认证** | Edge Function 服务端注入 `Authorization: Bearer`，API Key 不出现在浏览器 |
+| **限制** | Netlify 域名不可绑自定义域名（需 ICP 备案），OAuth Cookie 不可用 |
+
+#### 目标部署：OBS + CDN + 自定义域名
+
 ```mermaid
 flowchart TB
     subgraph UserDevices["用户设备"]
