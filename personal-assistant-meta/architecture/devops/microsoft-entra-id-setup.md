@@ -142,5 +142,28 @@ https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
     *   前端静默刷新 Token（即 `acquireTokenSilent()`）会**立刻失败**。
     *   **【避坑注意】**：由于已颁发的 **Access Token / ID Token** 属于短期无状态 JWT（通常有 1 小时有效期），若前端本地缓存未被清除，在这 1 小时内通过 Gateway 验签依然会成功。因此要完成**瞬间失效**测试，通常需要配合**清除浏览器 SessionStorage / LocalStorage**，或直接使用**无痕模式浏览器**。
 
+### 6.3 错误提示："xxxx@qq.com from identity provider 'live.com' does not exist in tenant 'default directory'..."
+**问题原因**：
+当其他外部用户（如 QQ 邮箱、其他未注册在您当前 Directory 中的微软账号）尝试登录您的应用时，报错提示该账号在您的“默认租户”中不存在，必须先被添加为外部用户（Guest）。这通常是因为以下两种架构意图冲突：
+
+#### 场景 A：您的意图是做【私有助手】（仅限您和您指定的测试人员登录）—— 推荐 🌟
+如果您不希望任何陌生人都能登录您的应用、消耗您的 MaaS/DeepSeek 接口额度，那么保持“单租户/受控授权”是正确的。
+*   **解决方法（手动拉入 Guest）**：
+    1. 登录 [Azure 门户](https://portal.azure.com/) -> 选择 **Microsoft Entra ID**。
+    2. 点击左侧 **Users**（用户） -> 点击顶部的 **New user** -> 选择 **Invite external user**（邀请外部用户）。
+    3. 填入对方的邮箱（如 `xxxx@qq.com`），并发送邀请。
+    4. 对方会收到一封微软发来的激活邮件，点击接受（Accept）后，即可顺利登录您的应用！
+
+#### 场景 B：您的意图是做【公共应用】（任何拥有微软账号的人都能自由登录）
+如果您希望它像一个公共 SaaS 一样，不需要您手动邀请任何用户：
+*   **检查一：核对 App 注册时的“支持账户类型”**：
+    *   在 Entra 门户进入您的应用 -> 点击左侧 **Authentication**（身份验证）。
+    *   确保 **Supported account types**（支持的账户类型）选择的是：`Accounts in any organizational directory and personal Microsoft accounts`（多租户 + 个人账户）。如果是单租户，需在此处修改。
+*   **检查二：前端 Authority 终结点配置（最易踩坑！）**：
+    *   在您的前端 React / MSAL 初始化代码中，检查 `authority` 参数。
+    *   ❌ 如果写的是 `https://login.microsoftonline.com/{您的Tenant_ID}`，那么微软会将其作为**单租户**验签，外部用户依然无法登录。
+    *   ✅ 必须将 `authority` 更改为微软公共终结点：`https://login.microsoftonline.com/common`（或者 `https://login.microsoftonline.com/consumers` 仅限个人账号）。
+
+
 
 
