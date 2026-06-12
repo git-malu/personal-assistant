@@ -32,13 +32,18 @@ agents:
           subnet_id: null
           security_group_id: []
       identity_configuration:
-        authorizer_type: API_KEY
+        authorizer_type: CUSTOM_JWT
         authorizer_configuration:
           custom_jwt:
-            discovery_url: null
-            allowed_audience: []
-            allowed_clients: []
-            allowed_scopes: []
+            discovery_url: https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration
+            allowed_audience:
+            - "{CLIENT_ID}"
+            allowed_clients:
+            - "{CLIENT_ID}"
+            allowed_scopes:
+            - openid
+            - profile
+            - email
           key_auth:
             api_keys:
             - api_key: pa-dev-api-key-2026
