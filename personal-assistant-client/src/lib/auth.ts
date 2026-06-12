@@ -7,7 +7,7 @@ const msalConfig: Configuration = {
     redirectUri: typeof window !== "undefined" ? window.location.origin : "",
   },
   cache: {
-    cacheLocation: "memoryStorage",
+    cacheLocation: "sessionStorage", // Required by loginRedirect (redirect destroys memory)
   },
 };
 
