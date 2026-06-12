@@ -114,7 +114,7 @@ async def test_invocations_returns_response(client, fake_handler):
 class TestHeaderHandling:
     """Verify the /invocations endpoint reads AgentArts Gateway headers.
 
-    - session_id: from x-hw-agentarts-session-id header (or cookie/uuid4 fallback)
+    - session_id: from x-hw-agentarts-session-id header (400 if missing)
     - user_id: from X-HW-AgentGateway-User-Id header (or "anonymous" default)
     """
 
@@ -131,14 +131,11 @@ class TestHeaderHandling:
         assert fake_handler.handle_calls[0][2] == "sess-123"
 
     @pytest.mark.asyncio
-    async def test_cookie_fallback_in_development(
-        self, client, fake_handler, monkeypatch
-    ):
-        """When ENV=development and no session header, Set-Cookie is returned."""
-        monkeypatch.setenv("ENV", "development")
+    async def test_missing_session_id_returns_400(self, client):
+        """POST /invocations without x-hw-agentarts-session-id header returns 400."""
         response = await client.post("/invocations", json={"message": "Hi"})
-        assert "Set-Cookie" in response.headers
-        assert "x-anonymous-session-id=" in response.headers["Set-Cookie"]
+        assert response.status_code == 400
+        assert "x-hw-agentarts-session-id" in response.json()["detail"]
 
     # ── user_id ─────────────────────────────────────────────────────
 
@@ -148,14 +145,21 @@ class TestHeaderHandling:
         await client.post(
             "/invocations",
             json={"message": "Hi"},
-            headers={"X-HW-AgentGateway-User-Id": "user-x"},
+            headers={
+                "X-HW-AgentGateway-User-Id": "user-x",
+                "x-hw-agentarts-session-id": "sess-test",
+            },
         )
         assert fake_handler.handle_calls[0][1] == "user-x"
 
     @pytest.mark.asyncio
     async def test_user_id_anonymous_default(self, client, fake_handler):
         """No user-id headers → defaults to 'anonymous'."""
-        await client.post("/invocations", json={"message": "Hi"})
+        await client.post(
+            "/invocations",
+            json={"message": "Hi"},
+            headers={"x-hw-agentarts-session-id": "sess-default"},
+        )
         assert fake_handler.handle_calls[0][1] == "anonymous"
 
 
@@ -165,6 +169,7 @@ async def test_invocations_stream_false_returns_response(client, fake_handler):
     response = await client.post(
         "/invocations",
         json={"message": "Hello, assistant!", "stream": False},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
     )
     assert response.status_code == 200
     assert response.json() == {"response": "Hello, I am your assistant!"}
@@ -175,7 +180,11 @@ async def test_invocations_stream_false_returns_response(client, fake_handler):
 @pytest.mark.asyncio
 async def test_invocations_empty_message_returns_400(client):
     """POST /invocations with empty message returns 400."""
-    response = await client.post("/invocations", json={"message": ""})
+    response = await client.post(
+        "/invocations",
+        json={"message": ""},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
+    )
     assert response.status_code == 400
     assert response.json()["detail"] == "message is required"
 
@@ -183,7 +192,11 @@ async def test_invocations_empty_message_returns_400(client):
 @pytest.mark.asyncio
 async def test_invocations_missing_message_returns_400(client):
     """POST /invocations without 'message' field returns 400."""
-    response = await client.post("/invocations", json={})
+    response = await client.post(
+        "/invocations",
+        json={},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
+    )
     assert response.status_code == 400
     assert response.json()["detail"] == "message is required"
 
@@ -205,7 +218,11 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
     """Whitespace-only message is NOT rejected — app uses `if not message`
     which treats whitespace as truthy for synchronous invocations.
     """
-    response = await client.post("/invocations", json={"message": "   "})
+    response = await client.post(
+        "/invocations",
+        json={"message": "   "},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
+    )
     # Currently passes through; should be 400 after fix
     assert response.status_code == 200
     assert len(fake_handler.handle_calls) == 1
@@ -281,6 +298,7 @@ async def test_invocations_stream_content_format(client):
     response = await client.post(
         "/invocations",
         json={"message": "hello", "stream": True},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
     )
     assert response.status_code == 200
 
@@ -307,6 +325,7 @@ async def test_invocations_stream_empty_message_returns_400(client):
     response = await client.post(
         "/invocations",
         json={"message": "", "stream": True},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
     )
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
@@ -315,7 +334,11 @@ async def test_invocations_stream_empty_message_returns_400(client):
 @pytest.mark.asyncio
 async def test_invocations_stream_missing_message_returns_400(client):
     """POST /invocations with stream=true and missing message returns 400."""
-    response = await client.post("/invocations", json={"stream": True})
+    response = await client.post(
+        "/invocations",
+        json={"stream": True},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
+    )
     assert response.status_code == 400
     assert "required" in response.json()["detail"]
 
@@ -326,6 +349,7 @@ async def test_invocations_stream_whitespace_message_returns_400(client):
     response = await client.post(
         "/invocations",
         json={"message": "  ", "stream": True},
+        headers={"x-hw-agentarts-session-id": "sess-test"},
     )
     assert response.status_code == 400
 
@@ -611,6 +635,7 @@ class TestCORSHeadersOnNormalRequests:
             headers={
                 "Origin": ALLOWED_ORIGIN,
                 "X-HW-AgentGateway-User-Id": "user-1",
+                "x-hw-agentarts-session-id": "sess-test",
             },
         )
         assert response.status_code == 200

@@ -192,33 +192,13 @@ class AgentHandler:
 ```python
 user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
 session_id = request.headers.get("x-hw-agentarts-session-id")
-```
-
-### 3.5 本地开发 Session 降级：Cookie Fallback
-
-本地开发时无 AgentArts Gateway，`x-hw-agentarts-session-id` header 可能缺失。后端通过 **Cookie 降级** 机制保证本地多轮对话可用：
-
-```python
-# main.py — Cookie fallback（仅 ENV=development）
 if not session_id:
-    fallback_id = request.cookies.get("x-anonymous-session-id")
-    if fallback_id:
-        session_id = fallback_id
-    else:
-        session_id = str(uuid.uuid4())
-        if os.environ.get("ENV") == "development":
-            set_cookie = (
-                f"x-anonymous-session-id={session_id}; "
-                f"Path=/; HttpOnly; SameSite=Lax"
-            )
+    raise HTTPException(status_code=400, detail="x-hw-agentarts-session-id header is required")
 ```
 
-**行为说明**：
-- 首次请求无 header → 生成 UUID → `Set-Cookie` 返回浏览器
-- 后续请求自动携带 Cookie → 后端识别为同一 session
-- `ENV=development` 门控：仅在本地开发环境设 Cookie，生产环境绝不启用
+> **强校验**：`x-hw-agentarts-session-id` 在**所有环境**（本地开发 + 生产）均为强制必选参数。生产环境由 AgentArts Gateway 校验（缺失返回 400），本地开发由后端 FastAPI 校验（缺失返回 400）。两端行为完全一致，实现 Dev-Prod Parity。
 
-### 3.6 客户端 Session ID 持久化
+### 3.5 客户端 Session ID 持久化
 
 AgentArts Gateway 将 `x-hw-agentarts-session-id` 标记为**必选**——客户端必须自行生成并携带。若缺失，Gateway 直接返回 400。
 
@@ -251,7 +231,7 @@ const headers = {
 - 同一浏览器同一设备内，关闭重开页面后 session 保持不变
 - `localStorage` 不可用时（私密模式/禁用），回退为每次生成新 UUID
 
-### 3.7 thread_id 安全模型
+### 3.6 thread_id 安全模型
 
 ```mermaid
 flowchart LR
@@ -487,7 +467,7 @@ gantt
     handle_stream 签名改造            :done,    s2, after s1, 2d
     user-scoped thread_id             :done,    s3, after s1, 1d
     AsyncSqliteSaver 本地持久化        :done,    s4, after s3, 2d
-    Cookie 降级（本地开发）            :done,    s5, after s4, 1d
+     Header 强校验（本地 + 生产统一）    :done,    s5, after s4, 1d
     客户端 session ID 持久化          :done,    s6, after s5, 1d
 
     section 中期（Feature 2 之后）

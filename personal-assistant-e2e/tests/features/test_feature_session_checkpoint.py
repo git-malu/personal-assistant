@@ -1,14 +1,13 @@
 """E2E tests for feat/session-checkpoint — LangGraph Checkpointer integration.
 
 Tests multi-turn context persistence, streaming context, session isolation,
-user-scoped thread_id isolation, cookie fallback, and basic functionality.
+user-scoped thread_id isolation, and basic functionality.
 
 Requires E2E_DEEPSEEK_API_KEY env var (deepseek-chat) for multi-turn verification.
 """
 
 import json
 import os
-import re
 import signal
 import subprocess
 import time
@@ -171,12 +170,6 @@ def _parse_sse_stream(response: httpx.Response) -> tuple[str, list[str]]:
     return full_text, errors
 
 
-def _parse_set_cookie(set_cookie_header: str) -> str | None:
-    """Extract x-anonymous-session-id value from Set-Cookie header."""
-    match = re.search(r"x-anonymous-session-id=([^;]+)", set_cookie_header)
-    if match:
-        return match.group(1)
-    return None
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -441,99 +434,15 @@ class TestScenario4_UserScopedIsolation:
             _stop_service(proc)
 
 
-# ── Scenario 5: Cookie Fallback (AC5) ──────────────────────────────────
+# ── Scenario 5: Ping and Existing Functionality (AC8) ──────────────────
 
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario5_CookieFallback:
-    """AC5: 当 x-hw-agentarts-session-id header 缺失时，服务自动生成 session 并回传 cookie."""
+class TestScenario5_PingAndExisting:
+    """AC5: 基础功能验证——ping、无 session header 返回 400、非流式+流式混合 session."""
 
     PORT = 18714
-
-    def test_cookie_generation_and_multi_turn_via_cookie(self, http_client):
-        """First request without session header gets Set-Cookie; second with cookie has context."""
-        base = f"http://127.0.0.1:{self.PORT}"
-
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-            "ENV": "development",
-        })
-        try:
-            # Request 1: No session header, should get Set-Cookie
-            r1 = http_client.post(
-                f"{base}/invocations",
-                json={"message": "我住在北京"},
-                headers={"X-HW-AgentGateway-User-Id": "test-cookie-user"},
-            )
-            assert r1.status_code == 200, f"Request 1 failed: {r1.status_code}"
-
-            # Verify Set-Cookie header exists
-            set_cookie = r1.headers.get("Set-Cookie")
-            assert set_cookie is not None, "Expected Set-Cookie header in response"
-            assert "x-anonymous-session-id=" in set_cookie, (
-                f"Expected x-anonymous-session-id in Set-Cookie, got: {set_cookie}"
-            )
-
-            # Extract the session ID
-            session_id = _parse_set_cookie(set_cookie)
-            assert session_id is not None, f"Could not parse session ID from: {set_cookie}"
-            # Validate UUID format (len > 0 and looks like uuid)
-            assert len(session_id) > 10, f"Session ID too short: {session_id}"
-
-            # Request 2: Use Cookie header (simulate browser returning cookie)
-            r2 = http_client.post(
-                f"{base}/invocations",
-                json={"message": "我住在哪个城市？"},
-                headers={
-                    "X-HW-AgentGateway-User-Id": "test-cookie-user",
-                    "Cookie": f"x-anonymous-session-id={session_id}",
-                },
-            )
-            assert r2.status_code == 200, f"Request 2 failed: {r2.status_code} {r2.text[:300]}"
-            data2 = r2.json()
-            response2 = data2.get("response", "")
-            assert "北京" in response2, (
-                f"Expected '北京' in cookie-fallback response, got: {response2[:500]}"
-            )
-        finally:
-            _stop_service(proc)
-
-    def test_streaming_cookie_fallback(self, http_client):
-        """Streaming request without session header also returns Set-Cookie."""
-        base = f"http://127.0.0.1:{self.PORT}"
-
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-            "ENV": "development",
-        })
-        try:
-            r = http_client.post(
-                f"{base}/invocations",
-                json={"message": "你好", "stream": True},
-                headers={"X-HW-AgentGateway-User-Id": "test-cookie-user"},
-            )
-            assert r.status_code == 200, f"Stream request failed: {r.status_code}"
-            set_cookie = r.headers.get("Set-Cookie")
-            assert set_cookie is not None, (
-                "Expected Set-Cookie header in streaming response"
-            )
-            assert "x-anonymous-session-id=" in set_cookie, (
-                f"Expected x-anonymous-session-id in streaming Set-Cookie, got: {set_cookie}"
-            )
-        finally:
-            _stop_service(proc)
-
-
-# ── Scenario 6: Ping and Existing Functionality (AC8) ──────────────────
-
-
-@pytest.mark.feature
-@pytest.mark.slow
-class TestScenario6_PingAndExisting:
-    """AC8: 基础功能验证——ping、无 session header 可用、非流式+流式混合 session."""
-
-    PORT = 18715
 
     def test_ping_returns_ok(self, http_client):
         """GET /ping returns 200 with {"status": "ok"}."""
@@ -550,8 +459,8 @@ class TestScenario6_PingAndExisting:
         finally:
             _stop_service(proc)
 
-    def test_invocation_without_session_header(self, http_client):
-        """POST /invocations without session header still works."""
+    def test_invocation_without_session_header_returns_400(self, http_client):
+        """POST /invocations without x-hw-agentarts-session-id header returns 400."""
         base = f"http://127.0.0.1:{self.PORT}"
 
         proc = _start_service(self.PORT, env={
@@ -563,10 +472,11 @@ class TestScenario6_PingAndExisting:
                 json={"message": "你好"},
                 headers={"X-HW-AgentGateway-User-Id": "test-no-session"},
             )
-            assert r.status_code == 200, f"Request failed: {r.status_code}"
+            assert r.status_code == 400, f"Expected 400, got {r.status_code}"
             data = r.json()
-            assert "response" in data, f"No 'response' in: {data}"
-            assert len(data["response"]) > 0, "Empty response"
+            assert "x-hw-agentarts-session-id" in data["detail"], (
+                f"Expected 'x-hw-agentarts-session-id' in error detail, got: {data}"
+            )
         finally:
             _stop_service(proc)
 
