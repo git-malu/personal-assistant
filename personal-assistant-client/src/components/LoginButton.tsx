@@ -1,8 +1,8 @@
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
-import { loginRequest } from "@/lib/auth";
+import { loginRequest, fetchUserPhoto } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { LogIn, LogOut } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /** Extract initials from a display name (e.g. "John Doe" → "JD", "Alice" → "A") */
 function getInitials(name: string): string {
@@ -27,10 +27,21 @@ function avatarColor(name: string): string {
 export function LoginButton() {
   const { instance, accounts } = useMsal();
   const isAuthenticated = useIsAuthenticated();
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
 
   const account = accounts[0];
   const displayName = account?.name ?? account?.username ?? "";
   const initials = useMemo(() => getInitials(displayName), [displayName]);
+
+  // Fetch Microsoft 365 profile photo when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    fetchUserPhoto().then((url) => {
+      if (!cancelled && url) setPhotoUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
 
   // Dev mode: MSAL not configured → skip OAuth
   if (!import.meta.env.VITE_ENTRA_CLIENT_ID) {
@@ -60,12 +71,20 @@ export function LoginButton() {
     return (
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <div
-            className={`${avatarColor(displayName)} flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium text-white`}
-            title={displayName}
-          >
-            {initials}
-          </div>
+          {photoUrl ? (
+            <img
+              src={photoUrl}
+              alt={displayName}
+              className="h-7 w-7 rounded-full object-cover"
+            />
+          ) : (
+            <div
+              className={`${avatarColor(displayName)} flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium text-white`}
+              title={displayName}
+            >
+              {initials}
+            </div>
+          )}
           <span className="text-sm font-medium text-foreground max-w-[120px] truncate">
             {displayName}
           </span>
