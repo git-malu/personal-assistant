@@ -216,6 +216,10 @@ class TestScenario1_DefaultProviderMaaS:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             # With dummy key, LLM may return error → 500, but the
             # HTTP pipeline (routing, JSON parsing, error handling) is verified.
@@ -239,6 +243,10 @@ class TestScenario1_DefaultProviderMaaS:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": ""},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code == 400
             assert resp.json()["detail"] == "message is required"
@@ -254,6 +262,10 @@ class TestScenario1_DefaultProviderMaaS:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code == 400
             assert resp.json()["detail"] == "message is required"
@@ -269,7 +281,11 @@ class TestScenario1_DefaultProviderMaaS:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello", "stream": True},
-                headers={"Accept": "text/event-stream"},
+                headers={
+                    "Accept": "text/event-stream",
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code in (200, 500)
             if resp.status_code == 200:
@@ -287,6 +303,10 @@ class TestScenario1_DefaultProviderMaaS:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "", "stream": True},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code == 400
         finally:
@@ -366,7 +386,10 @@ llm:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "你好，DeepSeek"},
-                headers={"X-HW-AgentGateway-User-Id": "test-user"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             # With dummy key, LLM may return error; accept any HTTP status
             # that proves the request pipeline is functional
@@ -390,7 +413,11 @@ llm:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello", "stream": True},
-                headers={"Accept": "text/event-stream"},
+                headers={
+                    "Accept": "text/event-stream",
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code in (200, 500)
             if resp.status_code == 200:
@@ -444,6 +471,10 @@ class TestScenario3_ConfigFallback:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             assert resp.status_code in (200, 500)
         finally:

@@ -224,7 +224,11 @@ class TestScenario1_CORSIntegration:
         resp = cors_client.post(
             "/invocations",
             json={"message": "Hello"},
-            headers={"Origin": ALLOWED_ORIGIN},
+            headers={
+                "Origin": ALLOWED_ORIGIN,
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 200, (
             f"POST /invocations failed: {resp.status_code} {resp.text[:200]}"
@@ -304,7 +308,11 @@ class TestScenario2_SSEBackendIntegration:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "test", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code in (200, 500), (
             f"Expected 200 or 500 from SSE endpoint, "
@@ -316,9 +324,12 @@ class TestScenario2_SSEBackendIntegration:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "hello", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
-        # If LLM works (200), verify content-type. If LLM fails (500), skip.
         if resp.status_code == 200:
             content_type = resp.headers.get("content-type", "")
             assert "text/event-stream" in content_type, (
@@ -330,6 +341,10 @@ class TestScenario2_SSEBackendIntegration:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "", "stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
@@ -337,7 +352,14 @@ class TestScenario2_SSEBackendIntegration:
 
     def test_sse_missing_message_returns_400(self, service_url):
         """POST /invocations stream=true without message returns 400."""
-        resp = httpx.post(f"{service_url}/invocations", json={"stream": True})
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
+        )
         assert resp.status_code == 400, (
             f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
@@ -347,7 +369,11 @@ class TestScenario2_SSEBackendIntegration:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "hello", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         if resp.status_code == 200:
             assert resp.headers.get("cache-control") == "no-cache"

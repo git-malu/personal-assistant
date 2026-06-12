@@ -132,7 +132,11 @@ async def _post_stream(client: httpx.AsyncClient, message: str) -> httpx.Respons
     return await client.post(
         "/invocations",
         json={"message": message, "stream": True},
-        headers={"Accept": "text/event-stream"},
+        headers={
+            "Accept": "text/event-stream",
+            "X-HW-AgentGateway-User-Id": "test-user",
+            "x-hw-agentarts-session-id": "e2e-test-session",
+        },
     )
 
 
@@ -185,8 +189,10 @@ class FakeAgentHandler:
         self.handle_calls.append((message, user_id, session_id))
         return "".join(self._tokens)
 
-    async def handle_stream(self, message: str, user_id: str = "anonymous"):
-        self.stream_calls.append((message, user_id))
+    async def handle_stream(
+        self, message: str, user_id: str = "anonymous", session_id: str | None = None
+    ):
+        self.stream_calls.append((message, user_id, session_id))
         for token in self._tokens:
             yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
         yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
@@ -550,6 +556,10 @@ class TestScenario5_ErrorHandling:
         resp = await test_app_client.post(
             "/invocations",
             json={"message": "", "stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
@@ -569,7 +579,14 @@ class TestScenario5_ErrorHandling:
     @pytest.mark.asyncio
     async def test_missing_message_returns_400(self, test_app_client):
         """POST /invocations stream=true without message returns 400."""
-        resp = await test_app_client.post("/invocations", json={"stream": True})
+        resp = await test_app_client.post(
+            "/invocations",
+            json={"stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
+        )
         assert resp.status_code == 400, (
             f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
@@ -580,6 +597,10 @@ class TestScenario5_ErrorHandling:
         resp = await test_app_client.post(
             "/invocations",
             json={"message": "  ", "stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for whitespace-only message, got {resp.status_code}"
@@ -592,6 +613,10 @@ class TestScenario5_ErrorHandling:
         resp_bad = await test_app_client.post(
             "/invocations",
             json={"message": "", "stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp_bad.status_code == 400
 
@@ -830,7 +855,11 @@ class TestScenario8_StaticFilesMount:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "test", "stream": True},
-                headers={"Accept": "text/event-stream"},
+                headers={
+                    "Accept": "text/event-stream",
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             # With dummy API key, LLM may fail (500) but the endpoint should respond
             assert resp.status_code in (200, 500), (
@@ -871,6 +900,10 @@ class TestScenario8_StaticFilesMount:
             resp = http_client.post(
                 f"http://127.0.0.1:{self.PORT}/invocations",
                 json={"message": "Hello"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "e2e-test-session",
+                },
             )
             # With dummy key, may get 500 from LLM, but the endpoint exists
             assert resp.status_code in (200, 400, 500), (
