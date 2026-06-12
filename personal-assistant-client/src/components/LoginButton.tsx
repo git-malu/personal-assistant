@@ -18,16 +18,17 @@ export function LoginButton() {
 
   const handleLogin = async () => {
     try {
-      await instance.loginPopup(loginRequest);
-      // MSAL LOGIN_SUCCESS event → zustand auto-synced (see main.tsx)
+      await instance.loginRedirect(loginRequest);
+      // Redirect back → handleRedirectPromise() in main.tsx processes the token
+      // → LOGIN_SUCCESS event fires → zustand auto-synced
     } catch (e) {
       console.error("Login failed:", e);
     }
   };
 
   const handleLogout = async () => {
-    await instance.logoutPopup();
-    // MSAL LOGOUT_SUCCESS event → zustand cleared (see main.tsx)
+      await instance.logoutRedirect();
+      // Redirect back → LOGOUT_SUCCESS event → zustand cleared (see main.tsx)
   };
 
   if (isAuthenticated) {
