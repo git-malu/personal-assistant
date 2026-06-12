@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from deepagents import create_deep_agent
 
 from app.llm_config import get_model
+from app.tools.github_tools import GITHUB_TOOLS
 
 _handler_instance: "AgentHandler | None" = None
 
@@ -26,15 +27,18 @@ SYSTEM_PROMPT = """\
 帮助用户管理日程、邮件、笔记和任务。
 
 ## 核心能力（将陆续上线）
+- GitHub 项目跟踪：查询 git-malu/personal-assistant 的 Issues 和 Pull Requests
 - 日程管理：创建、查询、修改和取消日程
 - 邮件处理：阅读、撰写和回复邮件
 - 笔记管理：创建和检索个人笔记
 - 任务追踪：管理待办事项和项目进度
 
 ## 当前状态
-你目前处于初始阶段，暂时无法调用外部工具（如日历、邮件、笔记等）。
+你目前已经可以通过 GitHub 工具查询本项目 Issues 和 Pull Requests。
 你可以进行友好的对话，回答用户的问题，提供建议，并帮助用户梳理思路。
 当用户询问与日程/邮件/笔记/任务相关的操作时，请友好地解释这些功能即将上线。
+当用户询问本项目、GitHub Issues、open issues、PR 或 Pull Requests 时，
+请优先调用 GitHub 工具获取实时信息，不要编造。
 
 ## 行为准则
 - 使用中文回复
@@ -52,7 +56,7 @@ class AgentHandler:
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt=SYSTEM_PROMPT,
-            tools=[],
+            tools=GITHUB_TOOLS,
             checkpointer=self.checkpointer,
         )
 

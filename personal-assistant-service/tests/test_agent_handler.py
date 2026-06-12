@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
+from app.tools.github_tools import GITHUB_TOOLS
 
 
 @pytest.fixture
@@ -48,13 +49,18 @@ class TestAgentHandlerInit:
         kwargs = mock_create_agent.call_args[1]
         assert kwargs["model"] is mock_model
         assert kwargs["system_prompt"] == SYSTEM_PROMPT
-        assert kwargs["tools"] == []
+        assert kwargs["tools"] == GITHUB_TOOLS
         assert "checkpointer" in kwargs
         assert kwargs["checkpointer"] is mock_init_cp.return_value
 
         # Verify handler stores model and agent references
         assert handler.model is mock_model
         assert handler.agent is mock_agent
+
+    def test_system_prompt_mentions_github_project_tools(self):
+        assert "git-malu/personal-assistant" in SYSTEM_PROMPT
+        assert "Issues" in SYSTEM_PROMPT
+        assert "Pull Requests" in SYSTEM_PROMPT
 
     def test_agent_handler_uses_get_model(self, mock_deps):
         mock_get_model, mock_create_agent, mock_model, mock_agent, _ = mock_deps

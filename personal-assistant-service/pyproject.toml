@@ -3,6 +3,7 @@ name = "personal-assistant"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "agentarts-sdk>=0.1.3",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "deepagents>=0.6.8",

@@ -13,6 +13,7 @@ personal-assistant-service/
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py     # deepagents Agent 编排 + MaaS 模型连接
 │   ├── llm_config.py        # LLM 多模型配置管理
+│   ├── tools/               # Agent 工具函数（GitHub Issues/PR 等）
 │   └── playground.py        # Chainlit Playground 挂载
 ├── tests/
 │   ├── __init__.py
@@ -54,6 +55,10 @@ export MODEL_API_KEY="<your-maas-api-key>"
 | `MODEL_API_KEY` | **必需** | MaaS API Key |
 | `MODEL_NAME` | `deepseek-v4-pro` | 模型名称 |
 | `MODEL_URL` | `https://api.modelarts-maas.com/openai/v1` | MaaS API 地址 |
+| `HUAWEICLOUD_SDK_AK` | GitHub 工具使用时必需 | AgentArts Identity SDK AK |
+| `HUAWEICLOUD_SDK_SK` | GitHub 工具使用时必需 | AgentArts Identity SDK SK |
+
+GitHub Issues/PR 工具还需要在 AgentArts Identity 中预创建 OAuth2 Credential Provider：`github-provider`，vendor 为 GitHub OAuth2，GitHub OAuth App scopes 使用 `repo` + `read:user`。
 
 ### 3. 启动服务
 
@@ -147,6 +152,7 @@ uv run ruff format --check .
 |------|------|
 | Web 框架 | FastAPI |
 | Agent 编排 | deepagents（内置 ReAct loop） |
+| Identity | agentarts-sdk（GitHub OAuth2 User Federation） |
 | LLM 连接 | langchain-openai → MaaS (DeepSeek-V4-Pro) |
 | 包管理 | uv |
 | 代码质量 | ruff |
@@ -176,4 +182,5 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | Feature 3 | OfficeClaw 渠道 |
 | Feature 4 | 用户认证 / OAuth |
 | Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） |
-| Feature 6-8 | 外部工具集成（日历/邮件/笔记/任务） |
+| Feature 6 | GitHub Issues/PR 工具（AgentArts Identity OAuth2） |
+| Feature 7-8 | 外部工具集成（日历/邮件/笔记/任务） |
