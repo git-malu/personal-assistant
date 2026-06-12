@@ -90,6 +90,5 @@ jobs:
           cd personal-assistant-service
           # Substitute ${VAR} placeholders in .agentarts_config.yaml with secret values
           export MODEL_API_KEY="${DEEPSEEK_API_KEY}"
-          envsubst < personal-assistant-service/.agentarts_config.yaml | tee personal-assistant-service/.agentarts_config.yaml
-          cd personal-assistant-service
+          envsubst < .agentarts_config.yaml | tee .agentarts_config.yaml
           agentarts launch
