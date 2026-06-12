@@ -55,9 +55,9 @@ agents:
         commands: []
       environment_variables:
       - key: DEEPSEEK_API_KEY
-        value: xxxxxxxxxxxxxxxxxxxxxxx
+        value: ${DEEPSEEK_API_KEY}
       - key: MODEL_API_KEY
-        value: xxxxxxxxxxxxxxxxxxxxxxx
+        value: ${DEEPSEEK_API_KEY}
       - key: MODEL_NAME
         value: deepseek-v4-pro
       - key: MODEL_URL

@@ -88,27 +88,8 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           cd personal-assistant-service
-          # Replace placeholder API keys in .agentarts_config.yaml with values from GitHub secrets
-          python3 -c "
-          import os, re
-          config_path = '.agentarts_config.yaml'
-          with open(config_path, 'r') as f:
-              content = f.read()
-          
-          # Replace DEEPSEEK_API_KEY value
-          content = re.sub(
-              r'(-\s*key:\s*DEEPSEEK_API_KEY\s*\n\s*value:\s*)\S+',
-              r'\g<1>' + os.environ.get('DEEPSEEK_API_KEY', ''),
-              content
-          )
-          # Replace MODEL_API_KEY value with DEEPSEEK_API_KEY
-          content = re.sub(
-              r'(-\s*key:\s*MODEL_API_KEY\s*\n\s*value:\s*)\S+',
-              r'\g<1>' + os.environ.get('DEEPSEEK_API_KEY', ''),
-              content
-          )
-          
-          with open(config_path, 'w') as f:
-              f.write(content)
-          "
+          # Substitute ${VAR} placeholders in .agentarts_config.yaml with secret values
+          export MODEL_API_KEY="${DEEPSEEK_API_KEY}"
+          envsubst < personal-assistant-service/.agentarts_config.yaml | tee personal-assistant-service/.agentarts_config.yaml
+          cd personal-assistant-service
           agentarts launch
