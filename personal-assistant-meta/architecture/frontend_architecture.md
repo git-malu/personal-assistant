@@ -107,6 +107,34 @@ FastAPI 容器 :8080
 
 Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同：Web Chat 走 SSE + assistant-ui（React，独立部署于 OBS），Playground 走 Chainlit 的 WebSocket 协议（Python 原生，同容器）。
 
+#### 2.1.2 本地开发与网关模拟（Vite Proxy）
+
+在生产环境中，**AgentArts Gateway（API 网关）** 扮演着身份认证与安全过滤的角色。它会拦截请求、校验 Token，并将解析后的用户 ID 通过特有 Header（`X-HW-AgentGateway-User-Id`）透传给后端容器。
+
+为了在本地开发时实现**环境对齐（Environment Parity）**，同时规避浏览器的**同源策略（CORS）**限制，Web Chat 在本地开发阶段引入了 **Vite Proxy** 机制：
+
+##### 1) 架构与数据流向
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 开发者 (Browser)
+    participant Proxy as Vite Proxy<br/>(:5173 / Node.js)
+    participant Backend as FastAPI<br/>(:8080 / Uvicorn)
+
+    User->>Proxy: POST /invocations<br/>[Header] Authorization: Bearer eyJ...
+    Note over Proxy: 1. 识别代理规则<br/>2. 绕过浏览器 CORS<br/>3. 注入模拟身份 Header
+    Proxy->>Backend: POST http://localhost:8080/invocations<br/>[Header] Authorization: Bearer eyJ...<br/>[Header] X-HW-AgentGateway-User-Id: dev-user
+    Backend-->>Proxy: 返回流式数据 (SSE)
+    Proxy-->>User: 透传流式数据 (SSE)
+```
+
+##### 2) 核心实现原理
+
+- **同源伪装（避开 CORS）**：前端代码中所有发往后端的 API 请求（如 `/invocations`），都以相对路径形式发出，即请求 `http://localhost:5173/invocations`（与前端自身同源）。浏览器检测到请求同源，**不会触发 CORS 校验，亦不会发起 OPTIONS 预检请求**。
+- **Node.js 侧转发与 Header 注入（Cosplay 华为云网关）**：运行在开发机上的 Vite 进程（Node.js 端）拦截到 `/invocations` 路径请求，在服务器端将其转发至真正的后端 `http://localhost:8080/invocations`。在转发之前，Vite 的 `vite.config.ts` 会利用 `proxyReq.setHeader` 钩子，强行在请求头中注入 `X-HW-AgentGateway-User-Id: dev-user`。
+- **后端 Uvicorn**：无论是本地还是云端，直接读取 `X-HW-AgentGateway-User-Id` 头即可，无感知调用方是 Vite 还是真实的 AgentArts Gateway。
+
 ### 2.2 飞书直连
 
 **接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`
