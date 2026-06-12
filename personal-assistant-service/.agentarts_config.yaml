@@ -35,11 +35,11 @@ agents:
         authorizer_type: CUSTOM_JWT
         authorizer_configuration:
           custom_jwt:
-            discovery_url: https://login.microsoftonline.com/{TENANT_ID}/v2.0/.well-known/openid-configuration
+            discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
             allowed_audience:
-            - "{CLIENT_ID}"
+            - 3a99a511-926c-475c-b6bc-325a037f574d
             allowed_clients:
-            - "{CLIENT_ID}"
+            - 3a99a511-926c-475c-b6bc-325a037f574d
             allowed_scopes:
             - openid
             - profile
