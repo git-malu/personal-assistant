@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { chatAdapter } from "./chat-adapter";
+import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
+
+// Mock the auth module to control acquireIdTokenSilently behavior
+const mockAcquireIdTokenSilently = vi.fn();
+vi.mock("@/lib/auth", () => ({
+  acquireIdTokenSilently: () => mockAcquireIdTokenSilently(),
+}));
 
 /**
  * Helper to create a minimal ThreadUserMessage for testing.
@@ -77,6 +84,12 @@ async function collectResults(
 describe("chatAdapter", () => {
   const originalFetch = globalThis.fetch;
 
+  beforeEach(() => {
+    // Reset auth store to clean state before each test
+    useAuthStore.getState().clearToken();
+    mockAcquireIdTokenSilently.mockReset();
+  });
+
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
@@ -115,7 +128,7 @@ describe("chatAdapter", () => {
       expect(url).toBe("/invocations");
     });
 
-    it("sends streaming headers", async () => {
+    it("sends streaming headers and excludes Authorization when idToken is null", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([]),
@@ -129,9 +142,10 @@ describe("chatAdapter", () => {
         expect.objectContaining({
           Accept: "text/event-stream",
           "Content-Type": "application/json",
-          Authorization: "Bearer pa-dev-api-key-2026",
-        })
+        }),
       );
+      // Authorization should NOT be present when idToken is null
+      expect(init.headers).not.toHaveProperty("Authorization");
     });
 
     it("passes the abort signal to fetch", async () => {
@@ -296,6 +310,109 @@ describe("chatAdapter", () => {
         .map((c) => c.text);
 
       expect(texts.some((t) => t === "After bad")).toBe(true);
+    });
+  });
+
+  describe("auth header", () => {
+    it("includes Authorization: Bearer header when idToken is set", async () => {
+      // Set idToken in the zustand store
+      useAuthStore.getState().setIdToken("test-token-123");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("auth test");
+
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers).toHaveProperty("Authorization");
+      expect(headers["Authorization"]).toBe("Bearer test-token-123");
+    });
+
+    it("does NOT include Authorization header when idToken is null", async () => {
+      // Ensure idToken is null (already reset in beforeEach)
+      expect(useAuthStore.getState().idToken).toBeNull();
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("no auth test");
+
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers).not.toHaveProperty("Authorization");
+    });
+  });
+
+  describe("401 / 403 auth refresh", () => {
+    it("on 401: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
+      // Set initial token
+      useAuthStore.getState().setIdToken("expired-token");
+      mockAcquireIdTokenSilently.mockResolvedValue(null);
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await expect(collectResults("401 test")).rejects.toThrow(
+        "Authentication required. Please sign in.",
+      );
+
+      // Verify acquireIdTokenSilently was called
+      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+
+      // Verify store token was cleared
+      expect(useAuthStore.getState().idToken).toBeNull();
+    });
+
+    it("on 403: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
+      useAuthStore.getState().setIdToken("forbidden-token");
+      mockAcquireIdTokenSilently.mockResolvedValue(null);
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await expect(collectResults("403 test")).rejects.toThrow(
+        "Authentication required. Please sign in.",
+      );
+
+      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+      expect(useAuthStore.getState().idToken).toBeNull();
+    });
+
+    it("on 401: calls acquireIdTokenSilently, updates store with fresh token, still throws auth error", async () => {
+      useAuthStore.getState().setIdToken("expired-token");
+      mockAcquireIdTokenSilently.mockResolvedValue("fresh-token-456");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await expect(collectResults("401 refresh test")).rejects.toThrow(
+        "Authentication required. Please sign in.",
+      );
+
+      // Verify acquireIdTokenSilently was called
+      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+
+      // Verify store was updated with fresh token
+      expect(useAuthStore.getState().idToken).toBe("fresh-token-456");
     });
   });
 

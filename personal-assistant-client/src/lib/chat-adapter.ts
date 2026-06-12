@@ -4,6 +4,8 @@ import type {
   ChatModelRunResult,
 } from "@assistant-ui/react";
 import type { SSEEvent } from "../types/chat";
+import { useAuthStore } from "@/stores/auth-store";
+import { acquireIdTokenSilently } from "@/lib/auth";
 
 const baseUrl: string = (
   import.meta.env.VITE_API_BASE_URL ?? ""
@@ -46,12 +48,17 @@ export const chatAdapter: ChatModelAdapter = {
     let fullText = "";
 
     try {
+      // Get current idToken from auth store (plain object, use getState())
+      let idToken = useAuthStore.getState().idToken;
+
       const headers: Record<string, string> = {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
-        "Authorization": "Bearer pa-dev-api-key-2026",
         "x-hw-agentarts-session-id": getSessionId(),
       };
+      if (idToken) {
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
 
       const response = await fetch(`${baseUrl}/invocations`, {
         method: "POST",
@@ -61,6 +68,15 @@ export const chatAdapter: ChatModelAdapter = {
       });
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          const freshToken = await acquireIdTokenSilently();
+          if (freshToken) {
+            useAuthStore.getState().setIdToken(freshToken);
+          } else {
+            useAuthStore.getState().clearToken();
+          }
+          throw new Error("Authentication required. Please sign in.");
+        }
         throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
       }
 

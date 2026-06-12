@@ -21,6 +21,7 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
+from app.auth import extract_gateway_user_id  # noqa: E402
 
 
 @asynccontextmanager
@@ -98,7 +99,7 @@ async def invocations(request: Request):
 
     message = body.get("message", "")
     stream = body.get("stream", False)
-    user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
+    user_id = extract_gateway_user_id(request)
     session_id = request.headers.get("x-hw-agentarts-session-id")
     if not session_id:
         raise HTTPException(

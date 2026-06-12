@@ -22,10 +22,6 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
       '/invocations/playground': {
         target: 'http://localhost:8080',
         changeOrigin: true,
@@ -34,6 +30,11 @@ export default defineConfig({
       '/invocations': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('X-HW-AgentGateway-User-Id', 'dev-user');
+          });
+        },
       },
     },
   },

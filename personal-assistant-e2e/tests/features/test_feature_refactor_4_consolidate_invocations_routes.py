@@ -82,6 +82,10 @@ class TestScenario2_SyncInvocation:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "你好"},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code in (200, 500), (
             f"POST /invocations got unexpected status: {resp.status_code}\n"
@@ -93,6 +97,10 @@ class TestScenario2_SyncInvocation:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": ""},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
@@ -103,6 +111,10 @@ class TestScenario2_SyncInvocation:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
@@ -132,7 +144,11 @@ class TestScenario3_SSEStreamingNewPath:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "你好", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code < 500, (
             f"SSE streaming should not cause server error, "
@@ -144,7 +160,11 @@ class TestScenario3_SSEStreamingNewPath:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "hello", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         # Only verify content-type if the response succeeded (200)
         if resp.status_code == 200:
@@ -158,6 +178,10 @@ class TestScenario3_SSEStreamingNewPath:
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "", "stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp.status_code == 400, (
             f"Expected 400 for empty message, got {resp.status_code}: {resp.text[:200]}"
@@ -165,7 +189,14 @@ class TestScenario3_SSEStreamingNewPath:
 
     def test_sse_missing_query_returns_400(self, service_url):
         """SSE streaming without message returns 400."""
-        resp = httpx.post(f"{service_url}/invocations", json={"stream": True})
+        resp = httpx.post(
+            f"{service_url}/invocations",
+            json={"stream": True},
+            headers={
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
+        )
         assert resp.status_code == 400, (
             f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
         )
@@ -225,7 +256,11 @@ class TestScenario4_OldRouteReturns404:
         resp_new = httpx.post(
             f"{service_url}/invocations",
             json={"message": "test", "stream": True},
-            headers={"Accept": "text/event-stream"},
+            headers={
+                "Accept": "text/event-stream",
+                "X-HW-AgentGateway-User-Id": "test-user",
+                "x-hw-agentarts-session-id": "e2e-test-session",
+            },
         )
         assert resp_new.status_code < 500, (
             f"POST /invocations stream should work, "
