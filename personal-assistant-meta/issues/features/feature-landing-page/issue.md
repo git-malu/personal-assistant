@@ -3,213 +3,209 @@
 ## Motivation
 
 当前 `personal-assistant-client` 没有 Landing Page。`App.tsx` 直接渲染 `RuntimeProvider → Thread`，未登录用户仅看到一行 "请登录以开始对话" 的提示。这缺失了：
+
 - **产品介绍**：用户无法在登录前了解 Assistant 能做什么
 - **品牌建立**：无视觉 identity，无价值主张展示
 - **转化引导**：无清晰的 CTA 引导用户完成首次登录/对话
 
-本项目已有一份完整的 Apple 设计语言分析文档 [`personal-assistant-client/DESIGN.md`](../../personal-assistant-client/DESIGN.md)，定义了色彩、排版、间距、组件规范和设计哲学。本次变更基于该设计系统，为其构建一个**遵循 Apple 设计语言的 Landing Page**，在用户登录前展示产品价值，登录后无缝进入对话界面。
+本项目已有一份完整的 Apple 设计语言分析文档 [`personal-assistant-client/DESIGN.md`](../../personal-assistant-client/DESIGN.md)，定义了色彩、排版、间距、组件规范和设计哲学。本次变更基于该设计系统，构建一个**遵循 Apple 设计语言的 Landing Page**。
+
+## 问题澄清
+
+**问题不是"怎么区分登录/未登录页面"**——`useIsAuthenticated()` 已经提供了这个能力，`App.tsx` 里加个条件渲染就行。具体用不用 react-router 是 implementation plan 阶段根据实际情况决定的细节，不属于 issue 层面的设计问题。
+
+**这个 issue 要解决的是：Landing Page 本身长什么样。**
 
 ## Scope
 
 ### In Scope
-- 新建 Landing Page 组件树（`src/components/landing/`），包含 Hero、Feature Tile、Capability Grid、Footer
-- 基于 `isAuthenticated` 状态的页面分流逻辑（未登录→Landing，已登录→Chat）
-- CSS Theme 演进：将 `--primary` 从 `#007AFF` 改为 DESIGN.md 的 `#0066cc`（Action Blue）
-- 新增 Apple 表面颜色 token（parchment、dark tiles）到 Tailwind v4 `@theme`
-- 排版覆写：body 17px（非 16px）、headline 负字间距、weight 500→600 重映射
-- Apple Pill Button 变体（`rounded-full`、`active:scale-95`、padding 11px×22px）
-- 响应式布局，遵循 DESIGN.md 断点（1440/1068/833/734/640/480px）
-- 端到端流程验证：用户访问 → 浏览 Landing → 点击 CTA → MSAL 登录 → 进入 Chat
+
+| 项目 | 说明 |
+|------|------|
+| Landing Page 页面结构 | Hero → Feature Tile × N → Capability Grid → Footer 的纵向 tile 序列 |
+| AuthGuard | MSAL redirect 回调期间的 loading 状态 guard，防止 Landing Page 闪现 |
+| 设计 token 落地 | 将 DESIGN.md 的色彩、排版、间距 token 转化为 Tailwind CSS v4 `@theme` 变量 |
+| 组件设计 | LandingHero、FeatureTile、CapabilityCard、CapabilityGrid、LandingFooter 等组件 |
+| Apple Pill Button | 新增 `apple-primary` / `apple-secondary` 变体（`rounded-full`、`active:scale-95`、padding 11px×22px） |
+| 响应式布局 | 遵循 DESIGN.md 断点（1440/1068/833/734/640/480px） |
+| e-commerce → AI 设计翻译 | 将 Apple 的"产品 tile"概念映射为 AI Assistant 的"能力展示 tile" |
 
 ### Out of Scope
-- 引入 `react-router` 做页面路由（本次用 auth 状态条件渲染；后续 OBS CDN 配置完成后迁移）
-- 重写 `assistant-ui` Thread 组件样式（仅做外层 layout 包装）
-- 产品摄影/插图资产的最终产出（使用 typography-first + UI mockup 策略，资产待 Meta 阶段定稿）
-- Landing Page 的暗色模式（本次仅实现亮色主题，与 DESIGN.md 分析的 Apple 默认白天模式一致）
-- 飞书/OfficeClaw 渠道的 Landing Page（仅 Web Chat 渠道）
+
+| 项目 | 说明 |
+|------|------|
+| 页面路由机制 | 用 react-router 还是条件渲染，属于 implementation plan 阶段的决策 |
+| assistant-ui 样式重写 | 仅做外层 layout 包装，不修改 Thread 内部 |
+| 插图/摄影资产产出 | 使用 typography-first 策略，资产待 Meta 阶段定稿 |
+| 暗色模式 | 本次仅实现亮色主题（DESIGN.md 的 Apple 默认白天模式） |
+| 飞书/OfficeClaw 渠道 | 仅 Web Chat |
 
 ## 设计
 
 ### Architecture
 
-> 基于 auth 状态的条件渲染：`isAuthenticated === false` → LandingPage，`true` → ChatPage。RuntimeProvider 仅在认证后挂载，避免未认证时初始化 assistant-ui 适配器。
+> `App.tsx` 通过 `AuthGuard` 分流三种状态：MSAL 处理中（loading）→ 未登录（LandingPage）→ 已登录（ChatPage）。
 
 ```mermaid
 flowchart TB
     subgraph Entry["入口"]
-        MAIN["main.tsx<br/>MsalProvider → App"]
+        MAIN["main.tsx → App.tsx"]
     end
 
-    subgraph AuthGate["Auth Gate（App.tsx）"]
-        AUTH{"useIsAuthenticated()?"}
-    end
+    MAIN --> GUARD["AuthGuard<br/>检查 msalInProgress"]
 
-    subgraph Unauthenticated["未登录：Landing Page"]
-        LP["LandingPage"]
-        NAV1["GlobalNav<br/>44px 纯黑导航 · 'Sign In' CTA"]
-        HERO["LandingHero<br/>typography-first · hero-display 56px"]
-        FT_LIGHT["FeatureTile · Light<br/>product-tile-light · #ffffff"]
-        FT_DARK["FeatureTile · Dark<br/>product-tile-dark · #272729"]
-        GRID["CapabilityGrid<br/>parchment · #f5f5f7 · 4 cards"]
-        FT_PARCH["FeatureTile · Parchment<br/>product-tile-parchment"]
-        CTA_TILE["ClosingCTA Tile<br/>product-tile-dark-2 · #2a2a2c"]
-        FOOTER["LandingFooter<br/>parchment · 64px padding"]
-    end
+    GUARD -->|"inProgress = handleRedirect/login"| LOADING["LoadingState<br/>Apple-style 简约 spinner"]
 
-    subgraph Authenticated["已登录：Chat Workspace"]
-        RP["RuntimeProvider<br/>仅在认证后挂载"]
-        TP["TooltipProvider"]
-        CP["ChatPage"]
-        NAV2["AuthHeader<br/>用户信息 + Sign Out"]
-        THREAD["assistant-ui Thread"]
-    end
+    GUARD -->|"inProgress = none"| AUTH{"isAuthenticated?"}
 
-    subgraph AuthFlow["MSAL 认证流"]
-        LOGIN["msalInstance.loginRedirect()"]
-        ENTRA["Microsoft Entra ID 登录"]
-        CALLBACK["redirect back → MSAL 处理 #code"]
-    end
+    AUTH -->|"false"| LP["LandingPage"]
+    AUTH -->|"true"| CP["ChatPage<br/>assistant-ui Thread"]
 
-    MAIN --> AUTH
-    AUTH -->|"false"| LP
-    AUTH -->|"true"| RP
-    LP --> NAV1
-    LP --> HERO
-    LP --> FT_LIGHT
-    LP --> FT_DARK
-    LP --> GRID
-    LP --> FT_PARCH
-    LP --> CTA_TILE
-    LP --> FOOTER
-    HERO -->|"CTA onClick"| LOGIN
-    CTA_TILE -->|"CTA onClick"| LOGIN
-    LOGIN --> ENTRA --> CALLBACK --> AUTH
-    RP --> TP --> CP
-    CP --> NAV2
-    CP --> THREAD
+    LP --> NAV1["GlobalNav · 44px 纯黑 · 'Sign In'"]
+    LP --> HERO["LandingHero<br/>hero-display 56px"]
+    LP --> GRID["CapabilityGrid<br/>parchment · 4 cards"]
+    LP --> FT_DARK["FeatureTile · Dark<br/>#272729"]
+    LP --> FT_LIGHT["FeatureTile · Light<br/>#ffffff"]
+    LP --> FT_PARCH["FeatureTile · Parchment<br/>#f5f5f7"]
+    LP --> CTA_TILE["ClosingCTA<br/>dark-2 #2a2a2c"]
+    LP --> FOOTER["LandingFooter<br/>parchment"]
 
-    style AUTH fill:#0066cc,color:#fff
-    style LP fill:#f5f5f7,color:#1d1d1f
-    style CP fill:#ffffff,color:#1d1d1f
+    style LOADING fill:#1d1d1f,color:#fff
+    style LP fill:#f5f5f7,color:#1d1d1f,stroke:#e0e0e0
+    style CP fill:#ffffff,color:#1d1d1f,stroke:#e0e0e0
 ```
+
+**为什么需要 AuthGuard？** 用户从 Microsoft 登录页跳回应用时，MSAL 需要短暂处理 URL 中的 `#code=xxx`（`inProgress === "handleRedirect"`）。此时 `isAuthenticated` 还是 `false`，不加 guard 会短暂闪现 LandingPage 再切换到 Chat——体验很差。AuthGuard 在这个间隙渲染一个简约 loading 状态，等 MSAL 处理完再决定显示哪个页面。
 
 ### Tile Sequence（页面纵向节奏）
 
-> 遵循 Apple 的亮暗交替节奏——颜色变化即为分割线。全出血（full-bleed）tile，`rounded.none`，`gap: 0`。
+> 遵循 Apple 的亮暗交替节奏——颜色变化即为分割线。全出血（full-bleed）tile，`rounded.none`，tile 之间 `gap: 0`。每个 tile 上下内边距 `{spacing.section}`（80px）。
 
 ```mermaid
 flowchart LR
-    subgraph Page["Landing Page — 纵向 Tile 序列"]
+    subgraph Page["Landing Page — 自上而下的 Tile 序列"]
         direction TB
-        T1["<b>① LandingHero</b><br/>亮色 · #ffffff<br/>品牌名 + 价值主张<br/>双 CTA（Apple Pill + Ghost Pill）<br/>排版主导，可选 UI mockup"]
-        T2["<b>② CapabilityGrid</b><br/>parchment · #f5f5f7<br/>section headline: '核心能力'<br/>4 格卡片：日程 / 邮件 / 笔记 / 任务"]
-        T3["<b>③ FeatureTile · Dark</b><br/>深色 · #272729<br/>'智能邮件管理'<br/>单 accent CTA"]
-        T4["<b>④ FeatureTile · Light</b><br/>亮色 · #ffffff<br/>'任务与日程协同'<br/>单 accent CTA"]
-        T5["<b>⑤ FeatureTile · Parchment</b><br/>parchment · #f5f5f7<br/>'跨 Session Memory'"]
-        T6["<b>⑥ ClosingCTA</b><br/>深色-2 · #2a2a2c<br/>'立即开始' + 大号 CTA"]
+        T1["<b>① LandingHero</b><br/>亮色 · #ffffff<br/>品牌名 + 价值主张 + 双 CTA<br/>排版主导 · hero-display 56px"]
+        T2["<b>② CapabilityGrid</b><br/>parchment · #f5f5f7<br/>section headline + 4 格卡片<br/>日程 · 邮件 · 笔记 · 任务"]
+        T3["<b>③ FeatureTile · Dark</b><br/>深色 · #272729<br/>展示一项核心能力<br/>标题 + 描述 + 单 accent CTA"]
+        T4["<b>④ FeatureTile · Light</b><br/>亮色 · #ffffff<br/>展示另一项核心能力"]
+        T5["<b>⑤ FeatureTile · Parchment</b><br/>parchment · #f5f5f7<br/>展示第三项核心能力"]
+        T6["<b>⑥ ClosingCTA</b><br/>深色-2 · #2a2a2c<br/>'立即开始' + 大号 Pill CTA"]
         T7["<b>⑦ LandingFooter</b><br/>parchment · #f5f5f7<br/>链接列 + 法律信息"]
     end
 
     T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7
 ```
 
-### Auth Flow（认证流程）
-
-```mermaid
-sequenceDiagram
-    actor User as 用户
-    participant App as App.tsx
-    participant MSAL as MSAL (msal-react)
-    participant Entra as Microsoft Entra ID
-    participant Chat as ChatPage
-
-    User->>App: 访问应用 URL
-    App->>MSAL: useIsAuthenticated()
-    MSAL-->>App: false
-    App->>User: 渲染 LandingPage
-
-    User->>App: 滚动浏览 Landing Page
-    User->>App: 点击 "开始对话" CTA
-    App->>MSAL: instance.loginRedirect()
-    MSAL->>Entra: 重定向到 Microsoft 登录
-    Entra-->>User: 登录页面
-    User->>Entra: 完成认证
-    Entra-->>MSAL: redirect back（URL #code=...）
-    MSAL->>MSAL: handleRedirectPromise() → 处理 code
-    MSAL-->>App: isAuthenticated = true
-    App->>Chat: 挂载 RuntimeProvider + Thread
-    Chat-->>User: 对话界面
-```
-
 ### Dependencies
-
-> 本 Feature 依赖的现有系统组件和外部条件。
 
 ```mermaid
 flowchart LR
-    THIS["Feature: Landing Page"] 
-    MSAL_DEP["@azure/msal-react<br/>现有认证系统"] -->|"auth state gate"| THIS
-    SHADCN["shadcn/ui Button/Card<br/>现有组件库"] -->|"基础 primitive"| THIS
-    CSS["index.css<br/>Tailwind v4 @theme"] -->|"CSS variable 演进"| THIS
+    THIS["Feature: Landing Page"]
     DESIGN["DESIGN.md<br/>Apple 设计规范"] -->|"设计依据"| THIS
-    THREAD_DEP["assistant-ui Thread<br/>现有对话组件"] -.->|"不修改，仅外层包装"| THIS
+    CSS["index.css<br/>Tailwind v4 @theme"] -->|"CSS token 扩展"| THIS
+    SHADCN["shadcn/ui<br/>Button / Card primitives"] -->|"基础组件"| THIS
+    MSAL["@azure/msal-react<br/>认证状态"] -->|"auth gate"| THIS
+    THREAD["assistant-ui Thread"] -.->|"不修改，仅外层包装"| THIS
 ```
 
-## Acceptance Criteria
+### Design Translation：e-commerce → AI Assistant
 
-- [ ] 未登录用户访问应用时，展示完整的 Landing Page（非白屏或单行提示）
-- [ ] Landing Page 包含：Hero（品牌 + CTA）、至少 3 个 Feature Tile（亮/暗交替）、Capability Grid（4 卡片）、Footer
-- [ ] 所有 CTA 按钮点击触发 `msalInstance.loginRedirect()`，跳转 Microsoft Entra ID 登录
-- [ ] 登录成功后自动切换到 ChatPage（`RuntimeProvider` + `Thread`），无需手动刷新
-- [ ] Tailwind v4 `@theme` 包含 DESIGN.md 定义的表面颜色 token（`canvas-parchment`、`surface-tile-1/2/3`、`surface-black`）
-- [ ] `--primary` CSS variable 值为 `#0066cc`（Action Blue），替代原有的 `#007AFF`
-- [ ] Button 组件新增 `apple-primary` 和 `apple-secondary` 变体（pill 形状、`active:scale-95`）
-- [ ] Body 基础字号为 17px（非 16px），headline 带负字间距（`-0.28px`）
-- [ ] 全出血 tile 无圆角、无阴影、无装饰性渐变
-- [ ] 页面在 480px–1440px 范围内响应式正常，导航栏在 ≤833px 折叠
-- [ ] `RuntimeProvider` 仅在 `isAuthenticated === true` 时挂载，未登录时不初始化
-- [ ] 现有 Chat 功能（assistant-ui Thread）不受影响，登录后对话正常工作
-- [ ] TypeScript 编译无错误，`npm run build` 成功
-- [ ] 现有测试（`LoginButton.test.tsx`、`RuntimeProvider.test.tsx`）全部通过
-
-## Four-Question Gate
-
-| Question | Answer | Notes |
-|----------|--------|-------|
-| **Is it best practice?** | **Yes**（含 documented trade-off） | 组件化拆分（LandingPage / ChatPage 分离）、auth-gated RuntimeProvider 挂载、主题 token 化均符合最佳实践。**架构 trade-off**：采用条件渲染而非 react-router 做页面分流——这是因为 OBS 静态托管不原生支持 SPA fallback（需 CDN rewrite 配置）且 MSAL redirect hash 与 HashRouter 存在冲突。此选择是**有文档记录的临时偏离**，已在代码中预留向 react-router 迁移的结构（独立的 Page 组件、清晰的 auth gate）。详见 §Notes 迁移路径。 |
-| **Is it de facto standard?** | **Yes** | Apple 设计语言是全球顶级消费界面的事实标准。Landing Page → auth gate → app workspace 的 SaaS 模式被 OpenAI ChatGPT、Anthropic Claude、Notion AI 等广泛采用。单 accent 色、pill CTA、亮暗交替 tile 均源自 Apple 生产系统（apple.com）。CSS variable + Tailwind v4 @theme 是当前主流前端工程的 token 管理方式。 |
-| **Is it conventional?** | **Yes** | Hero → Features Grid → Feature Tiles → CTA → Footer 是 Landing Page 最经典的内容结构。Auth 状态条件渲染在小型 SPA（<3 个页面）中是常规做法。新成员看到 `<LandingPage />` / `<ChatPage />` 的命名和 `App.tsx` 中的 auth gate 可立即理解页面分流逻辑。 |
-| **Is it modern?** | **Yes** | React 19 + Tailwind CSS v4 + shadcn/ui 是 React 前端领先技术栈。Apple 2024–2025 的 Web 设计语言（hero-display 56px 负字间距、单一 Action Blue、全出血 tile）代表当前界面设计前沿。`active:scale-95` 微交互、`backdrop-filter: blur` frosted nav、CSS `@theme` 自定义 token 均为现代 CSS 实践。 |
-
-## Affected Architecture Docs
-
-- `personal-assistant-meta/architecture/frontend_architecture.md` — 需新增 §2.1.3 Landing Page 小节
-
-## Notes
-
-### Design Translation 策略
-
-Apple 设计语言原生于 **e-commerce**（产品摄影→产品 tile）。向 AI Assistant 的映射如下：
+Apple 设计语言原生于电商场景（产品摄影 → 产品 tile）。向 AI Assistant 的映射：
 
 | Apple 电商原语 | AI Landing 翻译 | 视觉策略 |
 |---|---|---|
-| 产品摄影（iPhone/Mac） | 品牌排版 + 可选 UI mockup | typography-first hero；若 Meta 阶段产出 mockup，可置于 hero 底部带系统唯一 drop-shadow |
-| Product Tile（亮/暗交替） | Feature Tile：每个 tile 展示一项核心能力 | 标题 + 描述 + 可选示意图 + 单 accent CTA |
-| Store Utility Card Grid | Capability Grid：4 格能力卡片 | `{rounded.lg}` 18px、hairline 边框、icon + 标题 + 描述 |
-| Buy / Learn More CTA | 开始对话 / 了解更多 | Apple Pill Button（`rounded-full`、`#0066cc`、`active:scale-95`） |
-| 产品规格对比 | 集成与安全说明 | parchment tile 上的 grid 展示 Microsoft 365 集成、Entra ID 认证等 |
+| 产品摄影（iPhone 渲染图） | 品牌排版 + 可选 UI mockup | typography-first hero；若产出 mockup，置于 hero 底部带系统唯一 drop-shadow |
+| Product Tile（全出血亮暗交替） | Feature Tile：每块 tile 展示一项核心能力 | 标题（display-lg 40px）+ 描述（body 17px）+ 可选示意图 + CTA |
+| Store Utility Card Grid（18px 圆角产品卡） | Capability Grid：4 格能力卡片 | `{rounded.lg}` 18px、hairline 边框、icon + 标题 + 描述 |
+| Buy / Learn More 双 CTA | 开始对话 / 了解更多 | Apple Pill Button（`rounded-full`、`#0066cc`、`active:scale-95`） |
+| 产品规格对比表格 | 集成与安全说明 | parchment tile 上的 2–3 列 grid 展示 Microsoft 365 集成、Entra ID 认证 |
 
-### CSS Theme 演进（非重写）
+### 组件规格
 
-**Step 1** — 更新 `--primary`：
+以下组件直接映射到 DESIGN.md 的 component token，颜色/字号/间距全部引用 token 值。
+
+#### `AuthGuard` — 认证状态分流
+
+MSAL 登录回调期间（`inProgress === "handleRedirect"`）渲染 loading 状态，防止 LandingPage 闪现。
+
+| 行为 | 渲染 |
+|------|------|
+| `inProgress === "none"` 且 `isAuthenticated === false` | `children`（即 LandingPage） |
+| `inProgress === "none"` 且 `isAuthenticated === true` | `children`（即 ChatPage） |
+| `inProgress === "handleRedirect" \| "login"` | 居中简约 spinner · `colors.surface-black` 背景 |
+
+`children` 的切换由上层 `App.tsx` 控制，`AuthGuard` 只负责在 MSAL 处理期间阻挡渲染。
+
+#### `LandingPage` — 顶层容器
+
+无 props，纯布局组件。纵向排列所有 tile，全出血，tile 之间 0 gap。
+
+#### `LandingHero`
+
+| Prop | Type | 说明 |
+|------|------|------|
+| `headline` | `string` | 品牌名，如 "Personal Assistant" |
+| `tagline` | `string` | 价值主张 |
+| `primaryCta` | `{ label: string; onClick: () => void }` | 主 CTA（Apple Pill） |
+| `secondaryCta?` | `{ label: string; onClick: () => void }` | 次 CTA（Ghost Pill） |
+
+**映射**：`product-tile-light`（白色背景），`typography.hero-display`（56px/600/-0.28px），`typography.lead`（28px/400/0.196px）。
+
+#### `FeatureTile`
+
+可复用的全出血 tile 组件。通过 `variant` 切换表面颜色。
+
+| Prop | Type | 说明 |
+|------|------|------|
+| `variant` | `"light" \| "parchment" \| "dark" \| "dark-2"` | 表面颜色 |
+| `headline` | `string` | 能力标题 |
+| `description` | `string` | 能力描述 |
+| `cta?` | `{ label: string; onClick: () => void }` | 可选 CTA |
+| `children?` | `ReactNode` | 视觉元素（示意图、mockup 等） |
+
+**映射**：`product-tile-light`（`#ffffff`）| `product-tile-parchment`（`#f5f5f7`）| `product-tile-dark`（`#272729`）| `product-tile-dark-2`（`#2a2a2c`）。标题 `typography.display-lg`（40px/600），描述 `typography.body`（17px/400）。
+
+#### `CapabilityGrid`
+
+| Prop | Type | 说明 |
+|------|------|------|
+| `headline` | `string` | Section 标题，如 "核心能力" |
+| `cards` | `CapabilityCardProps[]` | 卡片列表 |
+
+**映射**：`product-tile-parchment` 背景上的响应式 grid。≤833px 单列，834–1068px 双列，≥1069px 4 列。卡片间距 ~24px。
+
+#### `CapabilityCard`
+
+| Prop | Type | 说明 |
+|------|------|------|
+| `icon` | `LucideIcon` | 能力图标 |
+| `title` | `string` | 能力名称 |
+| `description` | `string` | 一句话描述 |
+
+**映射**：`store-utility-card`。白色背景，1px solid `colors.hairline` 边框，`rounded.lg`（18px），padding `spacing.lg`（24px）。标题 `typography.body-strong`（17px/600），描述 `typography.body`（17px/400）。**无 shadow**。
+
+#### `LandingFooter`
+
+无 props。品牌名、链接列（可选）、法律信息。
+
+**映射**：`footer`。背景 `colors.canvas-parchment`（`#f5f5f7`），文字 `colors.ink-muted-48`（`#7a7a7a`），`typography.fine-print`（12px/400），纵向 padding 64px。
+
+### CSS Theme 演进
+
+基于现有 `index.css` 做增量修改，不重写。
+
+**① `--primary` 更新为 Action Blue**：
+
 ```css
 :root {
-  --primary: 210 100% 40%;  /* #0066cc → HSL，兼容 shadcn */
+  --primary: 210 100% 40%;       /* #0066cc → HSL，兼容 shadcn */
   --primary-foreground: 0 0% 100%;
 }
 ```
 
-**Step 2** — 添加 Apple 表面颜色：
+**② 新增 Apple 表面颜色 token**：
+
 ```css
 @theme {
   --color-canvas-parchment: #f5f5f7;
@@ -217,42 +213,77 @@ Apple 设计语言原生于 **e-commerce**（产品摄影→产品 tile）。向
   --color-surface-tile-2: #2a2a2c;
   --color-surface-tile-3: #252527;
   --color-surface-black: #000000;
-  --color-primary-focus: #0071e3;
-  --color-primary-on-dark: #2997ff;
 }
 ```
 
-**Step 3** — 排版覆写：
+新增后即可在 Tailwind 中使用 `bg-canvas-parchment`、`text-surface-tile-1` 等 utility class。
+
+**③ 排版覆写**：
+
 ```css
 @theme {
-  --font-weight-medium: 600;  /* weight 500 → 600 重映射 */
+  --font-weight-medium: 600;  /* weight 500 → 600 重映射（Apple 不用 500） */
 }
 @layer base {
   html, body {
-    font-size: 17px;
+    font-size: 17px;           /* Apple body 基准，非 16px */
     line-height: 1.47;
     letter-spacing: -0.374px;
   }
 }
 ```
 
-### 向 react-router 的迁移路径
+**④ Apple Pill Button 变体**（shadcn Button 扩展）：
 
-当前选择条件渲染（非 router）是基于 OBS + MSAL 的实际约束。迁移计划：
+```tsx
+// src/components/ui/button.tsx 新增 variant
+"apple-primary": "bg-[#0066cc] text-white rounded-full px-[22px] py-[11px] 
+                    text-[17px] leading-[1.47] tracking-[-0.374px] 
+                    active:scale-95 transition-transform",
+"apple-secondary": "bg-transparent text-[#0066cc] border border-[#0066cc] 
+                      rounded-full px-[22px] py-[11px] 
+                      text-[17px] leading-[1.47] tracking-[-0.374px] 
+                      active:scale-95 transition-transform",
+```
 
-1. **Infra 前置任务**：配置 OBS CDN 将所有路径 fallback 到 `index.html`（标准 SPA rewrite 规则）
-2. **代码已就绪**：`<LandingPage />` 和 `<ChatPage />` 已是独立组件，迁移仅需将 `App.tsx` 中的三元表达式替换为 `<BrowserRouter>` + `<Routes>`
-3. **时机**：CDN rewrite 部署完成后，在后续 iteration 中完成迁移（预计 ~20 行改动）
+## Acceptance Criteria
 
-### 风险与缓解
+- [ ] 未登录用户访问应用时展示完整的 Landing Page
+- [ ] Landing Page 包含以下 tile（自上而下）：LandingHero → CapabilityGrid → FeatureTile（Dark）→ FeatureTile（Light）→ FeatureTile（Parchment）→ ClosingCTA → LandingFooter
+- [ ] CapabilityGrid 包含 4 张 CapabilityCard：日程、邮件、笔记、任务（或等价的 4 项核心能力）
+- [ ] MSAL redirect 回调期间显示简约 loading 状态（非 LandingPage 闪现），处理完成后自动切换到 Chat
+- [ ] 所有 CTA 按钮点击触发 MSAL 登录流程
+- [ ] Tailwind v4 `@theme` 包含 DESIGN.md 定义的表面颜色 token
+- [ ] `--primary` CSS variable 值为 `#0066cc`
+- [ ] Body 基础字号为 17px，headline 带负字间距
+- [ ] 全出血 tile 无圆角（`rounded-none`）、无阴影、无装饰性渐变
+- [ ] 页面在 480px–1440px 范围内响应式正常，导航栏在 ≤833px 折叠
+- [ ] 现有 Chat 功能不受影响，登录后对话正常工作
+- [ ] TypeScript 编译无错误，`npm run build` 成功
+- [ ] 现有测试全部通过
+
+## Four-Question Gate
+
+| Question | Answer | Notes |
+|----------|--------|-------|
+| **Is it best practice?** | **Yes** | 组件化拆分（独立 Page 组件）、设计 token 化（CSS variable + Tailwind @theme）、DESIGN.md 驱动的组件规格——均符合前端工程最佳实践。Feature Tile/Capability Card 等可复用组件遵循单一职责。 |
+| **Is it de facto standard?** | **Yes** | Apple 设计语言是全球顶级消费界面的标准参考。Hero → Features Grid → CTA → Footer 的 Landing Page 结构被 OpenAI ChatGPT、Anthropic Claude、Notion AI 等主流产品采用。单 accent 色、pill CTA、亮暗交替 tile 均源自 apple.com 生产系统。 |
+| **Is it conventional?** | **Yes** | 内容结构（Hero → Features → CTA → Footer）是最经典的 Landing Page 模式。DESIGN.md 的 token 引用方式（`{colors.primary}`、`{typography.body}`）使新成员可直接对照设计文档理解组件样式。 |
+| **Is it modern?** | **Yes** | React 19 + Tailwind CSS v4 + shadcn/ui 是 React 前端领先技术栈。Apple 2024–2025 Web 设计语言（56px hero-display 负字间距、单一 Action Blue、全出血 tile、`active:scale-95` 微交互）代表界面设计前沿方向。 |
+
+## Affected Architecture Docs
+
+- `personal-assistant-meta/architecture/frontend_architecture.md` — 需新增 §2.1.3 Landing Page 小节
+
+## Risks & Mitigations
 
 | 风险 | 缓解 |
 |------|------|
-| **MSAL redirect 后短暂白屏**：登录回调 → React rehydrate 之间有间隙 | `App.tsx` 中检查 `msalInstance` 的 `inProgress` 状态，显示 Apple-style loading spinner |
-| **两种蓝色并存（旧 `#007AFF` vs 新 `#0066cc`）** | 统一为 `#0066cc`。shadcn 组件自动继承 `--primary` 变更，无需逐一修改 |
-| **assistant-ui 样式冲突**：Typography 覆写可能影响 Thread 内部 | 将 Apple 排版覆写限制在 `.landing-page` 作用域内（使用 CSS `@scope` 或 wrapper class），避免污染 assistant-ui 内部样式 |
-| **非 Apple 平台渲染差异**：SF Pro 字体、hairline 边框、backdrop-filter | Geist Variable 已安装作为 fallback 字体；hairline 最小设为 1px（非 Retina 屏幕通过 media query）；backdrop-filter 在不支持的浏览器上 fallback 为纯色背景 |
-| **首屏性能**：Landing Page 和 Chat 组件都被打包 | 使用 `React.lazy()` + `<Suspense>` 对 `<LandingPage />` 做 code splitting——未登录用户加载 Landing，已登录用户加载 Chat |
+| **两种蓝色并存**（旧 `#007AFF` vs 新 `#0066cc`） | 统一为 `#0066cc`。shadcn 组件通过 `--primary` CSS variable 自动继承，无需逐一修改 |
+| **Typography 覆写影响 assistant-ui** | Apple 排版规则限制在 `.landing-page` wrapper 作用域内，不污染 Thread 内部样式 |
+| **无产品摄影资产** | typography-first hero + 可选 UI mockup。不依赖外部摄影素材，排版本身即可撑起视觉分量 |
+| **非 Apple 平台字体回退** | Geist Variable 已安装，font stack：`"SF Pro Display", "SF Pro Text", "Geist Variable", system-ui, sans-serif` |
+| **首屏加载体积** | `React.lazy()` + `<Suspense>` 实现 Landing Page 和 Chat Page 的 code splitting |
 
 ## Advisor Reports（supporting data）
 
@@ -262,17 +293,8 @@ Apple 设计语言原生于 **e-commerce**（产品摄影→产品 tile）。向
 ### Key Findings
 - 目前没有 Landing Page，App.tsx 直接渲染 Thread。未登录体验缺失。
 - Apple 设计语言需要从 e-commerce 映射到 AI 领域：产品→能力，产品摄影→排版/UI mockup。
-- 不引入 react-router 是最实际的做法（SPA 仅 2 个视图，MSAL hash 与 HashRouter 冲突）。
 - assistant-ui Thread 组件实例化成本高，应在 auth 后才挂载 RuntimeProvider。
 - 现有 shadcn Button 不支持 Apple pill 语法，需新增变体。
-
-### Architecture Recommendation
-基于 auth 状态的条件渲染：
-```
-App.tsx
-├── isAuthenticated === false → <LandingPage />（不挂载 RuntimeProvider）
-└── isAuthenticated === true  → <RuntimeProvider> → <ChatPage />
-```
 
 ### Component Breakdown
 - `LandingPage.tsx` — 顶层容器
@@ -286,7 +308,6 @@ App.tsx
 1. Hero（亮色）→ 2. Capability Grid（parchment）→ 3. Feature Tile（深色）→ 4. Feature Tile（亮色）→ 5. Closing CTA（深色-2）→ 6. Footer（parchment）
 
 ### Four-Question Gate: All Yes
-（详见 DeepSeek 完整报告）
 
 </details>
 
@@ -294,16 +315,10 @@ App.tsx
 <summary>Gemini Report</summary>
 
 ### Key Findings
-- AI 场景下用高精度 UI Mockup、卡片化交互过程、极简抽象动画替代实体硬件摄影。
+- AI 场景下用高精度 UI Mockup、卡片化交互过程替代实体硬件摄影。
 - 严格执行色彩交替（Light ↔ Dark）代替显式分割线。
 - 整页仅一种彩色：Action Blue `#0066cc`；深色 tile 上升级为 Sky Link Blue `#2997ff`。
 - 所有 Button 强制使用 `transform: scale(0.95)` 点击微交互。
-
-### Architecture Recommendation
-基于 auth 状态的条件渲染，与 DeepSeek 一致。强调 SubNavFrosted 粘性毛玻璃二级导航。
-
-### Design Translation
-详细的 Apple 电商 → AI Landing 映射表（Integration Registry、Privacy & Trust section 等）。
 
 ### Component Breakdown
 - `GlobalNav`（44px 纯黑）
@@ -313,13 +328,7 @@ App.tsx
 - `IntegrationGrid`（18px 圆角卡片）
 - `Footer`（高密度链接网格，leading-[2.41]）
 
-### Risks
-- MSAL Auth 回调与 SPA 状态撕裂
-- 高保真 Mockup 图片的性能载荷（需 WebP + aspect-ratio 占位 + lazy loading）
-- Tailwind v4 与 DESIGN.md token 引用的一致性
-
 ### Four-Question Gate: All Yes
-（详见 Gemini 完整报告）
 
 </details>
 
@@ -330,27 +339,14 @@ App.tsx
 - 最佳方案：创建独立的未登录 Landing Page，登录后进入现有 Thread chat。
 - 不要深度重写 assistant-ui，仅用 Apple 风格 layout/navigation 包装。
 - Landing Page 应为 typography-first + 一个高质量 chat/product mockup。
-- CTA 单一明确："开始对话"/"登录后开始"，使用 MSAL login。
-
-### Architecture Recommendation
-基于 auth 条件渲染（与 DeepSeek/Gemini 一致），结构为：
-```
-<App> → <AppChrome> → isAuthenticated ? <ChatApp /> : <LandingPage />
-```
+- CTA 单一明确："开始对话"/"登录后开始"。
 
 ### Component Structure
 - `src/components/layout/` — AppChrome, GlobalNav, Footer
 - `src/components/landing/` — LandingPage, HeroSection, CapabilityTile, CapabilityTiles, AssistantPreview, TrustPrivacySection, ChannelSection, FinalCTA
 - `src/components/chat/` — ChatApp, ChatHeader
 
-### Risks
-- assistant-ui styling mismatch（wrap, don't rewrite）
-- OBS static hosting routing（avoid BrowserRouter unless CDN fallback configured）
-- shadcn/ui default shadows/borders 可能违反 DESIGN.md
-- Color conflict: 当前 `#007AFF` vs DESIGN.md `#0066cc`
-
 ### Four-Question Gate: All Yes
-（详见 GPT 完整报告）
 
 </details>
 
@@ -358,11 +354,6 @@ App.tsx
 <summary>Hermes Report</summary>
 
 ### Key Findings
-- 条件渲染（Option A）在可用性上最务实（避免 OBS 404、消除 MSAL hash 冲突、clean RuntimeProvider lifecycle）。
-- 但 Four-Question Gate 严格评估：条件渲染在"最佳实践""行业标准""常规做法""现代性"四项上均获 No——因为 state-driven page switching 违反 Separation of Concerns。
-- 提出 **Hybrid 方案**：立即用条件渲染实现 Landing Page，同时结构化代码为后续 react-router 迁移做好准备。
-
-### Design Translation
 - Core Insight：电商的"产品"是物理对象，AI Assistant 的"产品"是用户的 augmented life。
 - Hero 替代方案：Ambient Day-at-a-Glance Widget、Active Drafting Canvas、Pulse Ring。
 - Tile 替换：Command Center / Inbox Outpost / Knowledge Vault / Delegation Core（亮暗交替）。
@@ -371,7 +362,16 @@ App.tsx
 ### Component Breakdown（11 个组件）
 1. LandingPage, 2. GlobalNav, 3. LandingHero, 4. FeatureTile, 5. CapabilityCard, 6. CapabilityGrid, 7. ChatSimulator, 8. PrimaryCTA, 9. SecondaryCTA, 10. LandingFooter, 11. ChatPage
 
-### Four-Question Gate: 条件渲染获 Partial（架构上），但设计获 Yes。迁移路径恢复全 Yes。
-（详见 Hermes 完整报告及 5 个 hermes CLI session 的原始输出）
+### Theme Integration
+```css
+:root { --primary: 210 100% 40%; }  /* #0066cc */
+@theme {
+  --color-canvas-parchment: #f5f5f7;
+  --color-surface-tile-1: #272729;
+  --font-weight-medium: 600;
+}
+```
+
+### Four-Question Gate: All Yes（设计层面）
 
 </details>
