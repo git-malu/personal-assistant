@@ -325,11 +325,13 @@ class TestNetlifyTomlValidation:
         import tomllib
 
         data = tomllib.loads(raw)
-        rule = data["redirects"][0]
 
-        assert rule["from"] == "/*", (
-            f"Expected from=\"/*\" for catch-all SPA routing, got {rule['from']!r}"
+        # Find the rule that handles catch-all SPA routing
+        spa_rules = [r for r in data.get("redirects", []) if r.get("from") == "/*"]
+        assert len(spa_rules) == 1, (
+            f"Expected exactly one redirect rule for '/*', got {len(spa_rules)}"
         )
+        rule = spa_rules[0]
         assert rule["to"] == "/index.html", (
             f"Expected to=\"/index.html\" for SPA entry point, got {rule['to']!r}"
         )
