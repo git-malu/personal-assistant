@@ -720,6 +720,29 @@ flowchart LR
 
 ### 11.2 Header 来源与职责
 
+```mermaid
+flowchart LR
+    subgraph CLIENT["调用方 (agentarts invoke / curl / 浏览器)"]
+        GEN_SESSION["生成 session-id<br/>(UUID)"]
+        GEN_JWT["提供 JWT<br/>Authorization: Bearer &lt;jwt&gt;"]
+        GEN_UID["提取 sub/oid claim<br/>→ X-HW-AgentGateway-User-Id"]
+    end
+
+    subgraph GATEWAY["AgentArts Gateway"]
+        VALIDATE["① 验证 JWT<br/>- 拉 OIDC Discovery<br/>- 拉 JWKS 公钥<br/>- 验签 + 校验 claims"]
+    end
+
+    subgraph CONTAINER["FastAPI 容器"]
+        APP["POST /invocations<br/>读取 header 使用"]
+    end
+
+    GEN_SESSION -->|"header: x-hw-agentarts-session-id<br/>调用方传入（必填）"| APP
+    GEN_UID -->|"header: X-HW-AgentGateway-User-Id<br/>调用方传入（可选，但 app 需要）"| APP
+    GEN_JWT -->|"header: Authorization"| VALIDATE
+    VALIDATE -->|"✅ 验证通过<br/>转发请求到容器"| APP
+    VALIDATE -->|"❌ 验证失败"| ERR401["401 Authentication failed!"]
+```
+
 | Header | 谁提供 | 必填？ | 说明 |
 |--------|--------|--------|------|
 | `Authorization` | **调用方**传入 | ✅ | `Bearer <JWT>` 或 `Bearer <api-key>` |
