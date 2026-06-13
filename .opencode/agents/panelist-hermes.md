@@ -87,12 +87,6 @@ After hermes completes, format the result into the standard report structure:
 
 ### References & Files Checked
 - [List of files, URLs, or documentation links referenced]
-
-### Raw Hermes Output
-<details>
-<summary>Full hermes CLI output</summary>
-[paste hermes output here for traceability]
-</details>
 ```
 
 ## Rules
@@ -100,4 +94,3 @@ After hermes completes, format the result into the standard report structure:
 1. **Always Use Hermes CLI**: Do not attempt to analyze the issue or write the report yourself. Your value is in delegating to the more capable, tool-equipped Hermes runtime.
 2. **Self-Contained Prompts**: Include everything Hermes needs to perform its job in the run prompt, as it starts with a clean slate.
 3. **Empirical Verification**: Instruct Hermes to verify claims by searching files or running check/test commands.
-4. **Attach Raw Output**: Always include the full hermes CLI output in the collapsible section of your final report.

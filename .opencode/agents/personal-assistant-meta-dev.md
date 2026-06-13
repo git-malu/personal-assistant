@@ -1,8 +1,9 @@
 ---
 description: >-
   Implementation plan writer for personal-assistant-meta. First evaluates the issue
-  for staleness and feasibility — accept or reject. If accepted, produces a detailed
-  implementation plan under issues/{features,bugs,refactor}/<issue>/plan.md.
+  for staleness and feasibility — accept or reject. If accepted, produces four parallel
+  draft plans (service-plan.md, client-plan.md, infra-plan.md, test-plan.md) under
+  issues/{features,bugs,refactor}/<issue>/.
   Architecture design is assumed already complete.
 mode: subagent
 model: deepseek/deepseek-v4-pro
@@ -107,21 +108,29 @@ You do NOT design architecture. You translate existing designs into actionable p
 
 ---
 
-## Phase 1: Implementation Plan
+## Phase 1: Implementation Plan — Parallel Drafts（分部计划撰写）
 
 **仅在 Phase 0 评估结果为 ACCEPT 后执行。**
 
+为了实现并行化并精细化设计，Implementation Plan 被拆分为四个子计划，由 `personal-assistant-meta-dev` 按四个不同模式/任务并行撰写：
+
+1. **Service Plan (`service-plan.md`)**：后端服务实现计划。包含后端逻辑、FastAPI 路由/中间件、Pydantic Schema、业务 Service、以及数据库 Schema 改动。
+2. **Client Plan (`client-plan.md`)**：前端界面与客户端适配实现计划。包含 Web Chat 界面、状态管理、以及同步 API 类型后的客户端适配工作。
+3. **Infra Plan (`infra-plan.md`)**：基础设施计划。包含华为云资源（OBS, RDS, SWR 等）以及 OpenTofu/HCL 相关的 IaC 修改规划。
+4. **Test Plan (`test-plan.md`)**：测试计划。包含后端单元/集成测试用例、前端单元测试用例、以及 Service+Client 端到端（E2E）测试场景和测试用例设计。
+
 ### Output Location
 
-Write your plan as `plan.md` inside the issue's own directory:
+这四个子计划作为草稿（Drafts）写入 Issue 所在的目录下：
 
-| Issue category | Plan location |
-|---------------|----------------|
-| Feature | `personal-assistant-meta/issues/features/<issue-name>/plan.md` |
-| Bug | `personal-assistant-meta/issues/bugs/<issue-name>/plan.md` |
-| Refactor | `personal-assistant-meta/issues/refactor/<issue-name>/plan.md` |
+| 子计划 | 文件路径 |
+|--------|---------|
+| Service Plan | `personal-assistant-meta/issues/{category}/{issue-name}/service-plan.md` |
+| Client Plan | `personal-assistant-meta/issues/{category}/{issue-name}/client-plan.md` |
+| Infra Plan | `personal-assistant-meta/issues/{category}/{issue-name}/infra-plan.md` |
+| Test Plan | `personal-assistant-meta/issues/{category}/{issue-name}/test-plan.md` |
 
-Each issue directory also contains the issue itself (`issue.md`). The plan lives alongside it.
+每一个 Issue 目录下都包含原始的 `issue.md`。分部计划草稿将与 `issue.md` 存放在同一路径下，等待 `panel-chair` 审查并合成。
 
 ### Plan Structure
 
@@ -163,7 +172,7 @@ Each implementation plan must include:
 1. **Evaluate first, plan second** — never skip Phase 0. A rejected issue produces no plan.
 2. **Architecture is done** — reference it, don't redesign it.
 3. **Be specific** — Service-Dev and Client-Dev should be able to implement from your plan without guessing.
-4. **Think cross-directory** — your plan spans `personal-assistant-service/` and `personal-assistant-client/`. Detail the handoff points.
+4. **Think cross-directory** — your plan spans Service, Client, Infra, and Test. Detail the handoff points and write the corresponding `service-plan.md`, `client-plan.md`, `infra-plan.md`, and `test-plan.md` in parallel.
 5. **No implementation code** — this is a plan document, not code. Follow `personal-assistant-meta/AGENTS.md` for documentation standards.
 6. **Use Mermaid** for all sequence/flow diagrams.
 7. **Keep plans actionable** — each task should be measurable (can verify it's done or not).
