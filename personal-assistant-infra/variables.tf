@@ -10,3 +10,20 @@ variable "region" {
   type        = string
   default     = "cn-southwest-2"
 }
+
+variable "agentarts_delegated_domain_name" {
+  description = "AgentArts STS Agency 委托的华为云账号/domain 名称"
+  type        = string
+}
+
+variable "obs_sts_agency_name" {
+  description = "AgentArts Identity STS Provider 使用的 IAM Agency 名称"
+  type        = string
+  default     = "pa-agentarts-obs-sts"
+}
+
+variable "obs_sts_policy_name" {
+  description = "OBS 只读自定义策略名称"
+  type        = string
+  default     = "pa-obs-sts-read-only"
+}

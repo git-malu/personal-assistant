@@ -36,7 +36,7 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 - 复用 Feature 8 的 `huaweicloud-sts-provider`（IAM Agency + STS Provider）
 - `app/tools/obs_tools.py` — OBS 对象存储工具函数
   - `list_obs_objects(bucket, prefix, limit, sts_credentials)` — 列出 Bucket 内对象
-  - `get_obs_object(bucket, key, sts_credentials)` — 读取对象内容（文本/JSON/CSV 等可读格式）
+  - `read_obs_text_object(bucket, key, max_bytes, sts_credentials)` — 读取对象内容（文本/JSON/CSV/log/Markdown/YAML/XML 等可读格式）
   - `get_obs_object_metadata(bucket, key, sts_credentials)` — 获取对象元数据（大小、类型、修改时间）
 - 工具注册到 LangGraph ToolNode，更新 system prompt
 
@@ -103,7 +103,7 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 - [ ] `app/tools/obs_tools.py`
   - `@require_sts_token(provider_name="huaweicloud-sts-provider", agency_session_name="personal-assistant-obs-session")`（复用 Feature 8 Provider）
   - 装饰器自动注入 `sts_credentials: StsCredentials`（含 `access_key_id`, `secret_access_key`, `security_token`, `expiration`）
-  - 使用华为云 `obs` SDK（`ObsClient`）操作 OBS，通过 `sts_credentials` 初始化
+  - 使用 `esdk-obs-python` 的 `obs` SDK（`from obs import ObsClient`）操作 OBS，通过 `sts_credentials` 初始化
   - 读取对象内容后自动检测文件类型，对文本/JSON/CSV 返回可读字符串
 - [ ] OBS 对象列表/读取/元数据（读操作）
 - [ ] 单元测试：mock OBS client response

@@ -18,5 +18,15 @@ output "custom_domain" {
   value       = "https://chat.resource-governance.cloud"
 }
 
+output "obs_sts_agency_name" {
+  description = "AgentArts Identity STS Provider 绑定的 IAM Agency 名称"
+  value       = huaweicloud_identity_agency.agentarts_obs_sts.name
+}
+
+output "obs_sts_policy_name" {
+  description = "OBS read-only custom policy 名称"
+  value       = huaweicloud_identity_role.obs_sts_read_only.name
+}
+
 # ⚠️ 注意：HuaweiCloud Provider 凭据（AK/SK）通过原生环境变量
 # HW_ACCESS_KEY / HW_SECRET_KEY 注入，不再通过 variables.tf 中转。

@@ -15,7 +15,7 @@ status: backlog
 ## 范围
 
 - IAM Agency + AgentArts `huaweicloud-sts-provider`
-- `app/tools/cloud_tools.py`
+- `app/tools/obs_tools.py`
 - 工具注册到 LangGraph
 
 ## 任务拆解
@@ -27,8 +27,10 @@ status: backlog
 
 ### 8.2 云资源工具
 
-- [ ] `app/tools/cloud_tools.py`（纯函数，sts_credentials 外部注入）
+- [ ] `app/tools/obs_tools.py`（纯函数，sts_credentials 外部注入）
 - [ ] Token 获取：`require_sts_token`
+- [ ] OBS read-only：列对象、查元数据、读取文本对象
+- [ ] 文本读取限制默认 1 MiB，不读取二进制对象
 
 ### 8.3 验证
 

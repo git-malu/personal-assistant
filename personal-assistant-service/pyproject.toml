@@ -7,6 +7,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "deepagents>=0.6.8",
+    "esdk-obs-python>=3.26.0",
     "langchain-openai>=0.3.0",
     "langchain-core>=0.3.0",
     "httpx>=0.28.0",

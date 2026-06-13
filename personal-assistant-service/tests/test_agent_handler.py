@@ -7,6 +7,7 @@ import pytest
 
 from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
 from app.tools.github_tools import GITHUB_TOOLS
+from app.tools.obs_tools import OBS_TOOLS
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ class TestAgentHandlerInit:
         kwargs = mock_create_agent.call_args[1]
         assert kwargs["model"] is mock_model
         assert kwargs["system_prompt"] == SYSTEM_PROMPT
-        assert kwargs["tools"] == GITHUB_TOOLS
+        assert kwargs["tools"] == GITHUB_TOOLS + OBS_TOOLS
         assert "checkpointer" in kwargs
         assert kwargs["checkpointer"] is mock_init_cp.return_value
 
@@ -61,6 +62,11 @@ class TestAgentHandlerInit:
         assert "git-malu/personal-assistant" in SYSTEM_PROMPT
         assert "Issues" in SYSTEM_PROMPT
         assert "Pull Requests" in SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_obs_tools(self):
+        assert "OBS" in SYSTEM_PROMPT
+        assert "bucket" in SYSTEM_PROMPT
+        assert "只读" in SYSTEM_PROMPT
 
     def test_agent_handler_uses_get_model(self, mock_deps):
         mock_get_model, mock_create_agent, mock_model, mock_agent, _ = mock_deps

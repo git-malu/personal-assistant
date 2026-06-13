@@ -9,6 +9,8 @@ OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweiclo
 | OBS Bucket | `huaweicloud_obs_bucket` | `personal-assistant-web-chat` | `cn-southwest-2` | ACL=public-read, versioning=true, static website hosting (SPA: error_document=index.html) |
 | DNS Zone | `huaweicloud_dns_zone` | `resource-governance.cloud` | — | 华为云购买域名时自动创建，由 tofu 管理 |
 | DNS Recordset | `huaweicloud_dns_recordset` | `chat.resource-governance.cloud` | — | CNAME → OBS website endpoint |
+| IAM Custom Policy | `huaweicloud_identity_role` | `pa-obs-sts-read-only` | global | OBS object list/read only |
+| IAM Agency | `huaweicloud_identity_agency` | `pa-agentarts-obs-sts` | global | AgentArts Identity STS Provider 委托访问 OBS |
 | OBS State Bucket | — | `pa-terraform-state` | `cn-southwest-2` | 由 CI `aws s3 mb` 创建，不归 tofu 管理 |
 
 > 更多资源（RDS、IAM、VPC、EIP、CDN）将随项目增长逐步添加。
@@ -18,7 +20,7 @@ OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweiclo
 - **OpenTofu CLI** ≥ 1.6（Linux 基金会托管，MPL 协议）：`brew install opentofu`
 - **华为云凭据**：AK/SK（通过 Provider 原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入）
 - **OBS Backend 凭据**：同上 AK/SK，额外设置 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`（OBS 兼容 S3 API，需要 AWS SDK 格式的凭据变量）
-- **IAM 权限**：OBS FullAccess + DNS FullAccess（当前必需）
+- **IAM 权限**：OBS FullAccess + DNS FullAccess + IAM FullAccess（当前必需）
 
 ## 快速开始
 
@@ -42,7 +44,7 @@ tofu fmt -check
 tofu fmt
 
 # 预览变更计划（需要华为云凭据）
-tofu plan
+tofu plan -var 'agentarts_delegated_domain_name=<agentarts-domain-name>'
 ```
 
 ## 部署
@@ -55,12 +57,28 @@ export AWS_ACCESS_KEY_ID="$HW_ACCESS_KEY"
 export AWS_SECRET_ACCESS_KEY="$HW_SECRET_KEY"
 
 # 2. 执行部署
-tofu apply
+tofu apply -var 'agentarts_delegated_domain_name=<agentarts-domain-name>'
 ```
 
 > ⚠️ 如果你本地存在旧的 `terraform.tfvars` 文件且其中包含 `ak`/`sk` 变量赋值，请手动删除这些项——`ak`/`sk` 变量已不再声明，否则 `tofu plan` 会产生 "Undeclared variables" 警告。
 >
 > **State 存储**：tfstate 保存在 OBS bucket `pa-terraform-state`（S3-compatible backend），不再使用本地文件。CI 和本地共享同一份 state，无需每次 import 已有资源。
+
+## AgentArts STS Provider
+
+OpenTofu 管理 IAM Agency 和 OBS read-only custom policy。AgentArts Credential Provider 属于 AgentArts 控制面，部署 IAM 后用 service 侧 bootstrap script 创建：
+
+```bash
+cd ../personal-assistant-service
+
+export HUAWEICLOUD_SDK_AK="$HW_ACCESS_KEY"
+export HUAWEICLOUD_SDK_SK="$HW_SECRET_KEY"
+export AGENTARTS_STS_AGENCY_URN="<agency-urn-from-huawei-cloud>"
+
+uv run python scripts/create_sts_provider.py
+```
+
+脚本默认创建 `huaweicloud-sts-provider`，Agent 工具通过该 provider 获取 STS 临时凭据访问 OBS。
 
 ## 销毁
 
@@ -92,6 +110,7 @@ personal-assistant-infra/
 ├── main.tf                # Terraform/Provider 配置 + OBS Backend
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
 ├── dns.tf                 # DNS Zone + CNAME 记录
+├── iam.tf                 # AgentArts Identity STS → OBS read-only Agency/Policy
 ├── variables.tf           # 变量声明（region, dns_zone_id）
 ├── outputs.tf             # Stack outputs（website_endpoint 等）
 ├── .terraform.lock.hcl    # Provider 版本锁（git tracked）

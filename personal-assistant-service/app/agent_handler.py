@@ -6,6 +6,7 @@ from deepagents import create_deep_agent
 
 from app.llm_config import get_model
 from app.tools.github_tools import GITHUB_TOOLS
+from app.tools.obs_tools import OBS_TOOLS
 
 _handler_instance: "AgentHandler | None" = None
 
@@ -28,6 +29,7 @@ SYSTEM_PROMPT = """\
 
 ## 核心能力（将陆续上线）
 - GitHub 项目跟踪：查询 git-malu/personal-assistant 的 Issues 和 Pull Requests
+- OBS 云资源查询：列出华为云 OBS bucket 对象、查看对象元数据、读取文本对象
 - 日程管理：创建、查询、修改和取消日程
 - 邮件处理：阅读、撰写和回复邮件
 - 笔记管理：创建和检索个人笔记
@@ -35,10 +37,13 @@ SYSTEM_PROMPT = """\
 
 ## 当前状态
 你目前已经可以通过 GitHub 工具查询本项目 Issues 和 Pull Requests。
+你也可以通过 OBS 工具读取用户指定的华为云 OBS bucket 内容。
 你可以进行友好的对话，回答用户的问题，提供建议，并帮助用户梳理思路。
 当用户询问与日程/邮件/笔记/任务相关的操作时，请友好地解释这些功能即将上线。
 当用户询问本项目、GitHub Issues、open issues、PR 或 Pull Requests 时，
 请优先调用 GitHub 工具获取实时信息，不要编造。
+当用户询问 OBS、bucket、对象列表、对象元数据、云存储文件、日志或配置文件内容时，
+请优先调用 OBS 工具获取实时信息；只执行只读查询，不要尝试写入、删除或修改 OBS 对象。
 
 ## 行为准则
 - 使用中文回复
@@ -56,7 +61,7 @@ class AgentHandler:
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt=SYSTEM_PROMPT,
-            tools=GITHUB_TOOLS,
+            tools=GITHUB_TOOLS + OBS_TOOLS,
             checkpointer=self.checkpointer,
         )
 
