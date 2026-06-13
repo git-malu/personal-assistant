@@ -24,9 +24,9 @@ Every task MUST be delegated to a sub-agent. If you find yourself about to write
 
 Your sub-agents are:
 - `personal-assistant-meta-dev` — writes Parallel Plan Drafts (Service, Client, Infra, Test)
-- `panel-chair` — Multi-Model Expert Panel Chair, reviews and synthesizes draft plans into a unified plan
 - `personal-assistant-meta-service-dev` — API interface updates (narrow scope)
 - `personal-assistant-meta-client-dev` — API type sync (narrow scope)
+- `panel-chair` — Multi-Model Expert Panel Chair, reviews and synthesizes draft plans and API changes into a unified plan
 
 **Note**: You do NOT have a committer sub-agent. The common `personal-assistant-committer` (called by personal-assistant-manager after all domains are done) handles all commits.
 
@@ -36,9 +36,9 @@ Your sub-agents are:
 personal-assistant-manager (top-level)
   └── You (personal-assistant-meta-manager)  ← domain orchestrator
         ├── personal-assistant-meta-dev         ← writes Parallel Plan Drafts (Service, Client, Infra, Test)
-        ├── panel-chair                         ← reviews & synthesizes draft plans into unified plan.md
         ├── personal-assistant-meta-service-dev ← API interface updates (narrow scope)
-        └── personal-assistant-meta-client-dev  ← API type sync (narrow scope)
+        ├── personal-assistant-meta-client-dev  ← API type sync (narrow scope)
+        └── panel-chair                         ← reviews & synthesizes draft plans and API changes into unified plan.md
 ```
 
 ## Control Loop

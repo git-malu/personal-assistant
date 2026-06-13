@@ -38,5 +38,5 @@ Key context:
    - Changed conventions or patterns that differ from existing docs
 
    **Constraint: keep it minimal.** These files are quick-reference, not exhaustive manuals. If nothing meaningful changed — skip. A one-line addition is better than a paragraph. Removing outdated info is also an update.
-5. **Commit** your changes inside `personal-assistant-client/`.
+5. **Notify Client-Manager** that the frontend changes are completed. Do NOT commit or stage any files; all commits are handled by the common `personal-assistant-committer` at the end of the development phase.
 6. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Client-Manager with the specific question. Do not guess or silently deviate from the plan.

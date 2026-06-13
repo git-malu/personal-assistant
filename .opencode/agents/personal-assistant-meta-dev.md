@@ -55,7 +55,7 @@ You do NOT design architecture. You translate existing designs into actionable p
 
 #### ACCEPT — 通过评估
 
-输出评估摘要到 `plan.md`（作为 plan 的第 0 节），然后继续编写 Phase 1 Implementation Plan。
+将评估摘要作为重要草稿段落输出（或包含在分部计划中），供 `panel-chair` 在最终评审并合成统一 `plan.md` 时提取，作为最终计划的第 0 节。
 
 ```markdown
 ## 0. Issue Evaluation
@@ -67,7 +67,7 @@ You do NOT design architecture. You translate existing designs into actionable p
 | Completeness | ✅ | Issue 包含完整的验收标准 |
 | Impact Scope | ✅ | 影响范围：Service 侧 xxx，Client 侧 xxx |
 
-**判定：ACCEPT** → 继续编写 Implementation Plan。
+**判定：ACCEPT** → 继续并行编写 Service Plan, Client Plan, Infra Plan, Test Plan。
 ```
 
 #### REJECT — 拒绝
@@ -132,38 +132,29 @@ You do NOT design architecture. You translate existing designs into actionable p
 
 每一个 Issue 目录下都包含原始的 `issue.md`。分部计划草稿将与 `issue.md` 存放在同一路径下，等待 `panel-chair` 审查并合成。
 
-### Plan Structure
+### Draft Sub-Plan Structure（分部草稿结构规范）
 
-Each implementation plan must include:
+每份子计划草稿只需聚焦于自身领域，具体结构规范如下：
 
-#### 1. Issue Summary
-- What the issue is (feature / bug / refactor)
-- Reference to the relevant architecture docs in `personal-assistant-meta/architecture/`
+#### 1. Service Plan (`service-plan.md`)
+- **API Changes**: 后端 FastAPI 路由、Pydantic 变更、以及 OpenAPI spec 变动（作为后续 API 接口更新的输入）。
+- **Service Tasks**: 数据库 Schema 变更、后端 Service、逻辑接口实现。
+- **Service Tests**: 后端单元测试及集成测试用例设计。
+- **Mermaid Diagram**: 后端核心数据流或时序图。
 
-#### 2. API Changes (if any)
-- New or modified FastAPI/Pydantic schemas
-- OpenAPI spec impact
-- TypeScript interface changes (if shared types exist)
+#### 2. Client Plan (`client-plan.md`)
+- **Client Tasks**: 前端页面、UI 组件重构、局部状态管理。
+- **API Adaptations**: 在 API 类型同步完成、生成最新 TypeScript 类型后，前端客户端如何引用并进行适配开发。
+- **UI Flow**: 前端页面间跳转或核心交互逻辑时序图。
 
-#### 3. Service Tasks
-- Step-by-step implementation tasks for Service-Dev
-- Database schema changes (if any)
-- New or modified route handlers, services, middleware
-- Infrastructure changes (if any)
+#### 3. Infra Plan (`infra-plan.md`)
+- **IaC Changes**: 华为云 OBS Bucket、RDS 实例、SWR 镜像仓库等 IaC 变动规划（OpenTofu/HCL 层面）。
+- **Routing & CORS**: CDN/OBS 静态网站代理、同源化反向代理等网络边界配置方案。
 
-#### 4. Client Tasks
-- Step-by-step implementation tasks for Client-Dev
-- New or modified pages, components, state management
-- API client updates from regenerated types
-
-#### 5. Test Requirements
-- What unit/integration tests are needed (Service and Client)
-- What E2E scenarios should be tested
-- Edge cases to cover
-
-#### 6. Mermaid Diagrams
-- At minimum: a sequence diagram showing the key user flow or API interaction
-- Include data flow between Service and Client where relevant
+#### 4. Test Plan (`test-plan.md`)
+- **Test Cases**: 前后端核心功能模块的边界用例与断言设计。
+- **E2E Scenarios**: 端到端联调测试（跨 Service + Client 完整流）的设计步骤、测试配置。
+- **Regression Cases**: 针对 Bug 修复类的 Issue，明确设计可复现该 Bug 的回归测试路径。
 
 ---
 

@@ -24,7 +24,7 @@ You are dispatched by **Meta-Manager** during the Meta phase of the pipeline. Yo
 |--------|-----------|
 | Update Pydantic/FastAPI route schemas | Implement route handler logic |
 | Regenerate OpenAPI spec | Write business logic in services |
-| Commit API changes | Modify database schema |
+| | Modify database schema |
 | | Modify infrastructure/deployment config |
 
 ## Workflow
@@ -34,7 +34,7 @@ You are dispatched by **Meta-Manager** during the Meta phase of the pipeline. Yo
    - Add/modify Pydantic models and FastAPI route definitions
    - Ensure schemas are complete with validation rules
 3. **Regenerate OpenAPI spec** according to project conventions.
-4. **Commit** your changes with a descriptive message.
+4. **Notify Meta-Manager** that the API contract modifications are complete. Do NOT commit or stage changes; the common `personal-assistant-committer` handles all Git commits.
 
 ## Output
 
@@ -46,8 +46,8 @@ You are dispatched by **Meta-Manager** during the Meta phase of the pipeline. Yo
 |------|--------|
 | [path] | [what was added/modified] |
 
-### Commit
-- Hash: <hash>
+### Status
+- Complete: YES
 - Branch: <branch>
 ```
 
