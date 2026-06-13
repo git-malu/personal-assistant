@@ -7,9 +7,10 @@ import userEvent from "@testing-library/user-event";
 // early-return guard (React hooks must be called unconditionally).
 const mockUseMsal = vi.fn().mockReturnValue({
   instance: {
-    loginPopup: vi.fn(),
-    logoutPopup: vi.fn(),
+    loginRedirect: vi.fn(),
+    logoutRedirect: vi.fn(),
   },
+  accounts: [],
 });
 const mockUseIsAuthenticated = vi.fn().mockReturnValue(false);
 
@@ -57,9 +58,10 @@ describe("LoginButton", () => {
     it("renders 'Sign in with Microsoft' button when not authenticated", () => {
       mockUseMsal.mockReturnValue({
         instance: {
-          loginPopup: vi.fn(),
-          logoutPopup: vi.fn(),
+          loginRedirect: vi.fn(),
+          logoutRedirect: vi.fn(),
         },
+        accounts: [],
       });
       mockUseIsAuthenticated.mockReturnValue(false);
 
@@ -76,9 +78,10 @@ describe("LoginButton", () => {
     it("renders 'Logout' button when authenticated", () => {
       mockUseMsal.mockReturnValue({
         instance: {
-          loginPopup: vi.fn(),
-          logoutPopup: vi.fn(),
+          loginRedirect: vi.fn(),
+          logoutRedirect: vi.fn(),
         },
+        accounts: [{ name: "Test User", username: "test@example.com" }],
       });
       mockUseIsAuthenticated.mockReturnValue(true);
 
@@ -92,10 +95,11 @@ describe("LoginButton", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("calls instance.loginPopup when Sign in button is clicked", async () => {
-      const loginPopup = vi.fn().mockResolvedValue(undefined);
+    it("calls instance.loginRedirect when Sign in button is clicked", async () => {
+      const loginRedirect = vi.fn().mockResolvedValue(undefined);
       mockUseMsal.mockReturnValue({
-        instance: { loginPopup, logoutPopup: vi.fn() },
+        instance: { loginRedirect, logoutRedirect: vi.fn() },
+        accounts: [],
       });
       mockUseIsAuthenticated.mockReturnValue(false);
 
@@ -103,13 +107,14 @@ describe("LoginButton", () => {
       render(<LoginButton />);
 
       await user.click(screen.getByRole("button", { name: /sign in with microsoft/i }));
-      expect(loginPopup).toHaveBeenCalledTimes(1);
+      expect(loginRedirect).toHaveBeenCalledTimes(1);
     });
 
-    it("calls instance.logoutPopup when Logout button is clicked", async () => {
-      const logoutPopup = vi.fn().mockResolvedValue(undefined);
+    it("calls instance.logoutRedirect when Logout button is clicked", async () => {
+      const logoutRedirect = vi.fn().mockResolvedValue(undefined);
       mockUseMsal.mockReturnValue({
-        instance: { loginPopup: vi.fn(), logoutPopup },
+        instance: { loginRedirect: vi.fn(), logoutRedirect },
+        accounts: [{ name: "Test User", username: "test@example.com" }],
       });
       mockUseIsAuthenticated.mockReturnValue(true);
 
@@ -117,16 +122,17 @@ describe("LoginButton", () => {
       render(<LoginButton />);
 
       await user.click(screen.getByRole("button", { name: /logout/i }));
-      expect(logoutPopup).toHaveBeenCalledTimes(1);
+      expect(logoutRedirect).toHaveBeenCalledTimes(1);
     });
 
-    it("handles loginPopup rejection gracefully (no crash)", async () => {
+    it("handles loginRedirect rejection gracefully (no crash)", async () => {
       const consoleSpy = vi
         .spyOn(console, "error")
         .mockImplementation(() => {});
-      const loginPopup = vi.fn().mockRejectedValue(new Error("popup closed"));
+      const loginRedirect = vi.fn().mockRejectedValue(new Error("redirect failed"));
       mockUseMsal.mockReturnValue({
-        instance: { loginPopup, logoutPopup: vi.fn() },
+        instance: { loginRedirect, logoutRedirect: vi.fn() },
+        accounts: [],
       });
       mockUseIsAuthenticated.mockReturnValue(false);
 
@@ -135,7 +141,7 @@ describe("LoginButton", () => {
 
       await user.click(screen.getByRole("button", { name: /sign in with microsoft/i }));
       // Should not throw — error is caught and logged
-      expect(loginPopup).toHaveBeenCalledTimes(1);
+      expect(loginRedirect).toHaveBeenCalledTimes(1);
       expect(consoleSpy).toHaveBeenCalledWith(
         "Login failed:",
         expect.any(Error),

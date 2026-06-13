@@ -350,10 +350,20 @@ describe("chatAdapter", () => {
     });
   });
 
+  /**
+   * Helper to create a minimal valid-looking JWT token.
+   * Uses a future exp to prevent proactive token refresh from triggering.
+   */
+  function makeTestJWT(expOffsetSec = 3600): string {
+    const payload = { exp: Math.floor(Date.now() / 1000) + expOffsetSec };
+    const base64Payload = btoa(JSON.stringify(payload));
+    return `header.${base64Payload}.signature`;
+  }
+
   describe("401 / 403 auth refresh", () => {
     it("on 401: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
-      // Set initial token
-      useAuthStore.getState().setIdToken("expired-token");
+      // Use a valid JWT so proactive refresh (isTokenExpiringSoon) does not trigger
+      useAuthStore.getState().setIdToken(makeTestJWT());
       mockAcquireIdTokenSilently.mockResolvedValue(null);
 
       const mockFetch = vi.fn().mockResolvedValue({
@@ -367,7 +377,7 @@ describe("chatAdapter", () => {
         "Authentication required. Please sign in.",
       );
 
-      // Verify acquireIdTokenSilently was called
+      // Verify acquireIdTokenSilently was called exactly once (401 handler)
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
 
       // Verify store token was cleared
@@ -375,7 +385,7 @@ describe("chatAdapter", () => {
     });
 
     it("on 403: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
-      useAuthStore.getState().setIdToken("forbidden-token");
+      useAuthStore.getState().setIdToken(makeTestJWT());
       mockAcquireIdTokenSilently.mockResolvedValue(null);
 
       const mockFetch = vi.fn().mockResolvedValue({
@@ -394,7 +404,7 @@ describe("chatAdapter", () => {
     });
 
     it("on 401: calls acquireIdTokenSilently, updates store with fresh token, still throws auth error", async () => {
-      useAuthStore.getState().setIdToken("expired-token");
+      useAuthStore.getState().setIdToken(makeTestJWT());
       mockAcquireIdTokenSilently.mockResolvedValue("fresh-token-456");
 
       const mockFetch = vi.fn().mockResolvedValue({
@@ -408,7 +418,7 @@ describe("chatAdapter", () => {
         "Authentication required. Please sign in.",
       );
 
-      // Verify acquireIdTokenSilently was called
+      // Verify acquireIdTokenSilently was called exactly once (401 handler)
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
 
       // Verify store was cleared after fresh token also failed

@@ -30,6 +30,7 @@ msalInstance.initialize().then(() => {
         useAuthStore.getState().setIdToken(cachedToken);
       }
     }
+    useAuthStore.getState().setHydrated(true);
   });
 
   createRoot(document.getElementById("root")!).render(

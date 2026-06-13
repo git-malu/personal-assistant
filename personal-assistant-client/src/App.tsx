@@ -1,29 +1,26 @@
 import { useIsAuthenticated } from "@azure/msal-react";
-import { Thread } from "@/components/assistant-ui/thread";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { RuntimeProvider } from "@/components/RuntimeProvider";
-import { LoginButton } from "@/components/LoginButton";
+import React, { Suspense } from "react";
+import { useAuthStore } from "@/stores/auth-store";
+import { AuthGuard } from "@/components/landing/AuthGuard";
+import { LoadingState } from "@/components/landing/LoadingState";
+import { ChunkErrorBoundary } from "@/components/landing/ChunkErrorBoundary";
+
+const ChatPage = React.lazy(() => import("./components/chat/ChatPage"));
+const LandingPage = React.lazy(() => import("./components/landing/LandingPage"));
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
+  const hydrated = useAuthStore((s) => s.hydrated);
 
   return (
-    <RuntimeProvider>
-      <TooltipProvider>
-        <div className="flex h-dvh flex-col bg-background">
-          {/* Auth header bar */}
-          <div className="flex items-center justify-between px-4 py-2 border-b">
-            <span className="text-sm text-muted-foreground">
-              {isAuthenticated ? "已登录" : "请登录以开始对话"}
-            </span>
-            <LoginButton />
-          </div>
-          <div className="flex-1 min-h-0">
-            <Thread />
-          </div>
-        </div>
-      </TooltipProvider>
-    </RuntimeProvider>
+    <AuthGuard>
+      <ChunkErrorBoundary>
+        <Suspense fallback={<LoadingState />}>
+          {!hydrated ? <LoadingState /> :
+           isAuthenticated ? <ChatPage /> : <LandingPage />}
+        </Suspense>
+      </ChunkErrorBoundary>
+    </AuthGuard>
   );
 }
 

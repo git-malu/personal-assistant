@@ -34,9 +34,9 @@ describe("useAuthStore", () => {
     const state = useAuthStore.getState();
     // Assert that isAuthenticated is not a key of the store state
     expect(state).not.toHaveProperty("isAuthenticated");
-    // The only keys should be idToken, setIdToken, clearToken
+    // The expected keys: idToken, setIdToken, clearToken, hydrated, setHydrated
     expect(Object.keys(state).sort()).toEqual(
-      ["clearToken", "idToken", "setIdToken"].sort(),
+      ["clearToken", "hydrated", "idToken", "setHydrated", "setIdToken"].sort(),
     );
   });
 });
