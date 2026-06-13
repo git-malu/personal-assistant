@@ -49,45 +49,49 @@ export const chatAdapter: ChatModelAdapter = {
 
     try {
       // Get current idToken from auth store (plain object, use getState())
-      let idToken = useAuthStore.getState().idToken;
+      const idToken = useAuthStore.getState().idToken;
 
-      let response: Response;
-      let attempts = 0;
-      do {
-        const headers: Record<string, string> = {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json",
-          "x-hw-agentarts-session-id": getSessionId(),
-        };
-        if (idToken) {
-          headers["Authorization"] = `Bearer ${idToken}`;
+      const headers: Record<string, string> = {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+        "x-hw-agentarts-session-id": getSessionId(),
+      };
+      if (idToken) {
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
+
+      let response = await fetch(`${baseUrl}/invocations`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message: query, stream: true }),
+        signal: abortSignal,
+      });
+
+      // Token may have expired — try silent refresh once
+      if ((response.status === 401 || response.status === 403) && idToken) {
+        const freshToken = await acquireIdTokenSilently();
+        if (freshToken) {
+          useAuthStore.getState().setIdToken(freshToken);
+          headers["Authorization"] = `Bearer ${freshToken}`;
+          response = await fetch(`${baseUrl}/invocations`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ message: query, stream: true }),
+            signal: abortSignal,
+          });
+        } else {
+          useAuthStore.getState().clearToken();
+          throw new Error("Authentication required. Please sign in.");
         }
+      }
 
-        attempts++;
-        response = await fetch(`${baseUrl}/invocations`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ message: query, stream: true }),
-          signal: abortSignal,
-        });
-
-        if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            const freshToken = await acquireIdTokenSilently();
-            if (freshToken) {
-              // Token refreshed — retry immediately
-              useAuthStore.getState().setIdToken(freshToken);
-              idToken = freshToken;
-              continue;
-            }
-            // Cannot refresh — clear and give up
-            useAuthStore.getState().clearToken();
-            throw new Error("Authentication required. Please sign in.");
-          }
-          throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          useAuthStore.getState().clearToken();
+          throw new Error("Authentication required. Please sign in.");
         }
-        break; // 2xx — proceed to SSE parsing
-      } while (attempts < 2);
+        throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+      }
 
       reader = response.body?.getReader();
       if (!reader) {

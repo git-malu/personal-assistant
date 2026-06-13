@@ -411,8 +411,8 @@ describe("chatAdapter", () => {
       // Verify acquireIdTokenSilently was called
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
 
-      // Verify store was updated with fresh token
-      expect(useAuthStore.getState().idToken).toBe("fresh-token-456");
+      // Verify store was cleared after fresh token also failed
+      expect(useAuthStore.getState().idToken).toBeNull();
     });
   });
 
