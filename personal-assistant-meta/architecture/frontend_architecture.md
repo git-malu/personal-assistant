@@ -193,7 +193,7 @@ flowchart TB
 | `CapabilityGrid` | 响应式能力卡片网格（1/2/4 列） |
 | `ClosingCTA` | FeatureTile dark-2 变体包装 |
 | `LandingFooter` | parchment 背景页脚 |
-| `ChatPage` | RuntimeProvider + Thread（从 App.tsx 提取） |
+| `ChatPage` | GlobalNav header + RuntimeProvider + Thread（从 App.tsx 提取） |<!-- updated by issue: feat/chat-page-design-polish -->
 
 **设计 Token**：
 
