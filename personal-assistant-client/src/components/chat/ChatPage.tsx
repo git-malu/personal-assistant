@@ -8,12 +8,16 @@ function ChatPage() {
     <RuntimeProvider>
       <TooltipProvider>
         <div className="flex h-dvh flex-col bg-background">
-          <div className="flex items-center justify-between px-4 py-2 border-b">
-            <span className="text-sm text-muted-foreground">
+          <nav className="dark flex h-[44px] w-full items-center justify-between bg-surface-black px-5">
+            <a
+              href="/"
+              className="inline-flex h-full items-center text-[12px] font-normal leading-none tracking-[-0.12px] text-white/90 no-underline hover:text-white transition-colors"
+              aria-label="Personal Assistant, 返回首页"
+            >
               Personal Assistant
-            </span>
+            </a>
             <LoginButton />
-          </div>
+          </nav>
           <div className="flex-1 min-h-0">
             <Thread />
           </div>
