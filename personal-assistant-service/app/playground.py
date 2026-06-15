@@ -5,7 +5,6 @@
 """
 
 import chainlit as cl
-from langchain_core.runnables import RunnableConfig
 
 from app.agent_handler import get_agent_handler
 
@@ -40,15 +39,12 @@ async def on_message(message: cl.Message):
         # Generate or retrieve session_id from Chainlit session
         session_id = cl.user_session.get("id")  # Chainlit built-in session ID
 
-        config = RunnableConfig(
+        # 使用统一 AgentHandler 路径，callback 自动捕获中间步骤
+        result = await handler.invoke(
+            message=message.content,
+            user_id="playground",
+            session_id=session_id,
             callbacks=[callback],
-            configurable={"thread_id": f"playground:{session_id}"},
-        )
-
-        # 使用 ainvoke 获取完整结果，callback 自动捕获中间步骤
-        result = await handler.agent.ainvoke(
-            {"messages": [{"role": "user", "content": message.content}]},
-            config=config,
         )
 
         # 输出最终回复

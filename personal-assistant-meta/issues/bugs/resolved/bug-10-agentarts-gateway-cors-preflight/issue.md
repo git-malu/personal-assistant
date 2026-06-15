@@ -6,11 +6,11 @@ status: in_progress
 
 ## Motivation
 
-前端部署在 Netlify（`https://agentarts-personal-assistant.netlify.app`），后端部署在 AgentArts Runtime，通过 Gateway（`https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/invocations`）转发请求。由于前后端不同域，浏览器在发送 POST 请求时先发送 OPTIONS preflight。AgentArts Gateway 不处理 CORS preflight（无 CORS 配置能力，且 `authorizer_type: IAM` 会阻止未认证的 OPTIONS 请求），导致 preflight 失败，浏览器阻断后续 POST 请求。
+前端部署在 Netlify（`https://agentarts-personal-assistant.netlify.app`），后端部署在 AgentArts Runtime，通过 Gateway（`https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com/invocations`）转发请求。由于前后端不同域，浏览器在发送 POST 请求时先发送 OPTIONS preflight。AgentArts Gateway 不处理 CORS preflight（无 CORS 配置能力，且 `authorizer_type: IAM` 会阻止未认证的 OPTIONS 请求），导致 preflight 失败，浏览器阻断后续 POST 请求。
 
 **错误信息**：
 ```
-Access to fetch at 'https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/invocations'
+Access to fetch at 'https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com/invocations'
 from origin 'https://agentarts-personal-assistant.netlify.app' has been blocked by CORS policy:
 Response to preflight request doesn't pass access control check:
 No 'Access-Control-Allow-Origin' header is present on the requested resource.
@@ -46,7 +46,7 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
 ```
 浏览器 → https://agentarts-personal-assistant.netlify.app/invocations (同源，无 preflight)
           ↓ Netlify Edge proxy (server-to-server, no CORS needed)
-AgentArts Gateway → https://defaultgw-ha3wenzqga.../invocations
+AgentArts Gateway → https://defaultgw-xxx.../invocations
                       ↓
 FastAPI 容器 → CORSMiddleware (作为双层防御保留)
 ```
@@ -64,7 +64,7 @@ FastAPI 容器 → CORSMiddleware (作为双层防御保留)
 # API 代理 — 必须位于 SPA catch-all 之前
 [[redirects]]
   from = "/invocations"
-  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/invocations"
+  to = "https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com/invocations"
   status = 200
 
 # SPA 路由回退
@@ -265,7 +265,7 @@ Add API proxy rule in `netlify.toml` *before* the general SPA catch-all:
 ```toml
 [[redirects]]
   from = "/api/*"
-  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/:splat"
+  to = "https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com/:splat"
   status = 200
   force = true
 ```

@@ -38,7 +38,7 @@ class TestBug2_SPAFallbackNotWorking:
         was removed in refactor-2).
         """
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 

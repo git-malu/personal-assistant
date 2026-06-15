@@ -52,18 +52,20 @@ npm ci
 npm run dev
 ```
 
-开发服务器默认监听 `http://localhost:5173`，`/api/*` 请求通过 Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
+开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过 Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
 
 确保后端服务已启动：
 
 ```bash
 # 在 personal-assistant-service/ 下
-MODEL_API_KEY="<your-api-key>" uv run uvicorn app.main:app --port 8080 --reload
+uv run uvicorn app.main:app --port 8080 --reload
 ```
 
 ### 3. 打开浏览器
 
 访问 `http://localhost:5173` 进入 Web Chat 对话界面。
+
+生产部署到 Netlify 时，`POST /invocations` 由 `netlify/edge-functions/invocations.ts` 转发到 `AGENTARTS_INVOCATIONS_URL`，并在服务端通过 `AGENTARTS_API_KEY` 注入 `Authorization`。浏览器端不保存或发送 Gateway API key。
 
 ## 构建
 

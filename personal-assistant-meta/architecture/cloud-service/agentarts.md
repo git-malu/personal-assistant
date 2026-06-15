@@ -127,8 +127,8 @@ pip install agentarts-sdk
 pip install -U langchain langgraph
 
 # 配置认证
-export HUAWEICLOUD_SDK_AK="your-ak"
-export HUAWEICLOUD_SDK_SK="your-sk"
+export HUAWEICLOUD_SDK_AK="<your-ak>"
+export HUAWEICLOUD_SDK_SK="<your-sk>"
 ```
 
 ### 4.2 SDK 子模块

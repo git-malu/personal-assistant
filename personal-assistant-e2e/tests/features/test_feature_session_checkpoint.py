@@ -3,7 +3,8 @@
 Tests multi-turn context persistence, streaming context, session isolation,
 user-scoped thread_id isolation, and basic functionality.
 
-Requires E2E_DEEPSEEK_API_KEY env var (deepseek-chat) for multi-turn verification.
+Requires an AgentArts Runtime/Gateway test environment so Agent Identity can
+resolve the DeepSeek API key via workload token.
 """
 
 import json
@@ -29,17 +30,13 @@ llm:
   providers:
     maas:
       base_url: https://api.modelarts-maas.com/openai/v1
-      api_key_env: MAAS_API_KEY
+      api_key_provider: MAAS_API_KEY
       model: deepseek-v4-pro
     deepseek:
       base_url: https://api.deepseek.com
-      api_key_env: DEEPSEEK_API_KEY
+      api_key_provider: DEEPSEEK_API_KEY
       model: deepseek-chat
 """
-
-# Real API key — must be set in environment to run these tests
-DEEPSEEK_API_KEY = os.environ.get("E2E_DEEPSEEK_API_KEY", "")
-
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -185,10 +182,9 @@ def manage_config():
 
 
 @pytest.fixture(autouse=True)
-def require_api_key():
-    """Skip all tests if E2E_DEEPSEEK_API_KEY is not set in environment."""
-    if not DEEPSEEK_API_KEY:
-        pytest.skip("E2E_DEEPSEEK_API_KEY not set — skipping real LLM test")
+def require_agent_identity_runtime():
+    """Skip until E2E can invoke through AgentArts Gateway with workload token."""
+    pytest.skip("Agent Identity Runtime E2E not configured for real LLM tests")
 
 
 @pytest.fixture
@@ -217,9 +213,7 @@ class TestScenario1_NonStreamingMultiTurn:
             "x-hw-agentarts-session-id": "test-session-1",
         }
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             # Request 1: Tell the agent my name
             r1 = http_client.post(
@@ -267,9 +261,7 @@ class TestScenario2_StreamingMultiTurn:
             "x-hw-agentarts-session-id": "test-session-2",
         }
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             # Request 1 (stream): Set favorite color
             r1 = http_client.post(
@@ -307,9 +299,7 @@ class TestScenario2_StreamingMultiTurn:
             "x-hw-agentarts-session-id": "test-sse-format",
         }
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             r = http_client.post(
                 f"{base}/invocations",
@@ -352,9 +342,7 @@ class TestScenario3_CrossSessionIsolation:
         """Session A sets context; Session B should not see it."""
         base = f"http://127.0.0.1:{self.PORT}"
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             # Session A: Set name
             r_a = http_client.post(
@@ -400,9 +388,7 @@ class TestScenario4_UserScopedIsolation:
         """User A sets a secret; User B with same session header cannot see it."""
         base = f"http://127.0.0.1:{self.PORT}"
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             # User A: Share a secret
             r_a = http_client.post(
@@ -448,9 +434,7 @@ class TestScenario5_PingAndExisting:
         """GET /ping returns 200 with {"status": "ok"}."""
         base = f"http://127.0.0.1:{self.PORT}"
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             r = http_client.get(f"{base}/ping")
             assert r.status_code == 200
@@ -463,9 +447,7 @@ class TestScenario5_PingAndExisting:
         """POST /invocations without x-hw-agentarts-session-id header returns 400."""
         base = f"http://127.0.0.1:{self.PORT}"
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             r = http_client.post(
                 f"{base}/invocations",
@@ -488,9 +470,7 @@ class TestScenario5_PingAndExisting:
             "x-hw-agentarts-session-id": "test-ac8",
         }
 
-        proc = _start_service(self.PORT, env={
-            "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
-        })
+        proc = _start_service(self.PORT)
         try:
             # Non-stream: say hello
             r1 = http_client.post(

@@ -5,9 +5,14 @@ llm:
   providers:
     maas:
       base_url: https://api.modelarts-maas.com/openai/v1
-      api_key_env: MAAS_API_KEY
+      api_key_provider: MAAS_API_KEY
       model: deepseek-v4-pro
     deepseek:
       base_url: https://api.deepseek.com
-      api_key_env: DEEPSEEK_API_KEY
+      api_key_provider: DEEPSEEK_API_KEY
       model: deepseek-chat
+
+identity:
+  github:
+    # Optional. Prefer AGENTARTS_GITHUB_OAUTH2_CALLBACK_URL for private deployments.
+    oauth2_callback_url:

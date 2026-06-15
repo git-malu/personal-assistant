@@ -129,7 +129,6 @@ describe("chatAdapter", () => {
         expect.objectContaining({
           Accept: "text/event-stream",
           "Content-Type": "application/json",
-          Authorization: "Bearer pa-dev-api-key-2026",
         })
       );
     });

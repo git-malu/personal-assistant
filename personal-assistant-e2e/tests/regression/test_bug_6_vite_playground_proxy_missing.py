@@ -96,7 +96,7 @@ class TestBug6_VitePlaygroundProxyMissing:
         client = ClientDevProcess(port=self.VITE_PORT)
 
         try:
-            service.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+            service.start()
 
             # Ensure Vite config has /playground proxy pointing to our service.
             # If the proxy rule is correctly added (the fix), /playground

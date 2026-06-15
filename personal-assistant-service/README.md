@@ -41,19 +41,26 @@ personal-assistant-service/
 uv sync
 ```
 
-### 2. 设置环境变量
+### 2. 设置 Agent Identity
 
-```bash
-export MODEL_API_KEY="<your-maas-api-key>"
-```
+生产环境通过 Agent Identity 的 API key credential provider 获取模型密钥，Agent 代码和部署配置不直接保管 LLM API Key。
 
-可选变量（已提供默认值）：
+先在 Agent Identity 中创建 API key credential provider，并让 `config.yaml` 的 `api_key_provider` 指向对应名称：
+
+| LLM provider | Agent Identity API key provider |
+|-------------|----------------------------------|
+| `maas` | `MAAS_API_KEY` |
+| `deepseek` | `DEEPSEEK_API_KEY` |
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_API_KEY` | **必需** | MaaS API Key |
-| `MODEL_NAME` | `deepseek-v4-pro` | 模型名称 |
-| `MODEL_URL` | `https://api.modelarts-maas.com/openai/v1` | MaaS API 地址 |
+| `AGENTARTS_REGION` | `cn-southwest-2` | Agent Identity 区域 |
+| `AGENTARTS_GITHUB_OAUTH2_CALLBACK_URL` | 无 | 私有 GitHub OAuth2 callback URL，本地或部署时按需注入 |
+| `X-HW-AgentGateway-Workload-Access-Token` | AgentArts Gateway 注入 | 请求头中的 workload token |
+
+线上请求由 AgentArts Gateway 注入 workload token，服务会把该 header 写入
+`AgentArtsRuntimeContext`，后续 `agentarts-sdk` 的 `require_access_token` 装饰器直接从 SDK context 取用。
+LLM 的 API key 本地 debug 可临时读取 provider 同名环境变量；生产未设置时由 Agent Identity 按 provider 名称获取。
 
 ### 3. 启动服务
 
@@ -111,7 +118,7 @@ docker build --platform linux/arm64 -t personal-assistant:dev .
 ### 运行容器
 
 ```bash
-docker run --rm -p 8080:8080 -e MODEL_API_KEY="<your-key>" personal-assistant:dev
+docker run --rm -p 8080:8080 personal-assistant:dev
 ```
 
 ## 在线测试

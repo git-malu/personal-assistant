@@ -89,7 +89,7 @@ flowchart LR
 |--------|------|
 | **新增文件** | `personal-assistant-client/netlify/edge-functions/invocations.ts`（60 行） |
 | **移除配置** | `netlify.toml` 中 `/invocations` 的 redirect 规则（原 6 行） |
-| **环境变量** | Netlify 控制台配 `AGENTARTS_API_KEY`，代码回退 `pa-dev-api-key-2026`（dev key） |
+| **环境变量** | Netlify 控制台配 `AGENTARTS_API_KEY` 和 `AGENTARTS_INVOCATIONS_URL`，代码不提供硬编码 fallback |
 | **认证方式变更** | commit `91226ba` 从 `X-API-Key` 改为 `Authorization: Bearer`（与 AgentArts Gateway 标准一致） |
 | **Session ID** | Edge Function 用 `crypto.randomUUID()` 生成，通过 `x-hw-agentarts-session-id` 传递——**每个请求新 UUID**，当前后端未使用此 ID（`feature-session-checkpoint` 待实现） |
 
@@ -116,7 +116,7 @@ flowchart LR
 | 限制 | 说明 | 缓解 |
 |------|------|------|
 | **仅允许 POST** | Edge Function 对非 POST 返回 405。OPTIONS preflight 不单独处理——依赖同源（Netlify 域名）消除 CORS 需求 | 开发环境 Vite proxy 不走 Edge Function，CORS 由 FastAPI 的 `CORSMiddleware` 处理 |
-| **API Key 硬编码 fallback** | 代码中 `pa-dev-api-key-2026` 为 dev key，生产需通过 `Netlify.env.get("AGENTARTS_API_KEY")` 覆盖 | 生产部署前确认 Netlify 环境变量已配置 |
+| **代理配置缺失** | 代码不提供硬编码 fallback，未配置 `AGENTARTS_API_KEY` 或 `AGENTARTS_INVOCATIONS_URL` 时返回 500 | 生产部署前确认 Netlify 环境变量已配置 |
 | **Session ID 每次重新生成** | 同一浏览器 tab 的连续请求有不同 session ID，导致后端无法关联会话上下文 | 待 `feature-session-checkpoint` 实现后，由前端生成并持久化 session ID，通过自定义 header 传递 |
 | **body 全量读取** | `request.text()` 将完整 body 读入内存后再转发。对聊天消息（<10KB）无影响；未来文件上传场景需改为 stream | 当前阶段可接受；文件上传不在 Web Chat scope 内 |
 

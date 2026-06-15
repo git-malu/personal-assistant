@@ -36,7 +36,7 @@ class TestScenario1_HealthCheck:
     def service_url(self):
         """Start the service and return its base URL."""
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 
@@ -68,7 +68,7 @@ class TestScenario2_SyncInvocation:
     def service_url(self):
         """Start the service and return its base URL."""
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 
@@ -123,7 +123,7 @@ class TestScenario3_SSEStreamingNewPath:
     def service_url(self):
         """Start the service and return its base URL."""
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 
@@ -185,7 +185,7 @@ class TestScenario4_OldRouteReturns404:
     def service_url(self):
         """Start the service and return its base URL."""
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 
@@ -258,7 +258,7 @@ class TestScenario5_PlaygroundRedirectNewPath:
     def service_url(self):
         """Start the service and return its base URL."""
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 

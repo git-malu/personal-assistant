@@ -41,8 +41,8 @@ agents:
             allowed_scopes: []
           key_auth:
             api_keys:
-            - api_key: pa-dev-api-key-2026
-              api_key_name: dev-key
+            - api_key: <agentarts-gateway-api-key>
+              api_key_name: dev-key-placeholder
       observability:
         tracing:
           enabled: true
@@ -54,14 +54,8 @@ agents:
         url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
         commands: []
       environment_variables:
-      - key: DEEPSEEK_API_KEY
-        value: xxxxxxxxxxxxxxxxxxxxxxx
-      - key: MODEL_API_KEY
-        value: xxxxxxxxxxxxxxxxxxxxxxx
-      - key: MODEL_NAME
-        value: deepseek-v4-pro
-      - key: MODEL_URL
-        value: https://api.modelarts-maas.com/openai/v1
+      - key: AGENTARTS_REGION
+        value: cn-southwest-2
       - key: CORS_ALLOWED_ORIGINS
         value: https://resource-governance.cloud,https://agentarts-personal-assistant.netlify.app
       tags:

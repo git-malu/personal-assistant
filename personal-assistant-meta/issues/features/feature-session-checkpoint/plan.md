@@ -336,7 +336,7 @@ async def invocations(request: Request):
 const headers: Record<string, string> = {
     Accept: "text/event-stream",
     "Content-Type": "application/json",
-    "Authorization": "Bearer pa-dev-api-key-2026",
+    "Authorization": "Bearer <agentarts-gateway-api-key>",
     "x-hw-agentarts-session-id": "test-session-001",   // ← 硬编码！
 };
 ```
@@ -351,7 +351,7 @@ const headers: Record<string, string> = {
 const headers: Record<string, string> = {
     Accept: "text/event-stream",
     "Content-Type": "application/json",
-    "Authorization": "Bearer pa-dev-api-key-2026",
+    "Authorization": "Bearer <agentarts-gateway-api-key>",
 };
 // 不发送 session header — 让后端通过 cookie fallback 自动管理 session
 ```

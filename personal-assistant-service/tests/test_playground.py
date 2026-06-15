@@ -1,12 +1,6 @@
 """Tests for app.playground — Chainlit Playground module (Feature 1.4)."""
 
 import inspect
-import os
-
-# Ensure test environment variables are set before importing app modules
-os.environ.setdefault("MODEL_API_KEY", "test-key")
-os.environ.setdefault("MAAS_API_KEY", "test-key")
-
 
 # ---------------------------------------------------------------------------
 # Module import and handler registration
@@ -28,9 +22,7 @@ def test_on_chat_start_is_registered():
         "app.playground should have on_chat_start function"
     )
     func = app.playground.on_chat_start
-    assert callable(func), (
-        f"on_chat_start should be callable, got {type(func)}"
-    )
+    assert callable(func), f"on_chat_start should be callable, got {type(func)}"
     assert inspect.iscoroutinefunction(func), (
         f"on_chat_start should be a coroutine function, got {type(func)}"
     )
@@ -44,9 +36,7 @@ def test_on_message_is_registered():
         "app.playground should have on_message function"
     )
     func = app.playground.on_message
-    assert callable(func), (
-        f"on_message should be callable, got {type(func)}"
-    )
+    assert callable(func), f"on_message should be callable, got {type(func)}"
     assert inspect.iscoroutinefunction(func), (
         f"on_message should be a coroutine function, got {type(func)}"
     )
@@ -76,6 +66,4 @@ def test_on_message_uses_get_agent_handler():
     import app.playground
 
     source = inspect.getsource(app.playground.on_message)
-    assert "get_agent_handler" in source, (
-        "on_message should call get_agent_handler()"
-    )
+    assert "get_agent_handler" in source, "on_message should call get_agent_handler()"

@@ -13,6 +13,7 @@ dependencies = [
     "pyyaml>=6.0",
     "chainlit>=2.11.1",
     "langgraph-checkpoint-sqlite>=3.1.0",
+    "agentarts-sdk>=0.1.3",
 ]
 
 [tool.ruff.lint]

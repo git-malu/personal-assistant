@@ -1,18 +1,14 @@
 """Integration tests for app.main FastAPI application."""
 
 import json
-import os
 from unittest.mock import patch
 
 import httpx
 import pytest
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
+from starlette.routing import Mount
 
-# Must be set BEFORE importing app.main (the lifespan checks this)
-os.environ["MODEL_API_KEY"] = "test-key"
-
-from starlette.routing import Mount  # noqa: E402
-
-from app.main import app  # noqa: E402
+from app.main import app
 
 
 class FakeAgentHandler:
@@ -24,9 +20,19 @@ class FakeAgentHandler:
         self._handle_response = handle_response
 
     async def handle(
-        self, message: str, user_id: str = "anonymous", session_id: str | None = None
+        self,
+        message: str,
+        user_id: str = "anonymous",
+        session_id: str | None = None,
     ) -> str:
-        self.handle_calls.append((message, user_id, session_id))
+        self.handle_calls.append(
+            (
+                message,
+                user_id,
+                session_id,
+                AgentArtsRuntimeContext.get_workload_access_token(),
+            )
+        )
         return self._handle_response
 
     async def handle_stream(
@@ -35,7 +41,14 @@ class FakeAgentHandler:
         user_id: str = "anonymous",
         session_id: str | None = None,
     ):
-        self.stream_calls.append((message, user_id, session_id))
+        self.stream_calls.append(
+            (
+                message,
+                user_id,
+                session_id,
+                AgentArtsRuntimeContext.get_workload_access_token(),
+            )
+        )
         yield 'data: {"token": "Hello", "done": false}\n\n'
         yield 'data: {"token": " world", "done": false}\n\n'
         yield 'data: {"token": "", "done": true}\n\n'
@@ -162,6 +175,24 @@ class TestHeaderHandling:
         )
         assert fake_handler.handle_calls[0][1] == "anonymous"
 
+    @pytest.mark.asyncio
+    async def test_identity_runtime_headers_are_forwarded(self, client, fake_handler):
+        """AgentArts identity headers are passed through to AgentHandler."""
+        await client.post(
+            "/invocations",
+            json={"message": "Hi"},
+            headers={
+                "x-hw-agentarts-session-id": "sess-id",
+                "X-HW-AgentGateway-Workload-Access-Token": "workload-token",
+            },
+        )
+        assert fake_handler.handle_calls[0] == (
+            "Hi",
+            "anonymous",
+            "sess-id",
+            "workload-token",
+        )
+
 
 @pytest.mark.asyncio
 async def test_invocations_stream_false_returns_response(client, fake_handler):
@@ -229,26 +260,8 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# App startup error (missing MODEL_API_KEY)
+# App startup
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_missing_model_api_key_causes_startup_error(monkeypatch):
-    """App lifespan should raise RuntimeError when MODEL_API_KEY is missing."""
-    # Temporarily remove MODEL_API_KEY from the environment
-    monkeypatch.delenv("MODEL_API_KEY", raising=False)
-
-    # Ensure config.yaml absence is simulated (avoid picking up real config.yaml)
-    with patch("pathlib.Path.exists", return_value=False):
-        from fastapi import FastAPI
-
-        from app.main import lifespan
-
-        test_app = FastAPI()
-        with pytest.raises(RuntimeError, match="MODEL_API_KEY"):
-            async with lifespan(test_app):
-                pass
 
 
 @pytest.mark.asyncio
@@ -259,7 +272,7 @@ async def test_lifespan_sets_agent_handler(fake_handler):
     from app.main import lifespan
 
     test_app = FastAPI()
-    with patch("pathlib.Path.exists", return_value=False):
+    with patch("app.llm_config.get_model"):
         async with lifespan(test_app):
             assert test_app.state.agent_handler is fake_handler
 
@@ -285,7 +298,7 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
     assert "text/event-stream" in content_type, f"Got: {content_type}"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
-    assert fake_handler.stream_calls == [("hello", "user-1", "sess-test")]
+    assert fake_handler.stream_calls == [("hello", "user-1", "sess-test", None)]
 
     body = response.text
     assert "data:" in body
@@ -450,7 +463,12 @@ class TestAgentHandlerSingletonIntegration:
 
         try:
             test_app = FastAPI()
-            with patch("pathlib.Path.exists", return_value=False):
+            with (
+                patch("app.llm_config.get_model"),
+                patch("app.agent_handler.get_model"),
+                patch("app.agent_handler.create_deep_agent"),
+                patch.object(app.agent_handler.AgentHandler, "_init_checkpointer"),
+            ):
 
                 async def _run():
                     async with lifespan(test_app):

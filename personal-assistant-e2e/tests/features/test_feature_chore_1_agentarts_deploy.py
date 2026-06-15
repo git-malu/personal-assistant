@@ -200,24 +200,14 @@ class TestScenario1_CORSIntegration:
                 yield f'data: {json.dumps({"token": "test", "done": False})}\n\n'
                 yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
 
-        # Save and restore env to avoid leaking state between tests
-        original_key = os.environ.get("MAAS_API_KEY")
-        os.environ["MAAS_API_KEY"] = "dummy-e2e-test-key"
+        from app.main import app
+        from fastapi.testclient import TestClient
 
-        try:
-            from app.main import app
-            from fastapi.testclient import TestClient
+        handler = MockAgentHandler()
+        app.state.agent_handler = handler
 
-            handler = MockAgentHandler()
-            app.state.agent_handler = handler
-
-            client = TestClient(app, raise_server_exceptions=False)
-            yield client
-        finally:
-            if original_key is not None:
-                os.environ["MAAS_API_KEY"] = original_key
-            else:
-                os.environ.pop("MAAS_API_KEY", None)
+        client = TestClient(app, raise_server_exceptions=False)
+        yield client
 
     def test_post_invocations_with_allowed_origin_has_cors_header(self, cors_client):
         """POST /invocations with allowed origin includes CORS headers."""
@@ -291,7 +281,7 @@ class TestScenario2_SSEBackendIntegration:
         from conftest import ServiceProcess
 
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 

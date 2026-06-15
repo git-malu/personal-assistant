@@ -175,7 +175,7 @@ flowchart LR
           - "email"
       key_auth:
         api_keys:
-          - api_key: "pa-dev-api-key-2026"
+          - api_key: "<agentarts-gateway-api-key>"
             api_key_name: "dev-key"
   ```
 - [ ] **保留 `key_auth`**：开发调试、CLI 测试、CI/CD 仍通过 API Key 调用
@@ -230,7 +230,7 @@ flowchart LR
 
 ### 4.6 验证
 
-- [ ] **API Key 方式**（dev）：`curl -X POST {gateway}/invocations -H "Authorization: Bearer pa-dev-api-key-2026"` → 正常响应
+- [ ] **API Key 方式**（dev）：`curl -X POST {gateway}/invocations -H "Authorization: Bearer <agentarts-gateway-api-key>"` → 正常响应
 - [ ] **CUSTOM_JWT 方式**（prod）：
   1. 浏览器登录 Microsoft Entra ID → 获取 id_token
   2. 前端发起 `/invocations` 请求携带 `Authorization: Bearer {id_token}`

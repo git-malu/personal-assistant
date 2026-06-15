@@ -35,7 +35,7 @@ class TestBug3_PlaygroundReturns404:
         is no longer required by the service (StaticFiles was removed).
         """
         sp = ServiceProcess(port=self.PORT)
-        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        sp.start()
         yield sp.url
         sp.stop()
 

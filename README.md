@@ -62,7 +62,7 @@ personal-assistant/
 ```bash
 cd personal-assistant-service
 uv sync
-cp .env.example .env   # 编辑 .env 填入 MAAS_API_KEY 等密钥
+cp .env.example .env   # 本地 debug 可临时填 LLM key；生产走 Agent Identity provider
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 

@@ -35,6 +35,7 @@ SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 NETLIFY_TOML = CLIENT_DIR / "netlify.toml"
 DIST_DIR = CLIENT_DIR / "dist"
+INVOCATIONS_EDGE_FUNCTION = CLIENT_DIR / "netlify" / "edge-functions" / "invocations.ts"
 
 # Ensure service code is importable
 _SERVICE_SRC = str(SERVICE_DIR)
@@ -57,7 +58,7 @@ def _make_cors_test_client(cors_origins: str | None) -> tuple:
 
     Uses monkeypatch-like env manipulation + importlib.reload so the
     module-level os.getenv("CORS_ALLOWED_ORIGINS") picks up the new value.
-    LLM init is mocked to avoid real API calls during lifespan startup.
+    LLM calls are not made by these CORS checks.
 
     Args:
         cors_origins: Value for CORS_ALLOWED_ORIGINS env var.
@@ -74,10 +75,6 @@ def _make_cors_test_client(cors_origins: str | None) -> tuple:
     else:
         os.environ["CORS_ALLOWED_ORIGINS"] = cors_origins
 
-    # Ensure a dummy API key so the lifespan doesn't crash on missing config
-    old_api_key = os.environ.get("MAAS_API_KEY")
-    os.environ["MAAS_API_KEY"] = "dummy-e2e-test-key"
-
     try:
         import app.main as app_main
 
@@ -88,31 +85,22 @@ def _make_cors_test_client(cors_origins: str | None) -> tuple:
 
             client = TestClient(app_main.app, raise_server_exceptions=False)
 
-        return client, old_value, old_api_key
+        return client, old_value
     except Exception:
         # Restore env on error before re-raising
         if old_value is not None:
             os.environ["CORS_ALLOWED_ORIGINS"] = old_value
         else:
             os.environ.pop("CORS_ALLOWED_ORIGINS", None)
-        if old_api_key is not None:
-            os.environ["MAAS_API_KEY"] = old_api_key
-        else:
-            os.environ.pop("MAAS_API_KEY", None)
         raise
 
 
-def _restore_cors_env(old_value: str | None, old_api_key: str | None):
-    """Restore CORS_ALLOWED_ORIGINS and MAAS_API_KEY env vars to their original state."""
+def _restore_cors_env(old_value: str | None):
+    """Restore CORS_ALLOWED_ORIGINS to its original state."""
     if old_value is not None:
         os.environ["CORS_ALLOWED_ORIGINS"] = old_value
     else:
         os.environ.pop("CORS_ALLOWED_ORIGINS", None)
-
-    if old_api_key is not None:
-        os.environ["MAAS_API_KEY"] = old_api_key
-    else:
-        os.environ.pop("MAAS_API_KEY", None)
 
     # Reload app.main to restore default CORS config
     import app.main as app_main
@@ -147,7 +135,7 @@ class TestCORSEnvVarE2E:
         - Origin b.example.com → echoed in ACAO header
         - Origin evil.example.com → NOT echoed (disallowed)
         """
-        client, old_val, old_key = _make_cors_test_client(
+        client, old_val = _make_cors_test_client(
             "https://a.example.com,https://b.example.com"
         )
         try:
@@ -182,7 +170,7 @@ class TestCORSEnvVarE2E:
                 f"Disallowed origin must NOT produce ACAO header, got {acao!r}"
             )
         finally:
-            _restore_cors_env(old_val, old_key)
+            _restore_cors_env(old_val)
 
     # ── A2: empty CORS_ALLOWED_ORIGINS falls back to default ────────────
 
@@ -192,7 +180,7 @@ class TestCORSEnvVarE2E:
         An empty string is falsy in Python, so the ``if _env_origins``
         check evaluates to False and _default_origins is used.
         """
-        client, old_val, old_key = _make_cors_test_client("")
+        client, old_val = _make_cors_test_client("")
         try:
             # Allowed: OBS default origin
             resp = client.get("/ping", headers={"Origin": OBS_DEFAULT_ORIGIN})
@@ -219,7 +207,7 @@ class TestCORSEnvVarE2E:
                 f"Disallowed origin must NOT produce ACAO header, got {acao!r}"
             )
         finally:
-            _restore_cors_env(old_val, old_key)
+            _restore_cors_env(old_val)
 
     # ── A3: Netlify-specific origin ─────────────────────────────────────
 
@@ -229,7 +217,7 @@ class TestCORSEnvVarE2E:
         Simulates the production scenario where the service is configured
         to accept requests from a Netlify-hosted frontend.
         """
-        client, old_val, old_key = _make_cors_test_client(
+        client, old_val = _make_cors_test_client(
             "https://personal-assistant.netlify.app"
         )
         try:
@@ -261,7 +249,7 @@ class TestCORSEnvVarE2E:
                 f"Disallowed origin must NOT produce ACAO header, got {acao!r}"
             )
         finally:
-            _restore_cors_env(old_val, old_key)
+            _restore_cors_env(old_val)
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -312,6 +300,19 @@ class TestNetlifyTomlValidation:
             assert key in first, (
                 f"First redirect rule missing '{key}'. Rule: {first}"
             )
+
+        # ── [[edge_functions]] array ──
+        assert "edge_functions" in data, (
+            f"No [[edge_functions]] in netlify.toml. Top-level keys: {list(data.keys())}"
+        )
+        edge_functions = data["edge_functions"]
+        assert isinstance(edge_functions, list), (
+            f"edge_functions should be a list, got {type(edge_functions).__name__}"
+        )
+        assert any(
+            fn.get("function") == "invocations" and fn.get("path") == "/invocations"
+            for fn in edge_functions
+        ), f"Missing invocations edge function mapping: {edge_functions}"
 
     def test_b2_redirect_rule_is_spa_fallback(self):
         """B2: Redirect rule semantics — SPA fallback, not HTTP redirect.
@@ -375,6 +376,18 @@ class TestNetlifyTomlValidation:
         assert build["publish"] == "dist", (
             f"Expected publish='dist', got {build['publish']!r}"
         )
+
+    def test_b4_invocations_edge_function_uses_server_side_api_key(self):
+        """B4: /invocations auth is injected server-side, never in browser code."""
+        assert INVOCATIONS_EDGE_FUNCTION.exists(), (
+            f"Edge Function not found at {INVOCATIONS_EDGE_FUNCTION}"
+        )
+        source = INVOCATIONS_EDGE_FUNCTION.read_text(encoding="utf-8")
+
+        assert 'Netlify.env.get("AGENTARTS_API_KEY")' in source
+        assert 'Netlify.env.get("AGENTARTS_INVOCATIONS_URL")' in source
+        assert '"Authorization"' in source
+        assert "REPLACE_WITH_AGENTARTS_GATEWAY_API_KEY" not in source
 
 
 # ═════════════════════════════════════════════════════════════════════════

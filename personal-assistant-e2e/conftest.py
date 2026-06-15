@@ -57,7 +57,6 @@ def clean_env(monkeypatch):
     llm_vars = [
         "MAAS_API_KEY",
         "DEEPSEEK_API_KEY",
-        "MODEL_API_KEY",
         "MODEL_NAME",
         "MODEL_URL",
     ]

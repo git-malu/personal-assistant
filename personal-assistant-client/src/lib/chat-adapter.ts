@@ -49,7 +49,6 @@ export const chatAdapter: ChatModelAdapter = {
       const headers: Record<string, string> = {
         Accept: "text/event-stream",
         "Content-Type": "application/json",
-        "Authorization": "Bearer pa-dev-api-key-2026",
         "x-hw-agentarts-session-id": getSessionId(),
       };
 

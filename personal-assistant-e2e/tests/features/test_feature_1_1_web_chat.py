@@ -58,13 +58,10 @@ def _start_service(
 ) -> subprocess.Popen:
     """Start uvicorn as a subprocess. Returns the Popen handle.
 
-    Uses `MAAS_API_KEY=dummy-e2e-test-key` to allow service startup
-    (prevents lifespan crash from missing API key). Real LLM calls
-    will fail (500) but HTTP plumbing is verified.
+    LLM keys are resolved at invocation time through Agent Identity, so
+    subprocess startup does not require local API key environment variables.
     """
     merged_env = os.environ.copy()
-    # Default: provide a dummy key to prevent lifespan crash
-    merged_env.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
     if env:
         merged_env.update(env)
 
@@ -212,9 +209,6 @@ async def test_app_client(fake_handler):
     Uses patch.object with a real module reference to avoid
     pkgutil.resolve_name errors.
     """
-    os.environ.setdefault("MODEL_API_KEY", "test-key-for-e2e")
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-
     # Import app.main first so the module exists for patching,
     # then use patch.object which takes a real module reference.
     import app.main as app_main

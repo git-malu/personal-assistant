@@ -21,19 +21,18 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
+from app.identity import (  # noqa: E402
+    capture_runtime_context,
+    get_runtime_session_id,
+    get_runtime_user_id,
+    request_runtime_context,
+    runtime_context_scope,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
-    # Validate LLM configuration per config.yaml, with fallback to legacy env vars.
-    from app.llm_config import get_model
-
-    try:
-        get_model()  # validates provider config + api key availability
-    except ValueError as e:
-        raise RuntimeError(f"LLM 配置错误: {e}") from e
-
     # Initialize agent handler
     app.state.agent_handler = get_agent_handler()
 
@@ -61,6 +60,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def agentarts_runtime_context_middleware(request: Request, call_next):
+    """Seed AgentArts SDK runtime context from Gateway headers for each request."""
+
+    with request_runtime_context(request.headers):
+        return await call_next(request)
 
 
 @app.get("/ping")
@@ -98,8 +105,8 @@ async def invocations(request: Request):
 
     message = body.get("message", "")
     stream = body.get("stream", False)
-    user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
-    session_id = request.headers.get("x-hw-agentarts-session-id")
+    user_id = get_runtime_user_id() or "anonymous"
+    session_id = get_runtime_session_id()
     if not session_id:
         raise HTTPException(
             status_code=400,
@@ -115,14 +122,17 @@ async def invocations(request: Request):
         if not message.strip():
             raise HTTPException(status_code=400, detail="message is required")
 
+        runtime_context = capture_runtime_context()
+
         async def event_generator():
             try:
-                async for sse_data in handler.handle_stream(
-                    message=message,
-                    user_id=user_id,
-                    session_id=session_id,
-                ):
-                    yield sse_data
+                with runtime_context_scope(runtime_context):
+                    async for sse_data in handler.handle_stream(
+                        message=message,
+                        user_id=user_id,
+                        session_id=session_id,
+                    ):
+                        yield sse_data
             except Exception as e:
                 logger.error(f"Stream generator error: {e}", exc_info=True)
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"

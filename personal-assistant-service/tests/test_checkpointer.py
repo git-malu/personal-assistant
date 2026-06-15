@@ -243,9 +243,7 @@ class TestConfigPassing:
 
         events = [
             event
-            async for event in handler.handle_stream(
-                message="Test", session_id="s1"
-            )
+            async for event in handler.handle_stream(message="Test", session_id="s1")
         ]
         assert len(events) >= 2, f"Expected >= 2 events, got {len(events)}: {events}"
 
@@ -303,9 +301,7 @@ class TestContextRetention:
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
 
         # Session A
-        await handler.handle(
-            message="Hello", user_id="user-1", session_id="session-a"
-        )
+        await handler.handle(message="Hello", user_id="user-1", session_id="session-a")
         # Session B — same user, different session
         await handler.handle(
             message="Hello again", user_id="user-1", session_id="session-b"

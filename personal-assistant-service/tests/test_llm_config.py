@@ -1,11 +1,11 @@
 """Unit tests for app.llm_config."""
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app.llm_config
+from app.identity import MissingAgentIdentityTokenError, runtime_context_scope
 
 
 @pytest.fixture(autouse=True)
@@ -16,17 +16,17 @@ def reset_config_cache():
     app.llm_config._config = None
 
 
-# ── Tests with valid config.yaml ──────────────────────────────────────────
+# Valid config tests
 
 
-def test_get_model_with_valid_config_and_env():
-    """get_model() returns BaseChatModel when config.yaml exists and env is set."""
+def test_get_model_with_valid_config_and_agent_identity():
+    """get_model() returns BaseChatModel using Agent Identity API key provider."""
     mock_yaml = {
         "llm": {
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
@@ -36,7 +36,7 @@ def test_get_model_with_valid_config_and_env():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MAAS_API_KEY": "test-maas-key"}),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-maas-key"),
         patch("app.llm_config.init_chat_model") as mock_init,
     ):
         mock_model = MagicMock()
@@ -52,6 +52,61 @@ def test_get_model_with_valid_config_and_env():
         )
 
 
+def test_resolve_llm_api_key_uses_sdk_client_when_model_is_built():
+    """LLM API key lookup is scoped to the selected provider when needed."""
+
+    identity_client = MagicMock()
+    identity_client.get_resource_api_key.return_value = "model-api-key"
+
+    with (
+        patch(
+            "app.llm_config.IdentityClient",
+            return_value=identity_client,
+        ),
+        runtime_context_scope(workload_access_token="workload-token"),
+    ):
+        assert app.llm_config._resolve_llm_api_key("MAAS_API_KEY") == "model-api-key"
+
+    identity_client.get_resource_api_key.assert_called_once_with(
+        provider_name="MAAS_API_KEY",
+        workload_access_token="workload-token",
+    )
+
+
+def test_get_model_prefers_env_api_key_for_local_debug(monkeypatch):
+    """Local debug may use provider-name env vars before Agent Identity."""
+    monkeypatch.setenv("MAAS_API_KEY", "local-debug-key")
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_provider": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch(
+            "app.llm_config._resolve_llm_api_key",
+            return_value="identity-key",
+        ) as mock_resolve,
+        patch("app.llm_config.init_chat_model") as mock_init,
+    ):
+        app.llm_config.get_model()
+
+    mock_resolve.assert_not_called()
+    mock_init.assert_called_once_with(
+        model="openai:deepseek-v4-pro",
+        base_url="https://api.modelarts-maas.com/openai/v1",
+        api_key="local-debug-key",
+    )
+
+
 def test_get_model_uses_default_provider():
     """get_model() without provider arg uses llm.default from config."""
     mock_yaml = {
@@ -59,12 +114,12 @@ def test_get_model_uses_default_provider():
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
                 "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "api_key_provider": "DEEPSEEK_API_KEY",
                     "model": "deepseek-chat",
                     "base_url": "https://api.deepseek.com",
                 },
@@ -74,7 +129,7 @@ def test_get_model_uses_default_provider():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MAAS_API_KEY": "test-maas-key"}),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-maas-key"),
         patch("app.llm_config.init_chat_model") as mock_init,
     ):
         app.llm_config.get_model()
@@ -91,12 +146,12 @@ def test_get_model_with_explicit_provider():
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
                 "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "api_key_provider": "DEEPSEEK_API_KEY",
                     "model": "deepseek-chat",
                     "base_url": "https://api.deepseek.com",
                 },
@@ -106,7 +161,7 @@ def test_get_model_with_explicit_provider():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-deepseek-key"}),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-deepseek-key"),
         patch("app.llm_config.init_chat_model") as mock_init,
     ):
         app.llm_config.get_model(provider="deepseek")
@@ -118,14 +173,14 @@ def test_get_model_with_explicit_provider():
         )
 
 
-def test_get_model_missing_api_key_raises():
-    """get_model() raises ValueError when the required api_key env var is missing."""
+def test_get_model_missing_agent_identity_key_raises():
+    """get_model() raises ValueError when Agent Identity cannot return a key."""
     mock_yaml = {
         "llm": {
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
@@ -135,8 +190,11 @@ def test_get_model_missing_api_key_raises():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {}, clear=True),
-        pytest.raises(ValueError, match="MAAS_API_KEY"),
+        patch(
+            "app.llm_config._resolve_llm_api_key",
+            side_effect=MissingAgentIdentityTokenError("boom"),
+        ),
+        pytest.raises(ValueError, match="Agent Identity"),
     ):
         app.llm_config.get_model()
 
@@ -148,7 +206,7 @@ def test_get_model_unknown_provider_raises():
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
@@ -158,65 +216,56 @@ def test_get_model_unknown_provider_raises():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MAAS_API_KEY": "test-key"}),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-key"),
         pytest.raises(ValueError, match="unknown"),
     ):
         app.llm_config.get_model(provider="unknown")
 
 
-# ── Fallback tests (config.yaml absent) ──────────────────────────────────
+# Missing config tests
 
 
-def test_fallback_when_config_absent():
-    """When config.yaml is absent, fallback to MODEL_URL/MODEL_API_KEY/MODEL_NAME."""
+def test_missing_config_raises_without_env_fallback():
+    """When config.yaml is absent, fail closed instead of reading env API keys."""
     with (
         patch("pathlib.Path.exists", return_value=False),
-        patch.dict(
-            os.environ,
-            {
-                "MODEL_API_KEY": "test-fallback-key",
-                "MODEL_NAME": "custom-model",
-                "MODEL_URL": "https://custom.api.com/v1",
-            },
-        ),
         patch("app.llm_config.init_chat_model") as mock_init,
+        pytest.raises(ValueError, match="llm providers"),
     ):
         app.llm_config.get_model()
 
-        mock_init.assert_called_once_with(
-            model="openai:custom-model",
-            base_url="https://custom.api.com/v1",
-            api_key="test-fallback-key",
-        )
+    mock_init.assert_not_called()
 
 
-def test_fallback_uses_defaults():
-    """When MODEL_NAME and MODEL_URL are not set, uses built-in defaults."""
+def test_config_with_no_llm_section_raises():
+    """When config.yaml exists but has no llm section, fail closed."""
+    mock_yaml = {"other_section": {}}
     with (
-        patch("pathlib.Path.exists", return_value=False),
-        patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}),
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
         patch("app.llm_config.init_chat_model") as mock_init,
+        pytest.raises(ValueError, match="llm providers"),
     ):
         app.llm_config.get_model()
 
-        mock_init.assert_called_once_with(
-            model="openai:deepseek-v4-pro",
-            base_url="https://api.modelarts-maas.com/openai/v1",
-            api_key="test-key",
-        )
+    mock_init.assert_not_called()
 
 
-def test_fallback_missing_api_key_raises():
-    """When config.yaml absent and MODEL_API_KEY not set, raises ValueError."""
+def test_config_with_llm_but_no_providers_raises():
+    """When config.yaml has llm section but no providers, fail closed."""
+    mock_yaml = {"llm": {"default": "maas"}}
     with (
-        patch("pathlib.Path.exists", return_value=False),
-        patch.dict(os.environ, {}, clear=True),
-        pytest.raises(ValueError, match="MODEL_API_KEY"),
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch("app.llm_config.init_chat_model") as mock_init,
+        pytest.raises(ValueError, match="llm providers"),
     ):
         app.llm_config.get_model()
 
+    mock_init.assert_not_called()
 
-# ── Caching ───────────────────────────────────────────────────────────────
+
+# Caching tests
 
 
 def test_config_cached():
@@ -226,7 +275,7 @@ def test_config_cached():
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
@@ -236,7 +285,7 @@ def test_config_cached():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml) as mock_load,
-        patch.dict(os.environ, {"MAAS_API_KEY": "test-key"}),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-key"),
         patch("app.llm_config.init_chat_model"),
     ):
         app.llm_config.get_model()
@@ -246,56 +295,22 @@ def test_config_cached():
         assert mock_load.call_count == 1
 
 
-# ── Edge cases ───────────────────────────────────────────────────────────
+# Multi-provider failure tests
 
 
-def test_config_with_no_llm_section_falls_back():
-    """When config.yaml exists but has no llm section, use fallback."""
-    mock_yaml = {"other_section": {}}
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}),
-        patch("app.llm_config.init_chat_model") as mock_init,
-    ):
-        app.llm_config.get_model()
-
-        mock_init.assert_called_once()
-        call_kwargs = mock_init.call_args[1]
-        # Model name uses default since MODEL_NAME is not set
-        assert "openai:deepseek-v4-pro" in str(call_kwargs["model"])
-
-
-def test_config_with_llm_but_no_providers_falls_back():
-    """When config.yaml has llm section but no providers, use fallback."""
-    mock_yaml = {"llm": {"default": "maas"}}
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}),
-        patch("app.llm_config.init_chat_model") as mock_init,
-    ):
-        app.llm_config.get_model()
-
-        mock_init.assert_called_once()
-
-
-# ── Fallback to alternative provider (multi-provider) ────────────────────
-
-
-def test_fallback_to_alternative_provider_when_default_key_missing():
-    """When default key is missing but alt has one, falls back and warns."""
+def test_default_provider_missing_key_does_not_fallback_to_alternative_provider():
+    """When the selected default provider key is missing, fail closed."""
     mock_yaml = {
         "llm": {
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
                 "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "api_key_provider": "DEEPSEEK_API_KEY",
                     "model": "deepseek-chat",
                     "base_url": "https://api.deepseek.com",
                 },
@@ -305,119 +320,97 @@ def test_fallback_to_alternative_provider_when_default_key_missing():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-deepseek-key"}, clear=True),
+        patch(
+            "app.llm_config._resolve_llm_api_key",
+            side_effect=MissingAgentIdentityTokenError("maas unavailable"),
+        ),
         patch("app.llm_config.init_chat_model") as mock_init,
-        patch.object(app.llm_config.logger, "warning") as mock_warning,
-    ):
-        mock_model = MagicMock()
-        mock_init.return_value = mock_model
-
-        result = app.llm_config.get_model()
-
-        assert result is mock_model
-        mock_init.assert_called_once_with(
-            model="openai:deepseek-chat",
-            base_url="https://api.deepseek.com",
-            api_key="test-deepseek-key",
-        )
-        # Verify warnings were logged (scanning + fallback)
-        assert mock_warning.call_count >= 2
-        # The fallback warning should mention "default" (None uses default provider)
-        fallback_calls = [
-            c for c in mock_warning.call_args_list
-            if "Auto-falling back" in c.args[0]
-        ]
-        assert len(fallback_calls) == 1
-        assert "To use the default provider" in fallback_calls[0].args[0]
-
-
-def test_explicit_provider_with_missing_key_falls_back():
-    """Explicit provider key missing, alt key set → fallback says 'requested'."""
-    mock_yaml = {
-        "llm": {
-            "default": "maas",
-            "providers": {
-                "maas": {
-                    "api_key_env": "MAAS_API_KEY",
-                    "model": "deepseek-v4-pro",
-                    "base_url": "https://api.modelarts-maas.com/openai/v1",
-                },
-                "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
-                    "model": "deepseek-chat",
-                    "base_url": "https://api.deepseek.com",
-                },
-            },
-        },
-    }
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-deepseek-key"}, clear=True),
-        patch("app.llm_config.init_chat_model") as mock_init,
-        patch.object(app.llm_config.logger, "warning") as mock_warning,
-    ):
-        mock_model = MagicMock()
-        mock_init.return_value = mock_model
-
-        result = app.llm_config.get_model(provider="maas")
-
-        assert result is mock_model
-        mock_init.assert_called_once_with(
-            model="openai:deepseek-chat",
-            base_url="https://api.deepseek.com",
-            api_key="test-deepseek-key",
-        )
-        # The fallback warning should mention "requested" (not "default")
-        fallback_calls = [
-            c for c in mock_warning.call_args_list
-            if "Auto-falling back" in c.args[0]
-        ]
-        assert len(fallback_calls) == 1
-        assert "To use the requested provider" in fallback_calls[0].args[0]
-
-
-def test_all_providers_fail_raises_unified_error():
-    """2+ providers configured, none have keys → raises unified Chinese error."""
-    mock_yaml = {
-        "llm": {
-            "default": "maas",
-            "providers": {
-                "maas": {
-                    "api_key_env": "MAAS_API_KEY",
-                    "model": "deepseek-v4-pro",
-                    "base_url": "https://api.modelarts-maas.com/openai/v1",
-                },
-                "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
-                    "model": "deepseek-chat",
-                    "base_url": "https://api.deepseek.com",
-                },
-            },
-        },
-    }
-    with (
-        patch("pathlib.Path.exists", return_value=True),
-        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {}, clear=True),
-        pytest.raises(ValueError, match="没有可用的 LLM provider"),
+        pytest.raises(ValueError, match="Agent Identity"),
     ):
         app.llm_config.get_model()
+
+    mock_init.assert_not_called()
+
+
+def test_explicit_provider_missing_key_does_not_fallback():
+    """Explicit provider key missing; do not fall back to another provider."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_provider": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_provider": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch(
+            "app.llm_config._resolve_llm_api_key",
+            side_effect=MissingAgentIdentityTokenError("maas unavailable"),
+        ),
+        patch("app.llm_config.init_chat_model") as mock_init,
+        pytest.raises(ValueError, match="Agent Identity"),
+    ):
+        app.llm_config.get_model(provider="maas")
+
+    mock_init.assert_not_called()
+
+
+def test_selected_provider_failure_raises_agent_identity_error():
+    """Selected provider failure raises the unified Agent Identity error."""
+    mock_yaml = {
+        "llm": {
+            "default": "maas",
+            "providers": {
+                "maas": {
+                    "api_key_provider": "MAAS_API_KEY",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.modelarts-maas.com/openai/v1",
+                },
+                "deepseek": {
+                    "api_key_provider": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+            },
+        },
+    }
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
+        patch(
+            "app.llm_config._resolve_llm_api_key",
+            side_effect=MissingAgentIdentityTokenError("boom"),
+        ) as mock_get_key,
+        pytest.raises(ValueError, match="Agent Identity"),
+    ):
+        app.llm_config.get_model()
+    mock_get_key.assert_called_once_with("MAAS_API_KEY")
 
 
 def test_default_provider_works_no_fallback():
-    """When default provider's key IS set, normal behavior: no fallback, no warnings."""
+    """When default provider's Agent Identity key works, use it normally."""
     mock_yaml = {
         "llm": {
             "default": "maas",
             "providers": {
                 "maas": {
-                    "api_key_env": "MAAS_API_KEY",
+                    "api_key_provider": "MAAS_API_KEY",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.modelarts-maas.com/openai/v1",
                 },
                 "deepseek": {
-                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "api_key_provider": "DEEPSEEK_API_KEY",
                     "model": "deepseek-chat",
                     "base_url": "https://api.deepseek.com",
                 },
@@ -427,9 +420,8 @@ def test_default_provider_works_no_fallback():
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch("app.llm_config.yaml.safe_load", return_value=mock_yaml),
-        patch.dict(os.environ, {"MAAS_API_KEY": "test-maas-key"}, clear=True),
+        patch("app.llm_config._resolve_llm_api_key", return_value="test-maas-key"),
         patch("app.llm_config.init_chat_model") as mock_init,
-        patch.object(app.llm_config.logger, "warning") as mock_warning,
     ):
         mock_model = MagicMock()
         mock_init.return_value = mock_model
@@ -442,5 +434,3 @@ def test_default_provider_works_no_fallback():
             base_url="https://api.modelarts-maas.com/openai/v1",
             api_key="test-maas-key",
         )
-        # No fallback-related warnings should be logged when default works
-        mock_warning.assert_not_called()

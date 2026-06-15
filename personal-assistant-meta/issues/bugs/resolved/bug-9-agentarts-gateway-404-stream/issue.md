@@ -2,7 +2,7 @@
 
 ## Motivation
 
-部署前端（Netlify: `https://agentarts-personal-assistant.netlify.app`）和后端（AgentArts Runtime, Gateway `https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com`）后，浏览器发送 `GET /invocations/stream?q=hello%3F` 时返回 **404 Not Found** 且 **无 CORS 响应头**：
+部署前端（Netlify: `https://agentarts-personal-assistant.netlify.app`）和后端（AgentArts Runtime, Gateway `https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com`）后，浏览器发送 `GET /invocations/stream?q=hello%3F` 时返回 **404 Not Found** 且 **无 CORS 响应头**：
 
 ```
 Access to fetch at 'https://defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com/invocations/stream?q=hello%3F'
