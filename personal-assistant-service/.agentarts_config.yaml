@@ -18,7 +18,7 @@ agents:
     runtime:
       arch: arm64
       agent_gateway_id: null
-      agent_id: 6aded8c0-e2a6-4878-8553-7deac60b0dd4
+      agent_id: 5009bb44-518d-4613-8aee-4b6af2daac81
       execution_agency_name: null
       invoke_config:
         protocol: HTTP
@@ -32,17 +32,18 @@ agents:
           subnet_id: null
           security_group_id: []
       identity_configuration:
-        authorizer_type: API_KEY
+        authorizer_type: CUSTOM_JWT
         authorizer_configuration:
           custom_jwt:
-            discovery_url: null
-            allowed_audience: []
+            discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
+            allowed_audience:
+            - 3a99a511-926c-475c-b6bc-325a037f574d
             allowed_clients: []
             allowed_scopes: []
           key_auth:
             api_keys:
-            - api_key: <agentarts-gateway-api-key>
-              api_key_name: dev-key-placeholder
+            - api_key: pa-dev-api-key-2026
+              api_key_name: dev-key
       observability:
         tracing:
           enabled: true
@@ -54,10 +55,28 @@ agents:
         url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
         commands: []
       environment_variables:
+      - key: DEEPSEEK_API_KEY
+        value: ${DEEPSEEK_API_KEY}
+      - key: MODEL_API_KEY
+        value: ${DEEPSEEK_API_KEY}
+      - key: MODEL_NAME
+        value: deepseek-v4-pro
+      - key: MODEL_URL
+        value: https://api.modelarts-maas.com/openai/v1
       - key: AGENTARTS_REGION
         value: cn-southwest-2
       - key: CORS_ALLOWED_ORIGINS
         value: https://resource-governance.cloud,https://agentarts-personal-assistant.netlify.app
+      - key: M365_CLIENT_ID
+        value: ${M365_CLIENT_ID}
+      - key: M365_CLIENT_SECRET
+        value: ${M365_CLIENT_SECRET}
+      - key: M365_TENANT_ID
+        value: ${M365_TENANT_ID}
+      - key: HUAWEICLOUD_SDK_AK
+        value: ${HUAWEICLOUD_SDK_AK}
+      - key: HUAWEICLOUD_SDK_SK
+        value: ${HUAWEICLOUD_SDK_SK}
       tags:
       - key: app
         value: personal-assistant

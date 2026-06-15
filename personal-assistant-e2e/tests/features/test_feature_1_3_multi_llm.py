@@ -269,26 +269,6 @@ class TestScenario1_DefaultProviderMaaS:
         finally:
             _stop_service(proc)
 
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles mount removed, "
-               "GET / now returns 404 by design."
-    )
-    def test_static_files_endpoint_serves_html(self, http_client):
-        """GET / returns HTML (static files served).
-
-        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
-        """
-        proc = _start_service(self.PORT)
-        try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/")
-            # Static mount should serve index.html
-            assert resp.status_code == 200
-            content_type = resp.headers.get("content-type", "").lower()
-            assert "text/html" in content_type
-        finally:
-            _stop_service(proc)
-
-
 # ── Scenario 2: 切换 DeepSeek 对话正常 ────────────────────────────────
 
 

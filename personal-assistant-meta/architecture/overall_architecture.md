@@ -179,6 +179,8 @@ runtime:
 
 > 推荐生产环境使用 **Custom JWT** 方式，通过 Microsoft Entra ID 或自有 OIDC IdP 提供用户认证。
 
+**Gateway Header 注入**：除用户身份 header（`X-HW-AgentGateway-User-Id`）外，AgentArts Gateway 在转发请求时还会注入 `X-HW-AgentGateway-Workload-Access-Token`——Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。后端提取该 token 存入 `AgentArtsRuntimeContext` 后，Outbound 认证装饰器（如 `@require_access_token`）可直接使用，无需容器自行从 `.agent_identity.json` 走本地认证流程。详见 [backend_architecture.md §2.3](backend_architecture.md#23-agentarts-gateway-header-注入)。
+
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 
 AgentArts Identity SDK 提供三种 Outbound 认证模式：
@@ -665,29 +667,32 @@ curl -X POST https://<runtime-domain>/invocations \
 
 ```
 personal-assistant/
-├── .agentarts_config.yaml          # AgentArts 部署配置
-├── Dockerfile                       # ARM64 镜像
-├── config.yaml                      # LLM Provider 配置（新增）
-├── pyproject.toml                   # Python 依赖 + ruff 配置
+├── .agentarts_config.yaml          # AgentArts 部署配置（位于 personal-assistant-service/）
+├── Dockerfile                       # ARM64 镜像（位于 personal-assistant-service/）
+├── config.yaml                      # LLM Provider 配置 ✅ 已实现
+├── pyproject.toml                   # Python 依赖 + ruff 配置（位于 personal-assistant-service/）
 ├── uv.lock                           # 确定性锁文件
-├── app/
-│   ├── main.py                      # FastAPI 应用入口 + 路由定义
-│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
-│   ├── llm_config.py                # LLM Provider 配置加载（新增）
-│   ├── memory.py                    # Memory 集成
-│   ├── feishu_adapter.py            # 飞书消息解析 + 回复
-│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
-│   └── tools/
-│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation)
-│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2 User Federation)
-│       ├── internal_tools.py        # 内部 API 工具 (API Key M2M)
-│       └── cloud_tools.py           # 云资源工具 (STS M2M)
-├── web/                              # Web Chat 前端（独立项目）
+├── app/                              # （位于 personal-assistant-service/）
+│   ├── main.py                      # FastAPI 应用入口 + 路由定义 ✅ 已实现
+│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + ToolNode）✅ 已实现
+│   ├── llm_config.py                # LLM Provider 配置加载 ✅ 已实现
+│   ├── auth.py                      # Inbound 认证中间件 ✅ 已实现
+│   ├── playground.py                # Chainlit Playground ✅ 已实现
+│   ├── memory.py                    # Memory 集成 [Planned — Feature 2]
+│   ├── feishu_adapter.py            # 飞书消息解析 + 回复 [Planned — Feature 5]
+│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID) [已废弃 — Feature 4 改由前端 PKCE]
+│   └── tools/                       # 外部工具集成
+│       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
+│       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2 User Federation) ✅ Feature 10a
+│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation) [Planned — Feature 6]
+│       ├── internal_tools.py        # 内部 API 工具 (API Key M2M) [Planned — Feature 7]
+│       └── cloud_tools.py           # 云资源工具 (STS M2M) [Planned — Feature 8]
+├── personal-assistant-client/        # Web Chat 前端 ✅ 已实现（独立目录，Vite + React + assistant-ui）
 │   └── ...
 └── README.md
 ```
 
-> 前端不再作为 `adapters/` 目录放在同一仓库。Web Chat 前端为独立项目，飞书和 OfficeClaw 走各自平台的配置。
+> 注：`personal-assistant-service/` 和 `personal-assistant-client/` 为独立子目录，非服务端子目录。标 `[Planned]` 的文件尚未实现，将在对应 Feature 中交付。
 
 ---
 
@@ -695,6 +700,7 @@ personal-assistant/
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
+| Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Mail (Microsoft Graph) | OAuth 2.0 | USER_FEDERATION |
 | Microsoft 用户 | JWT (Microsoft Entra ID) | GitHub API | OAuth 2.0 | USER_FEDERATION |
 | Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Calendar | OAuth 2.0 | USER_FEDERATION |
 | 企业员工 | JWT (Okta/Entra ID) | 内部 CRM | API Key | M2M |
@@ -707,6 +713,7 @@ personal-assistant/
 
 | 文档 | 路径 |
 |------|------|
+| **Microsoft Entra ID (OIDC) 配置** | `architecture/devops/microsoft-entra-id-setup.md` |
 | **前端架构** | `architecture/frontend_architecture.md` |
 | **后端架构** | `architecture/backend_architecture.md` |
 | AgentArts 平台参考 | `architecture/cloud-service/agentarts.md` |

@@ -1,7 +1,7 @@
 # Personal Assistant — LLM Provider 配置
 # 详见 ADR-011: 多 LLM Provider 可配置架构
 llm:
-  default: maas  # 默认 provider。可选值：maas | deepseek
+  default: deepseek  # 默认 provider。可选值：maas | deepseek
   providers:
     maas:
       base_url: https://api.modelarts-maas.com/openai/v1

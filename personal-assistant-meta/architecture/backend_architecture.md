@@ -155,6 +155,31 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 
 > **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
 
+### 2.3 AgentArts Gateway Header 注入
+
+AgentArts Gateway 在转发请求到 Runtime 容器时，会注入以下 header。后端需在请求处理入口（`main.py` 的 `invocations()` 或 `auth.py`）提取并使用：
+
+| Header | 用途 | 当前状态 |
+|--------|------|----------|
+| `X-HW-AgentGateway-User-Id` | 经 Gateway 认证后的用户 ID（CUSTOM_JWT 模式为 decoded claim，API Key 模式为 key 别名） | ✅ 已提取（`extract_gateway_user_id()`） |
+| `x-hw-agentarts-session-id` | AgentArts Session ID，用于 Memory Session 关联和 LangGraph checkpoint `thread_id` 构造 | ✅ 已提取 |
+| `X-HW-AgentGateway-Workload-Access-Token` | Workload Access Token — Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。Gateway 自动注入，无需容器自行获取 | ⚠️ Chore 5 新增提取 |
+
+**Workload Access Token 数据流**：
+
+```mermaid
+flowchart LR
+    GW["AgentArts Gateway"] -->|"注入 header"| H["X-HW-AgentGateway-Workload-Access-Token"]
+    H -->|"main.py 提取"| S["AgentArtsRuntimeContext.set_workload_access_token()"]
+    S -->|"存入 context"| Ctx["AgentArtsRuntimeContext"]
+    Ctx -->|"读取"| Deco["@require_access_token 装饰器"]
+    Deco -->|"跳过本地 fallback"| ID["Identity Service — 直接使用 token"]
+```
+
+> **Fallback 行为**：若 header 不存在（本地开发环境），不报错，`AgentArtsRuntimeContext` 无 token → SDK 的 `_get_workload_access_token()` 自动 fallback 到本地 `.agent_identity.json` + Identity Service API 调用。不改变现有本地开发体验。
+
+<!-- updated by issue: chore-5-workload-access-token-from-header -->
+
 ---
 
 ## 3. Agent 处理逻辑
@@ -172,12 +197,13 @@ class AgentHandler:
 
     def __init__(self):
         from app.llm_config import get_model
+        from app.tools import build_tools  # ✅ Feature 10a: 工具注册工厂
         self.model = get_model()
         self.checkpointer = self._init_checkpointer()  # 新增
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt="你是 Personal Assistant...",
-            tools=[...],
+            tools=build_tools(),  # ✅ Feature 10a: 动态加载工具
             checkpointer=self.checkpointer,  # ✅ 注入 Checkpointer
         )
 
@@ -312,9 +338,12 @@ async def list_github_issues(owner: str, repo: str, access_token: str = None):
 ```
 
 支持三种 Outbound 模式：
-- **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）
+- **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）。邮件部分（`m365-provider`）由 Feature 10a 实现，详见 [overall_architecture.md §4.2](overall_architecture.md#42-outbound--agent-代表用户调用外部服务)。
 - **M2M**：以 Agent 自身身份调企业内部 API（API Key）
 - **STS**：获取云资源临时凭证（STS Token）
+
+> **Workload Access Token 优化**：生产环境中，AgentArts Gateway 在转发请求时自动注入 `X-HW-AgentGateway-Workload-Access-Token` header（见 §2.3）。后端提取该 token 并存入 `AgentArtsRuntimeContext` 后，`@require_access_token` 等装饰器内部优先从 context 读取，直接使用 Gateway 注入的 token 向 Identity Service 换取 OAuth2 access token，跳过本地 `.agent_identity.json` 的 fallback 流程。本地开发时 header 不存在，行为不变。
+<!-- updated by issue: chore-5-workload-access-token-from-header -->
 
 ### 5.3 Sandbox（代码执行隔离）
 
@@ -361,10 +390,11 @@ personal-assistant/
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/
-│       ├── github_tools.py          # GitHub 工具 (OAuth2)
-│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2)
-│       ├── internal_tools.py        # 内部 API 工具 (API Key)
-│       └── cloud_tools.py           # 云资源工具 (STS)
+│       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
+│       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2) ✅ Feature 10a
+│       ├── github_tools.py          # GitHub 工具 (OAuth2) [Planned]
+│       ├── internal_tools.py        # 内部 API 工具 (API Key) [Planned]
+│       └── cloud_tools.py           # 云资源工具 (STS) [Planned]
 ```
 
 ---

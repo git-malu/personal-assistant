@@ -107,6 +107,107 @@ FastAPI 容器 :8080
 
 Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同：Web Chat 走 SSE + assistant-ui（React，独立部署于 OBS），Playground 走 Chainlit 的 WebSocket 协议（Python 原生，同容器）。
 
+#### 2.1.2 本地开发与网关模拟（Vite Proxy）
+
+在生产环境中，**AgentArts Gateway（API 网关）** 扮演着身份认证与安全过滤的角色。它会拦截请求、校验 Token，并将解析后的用户 ID 通过特有 Header（`X-HW-AgentGateway-User-Id`）透传给后端容器。
+
+为了在本地开发时实现**环境对齐（Environment Parity）**，同时规避浏览器的**同源策略（CORS）**限制，Web Chat 在本地开发阶段引入了 **Vite Proxy** 机制：
+
+##### 1) 架构与数据流向
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 开发者 (Browser)
+    participant Proxy as Vite Proxy<br/>(:5173 / Node.js)
+    participant Backend as FastAPI<br/>(:8080 / Uvicorn)
+
+    User->>Proxy: POST /invocations<br/>[Header] Authorization: Bearer eyJ...
+    Note over Proxy: 1. 识别代理规则<br/>2. 绕过浏览器 CORS<br/>3. 注入模拟身份 Header
+    Proxy->>Backend: POST http://localhost:8080/invocations<br/>[Header] Authorization: Bearer eyJ...<br/>[Header] X-HW-AgentGateway-User-Id: dev-user
+    Backend-->>Proxy: 返回流式数据 (SSE)
+    Proxy-->>User: 透传流式数据 (SSE)
+```
+
+##### 2) 核心实现原理
+
+- **同源伪装（避开 CORS）**：前端代码中所有发往后端的 API 请求（如 `/invocations`），都以相对路径形式发出，即请求 `http://localhost:5173/invocations`（与前端自身同源）。浏览器检测到请求同源，**不会触发 CORS 校验，亦不会发起 OPTIONS 预检请求**。
+- **Node.js 侧转发与 Header 注入（Cosplay 华为云网关）**：运行在开发机上的 Vite 进程（Node.js 端）拦截到 `/invocations` 路径请求，在服务器端将其转发至真正的后端 `http://localhost:8080/invocations`。在转发之前，Vite 的 `vite.config.ts` 会利用 `proxyReq.setHeader` 钩子，强行在请求头中注入 `X-HW-AgentGateway-User-Id: dev-user`。
+- **后端 Uvicorn**：无论是本地还是云端，直接读取 `X-HW-AgentGateway-User-Id` 头即可，无感知调用方是 Vite 还是真实的 AgentArts Gateway。
+
+#### 2.1.3 Landing Page
+
+未登录用户访问 Web Chat 时展示遵循 Apple Design Language 的 Landing Page，替代原有的"请登录以开始对话"占位文本。
+
+**架构**：
+
+App.tsx 通过 AuthGuard 将 MSAL 认证流程中的三种状态分流：
+
+```mermaid
+flowchart TB
+    MAIN["main.tsx → MsalProvider → App.tsx"]
+    MAIN --> GUARD["AuthGuard"]
+    GUARD -->|"MSAL Startup / HandleRedirect"| LOADING["LoadingState"]
+    GUARD -->|"MSAL Idle (None)"| AUTH{"isAuthenticated?"}
+    AUTH -->|"false"| LP["LandingPage<br/>(lazy loaded)"]
+    AUTH -->|"true"| CP["ChatPage<br/>(lazy loaded)"]
+```
+
+**AuthGuard 逻辑**：
+
+- 检查 MSAL `InteractionStatus` 枚举：`Startup`、`HandleRedirect` 或未认证期间任何非 `None` 状态 → 渲染 LoadingState
+- 排除 `acquireToken`（静默 token 刷新不触发 loading）
+- MSAL idle 后交由 `isAuthenticated` 决定渲染 LandingPage 或 ChatPage
+
+**Landing Page Tile 序列**（自上而下，全出血，tile 间 0 gap，颜色变化即为分割线）：
+
+| Order | Tile | 背景色 | 内容 |
+|-------|------|--------|------|
+| — | GlobalNav | `#000000` (surface-black) | 44px 纯黑导航栏，右侧 "登录" 按钮；≤833px 时仅保留登录按钮 |
+| 1 | LandingHero | `#ffffff` | 品牌名 + 价值主张（hero-display 56px）+ 双 CTA Pill Button |
+| 2 | CapabilityGrid | `#f5f5f7` (parchment) | Section headline + 4 格能力卡片（日程/邮件/笔记/任务） |
+| 3 | FeatureTile (Dark) | `#272729` (tile-1) | 核心能力展示（display-lg 40px headline + body 17px 描述 + CTA） |
+| 4 | FeatureTile (Light) | `#ffffff` | 核心能力展示 |
+| 5 | FeatureTile (Parchment) | `#f5f5f7` | 核心能力展示 |
+| 6 | ClosingCTA | `#2a2a2c` (tile-2) | "立即开始" + 大号 Pill CTA |
+| 7 | LandingFooter | `#f5f5f7` | 链接列 + 法律信息 |
+
+**Code Splitting 策略**：
+
+- `ChatPage` 和 `LandingPage` 均通过 `React.lazy()` + `<Suspense>` 实现按需加载
+- `RuntimeProvider`（含 assistant-ui 依赖）仅在 ChatPage 内挂载，未登录用户永不加载
+- `LoadingState` 组件同时作为 AuthGuard transition 和 Suspense fallback 的 loading 指示器
+
+**组件清单**：
+
+| 组件 | 职责 |
+|------|------|
+| `AuthGuard` | MSAL InteractionStatus 认证状态 gate |
+| `LoadingState` | Apple-style 简约 spinner（含 `role="status"` accessibility） |
+| `ChunkErrorBoundary` | React.lazy() chunk 加载失败降级 UI（Error Boundary） |
+| `GlobalNav` | 44px 纯黑全局导航栏，右侧 "登录" 按钮 |
+| `LandingPage` | 顶层容器，编排 GlobalNav + tile 序列，注入 login CTA handler |
+| `LandingHero` | 首屏 typography-first hero（hero-display 56px + 双 CTA） |
+| `FeatureTile` | 可复用全出血 tile（variant: light/parchment/dark/dark-2） |
+| `CapabilityCard` | 单张能力卡片（store-utility-card 样式，18px 圆角，hairline 边框） |
+| `CapabilityGrid` | 响应式能力卡片网格（1/2/4 列） |
+| `ClosingCTA` | FeatureTile dark-2 变体包装 |
+| `LandingFooter` | parchment 背景页脚 |
+| `ChatPage` | RuntimeProvider + Thread（从 App.tsx 提取） |
+
+**设计 Token**：
+
+- `--primary: #0066cc`（Action Blue，hex 格式）
+- 新增 Tailwind CSS v4 `@theme` 表面颜色 token：`canvas-parchment`、`surface-tile-1`、`surface-tile-2`、`surface-tile-3`、`surface-black`
+- Apple 排版通过 `.landing-page` scope 限制，不污染全局（不覆写 `html, body` 或 `font-weight-medium`）
+- Body 基准字号 17px（仅 `.landing-page` 作用域内）
+- 全出血 tile：`rounded-none`，无阴影，无渐变
+- shadcn Button 新增 `apple-primary` / `apple-secondary` pill 变体（`rounded-full`、`h-auto`、`active:scale-95`，使用 `bg-primary` CSS variable 引用）
+
+**设计系统依据**：[`DESIGN.md`](../../../personal-assistant-client/DESIGN.md)
+
+> **注意**：本节 §2.1 描述的 OAuth callback / JWT Cookie 认证模式反映的是早期后端驱动的 auth 流程，与当前 MSAL-based SPA 认证（`@azure/msal-react` redirect + zustand token store）不一致。应在 follow-up issue 中更新 §2.1 以反映当前的 MSAL + zustand 架构。
+
 ### 2.2 飞书直连
 
 **接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`

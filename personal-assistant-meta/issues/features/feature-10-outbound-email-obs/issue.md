@@ -1,63 +1,71 @@
 ---
 status: backlog
+parent: feature-10-outbound-email-obs
+split_from: Feature 10 拆分 — 本 issue 仅覆盖邮件部分，OBS 部分见 Feature 10b（待 Feature 8 完成后创建）
 ---
 
-# Feature 10: Outbound Email + OBS（AgentArts Python SDK）
+# Feature 10a: Outbound Email — Microsoft 365 邮件处理
 
-本 Phase 使用 AgentArts Python SDK 实现两个 Outbound 场景：Microsoft 邮件处理（User Federation 模式）和华为云 OBS 文件查询与读取（STS 模式）。两个场景共享 AgentArts Identity SDK 的凭据管理基础设施，通过 `@require_access_token` / `@require_sts_token` 装饰器注入凭据。
+本 Phase 使用 AgentArts Python SDK 实现 Microsoft 邮件处理（User Federation 模式），补齐系统最核心的邮件 Agent 能力。用户通过自然语言对话即可查询 Outlook 邮件、草拟和发送回复。
 
 ---
 
 ## 背景
 
-Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federation 模式，通过 Feature 8（STS Tool）验证了云资源访问模式。本 Phase 直接在成熟的基础设施上扩展两个高价值场景：
+Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID OAuth），建立了用户身份认证体系。本 Phase 在此基础上扩展 Outbound 能力：
 
-- **邮件处理**：用户通过对话查询 Outlook 邮件、草拟和发送回复，补齐系统最核心的邮件 Agent 能力
-- **OBS 文件查询**：用户通过对话浏览和读取 OBS 对象存储中的文件内容，打通 Agent ↔ 云存储的"查看-理解"回路
+- **邮件处理**：用户通过对话查询 Outlook 邮件、草拟和发送回复，让 Personal Assistant 成为真正的邮件 Agent
+- **基础设施奠基**：引入 `agentarts-sdk` Python 包、建立 `app/tools/` 工具目录和 LangGraph ToolNode 注册模式，为后续 Outbound 工具（OBS、Calendar 等）铺路
 
-底层复用 Feature 4（Inbound Identity）和 Feature 1.2（PostgreSQL 表结构），不引入新的基础设施依赖。
+底层复用 Feature 4（Inbound Identity）的 OAuth2 基础设施，依赖 Feature 1 的 Agent 骨架和 Web Chat。
 
 ## 范围
 
-### 场景一：Microsoft 邮件处理（User Federation）
+### Microsoft 邮件处理（User Federation）
 
 - AgentArts Identity 创建 `m365-provider` OAuth2 Credential Provider
 - `app/tools/email_tools.py` — Microsoft Graph API 邮件工具函数
   - `list_emails(folder, limit, access_token)` — 列出收件箱/指定文件夹邮件
   - `get_email(email_id, access_token)` — 获取单封邮件详情（正文、附件列表）
   - `send_email(to, subject, body, cc, attachments, access_token)` — 发送邮件（需 Guard 二次确认）
-  - `draft_reply(email_id, body, access_token)` — 草拟回复
+  - `reply_to_email(email_id, body, access_token)` — 直接回复邮件
   - `search_emails(query, access_token)` — 按关键词搜索邮件
 - 工具注册到 LangGraph ToolNode，更新 system prompt
 - 敏感操作 Guard：发送邮件→用户确认
 
-### 场景二：华为云 OBS 文件查询与读取（STS）
+### 基础设施（本 Feature Scope 内）
 
-- 复用 Feature 8 的 `huaweicloud-sts-provider`（IAM Agency + STS Provider）
-- `app/tools/obs_tools.py` — OBS 对象存储工具函数
-  - `list_obs_objects(bucket, prefix, limit, sts_credentials)` — 列出 Bucket 内对象
-  - `get_obs_object(bucket, key, sts_credentials)` — 读取对象内容（文本/JSON/CSV 等可读格式）
-  - `get_obs_object_metadata(bucket, key, sts_credentials)` — 获取对象元数据（大小、类型、修改时间）
-- 工具注册到 LangGraph ToolNode，更新 system prompt
+- `agentarts-sdk` 添加到 `pyproject.toml` 依赖
+- `app/tools/__init__.py` — 工具目录初始化
+- LangGraph ToolNode 工具注册模式建立
+- AgentArts Identity SDK 凭证注入基础设施（`@require_access_token` 装饰器集成）
 
 ## 不涉及
 
+- OBS 文件查询与读取（后续 Feature 10b）
 - OfficeClaw / 飞书渠道适配（渠道无关，Agent 层复用）
-- OBS 文件写入/删除（只读场景，符合 MVP 最小权限原则）
 - 邮件附件上传/下载（后续可扩展）
 - Calendar 工具（后续可扩展）
+- STS Provider / `@require_sts_token`（Feature 8 后续实现）
 
 ## 任务拆解
 
-### 10.1 Microsoft 365 OAuth2 Provider
+### 10a.1 基础设施准备
+
+- [ ] `pyproject.toml` 添加 `agentarts-sdk` 依赖
+- [ ] `app/tools/__init__.py` — 创建工具目录
+- [ ] `app/handlers/agent_handler.py` — 引入 LangGraph ToolNode，支持动态工具注册
+- [ ] 验证 `@require_access_token` 装饰器在当前代码库中的集成路径
+
+### 10a.2 Microsoft 365 OAuth2 Provider
 
 - [ ] Azure Portal → Microsoft Entra ID → 应用注册（或复用 Feature 4 的 App Registration）
-  - 添加 Microsoft Graph API 权限：`Mail.Read`, `Mail.Send`, `Mail.ReadWrite`
+  - 添加 Microsoft Graph API 权限：`Mail.Read`, `Mail.Send`
   - 获取 client_id / client_secret
 - [ ] 通过 AgentArts Python SDK 创建 `m365-provider` OAuth2 Credential Provider
   ```python
   from agentarts.sdk import IdentityClient
-  from agentarts.sdk.identity import OAuth2Vendor
+  from agentarts.sdk.identity.types import OAuth2Vendor
 
   client = IdentityClient(region="cn-southwest-2")
   client.create_oauth2_credential_provider(
@@ -69,10 +77,10 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
   )
   ```
 
-### 10.2 邮件工具实现
+### 10a.3 邮件工具实现
 
 - [ ] `app/tools/email_tools.py`
-  - 所有函数用 `@require_access_token` 装饰，token 自动注入到 `access_token` 参数（默认 `into="access_token"`）
+  - 所有函数用 `@require_access_token` 装饰，token 自动注入到 `access_token` 参数
   - Microsoft Graph API 基础 URL：`https://graph.microsoft.com/v1.0/me`
   - 使用 `httpx.AsyncClient` 调用 Graph API
   - 示例：
@@ -93,45 +101,34 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
             )
             return resp.json()
     ```
-  - 读操作 scopes：`Mail.Read`；写操作 scopes：`Mail.ReadWrite`, `Mail.Send`
-- [ ] 邮件列表/详情/搜索（读操作）
-- [ ] 邮件发送/草拟回复（写操作 + Guard）
+  - 读操作 scopes：`Mail.Read`；写操作 scopes：`Mail.Send`
+- [ ] `list_emails` — 邮件列表（支持 folder、limit、$filter）
+- [ ] `get_email` — 邮件详情（正文、发件人、收件人、附件列表）
+- [ ] `search_emails` — 关键词搜索（Graph API `$search`）
+- [ ] `send_email` — 发送邮件（写操作 + Guard 二次确认）
+- [ ] `reply_to_email` — 直接回复邮件（返回回复预览，由 Agent 展示给用户）
 - [ ] 单元测试：mock Graph API response
 
-### 10.3 OBS 工具实现
+### 10a.4 工具注册与 System Prompt
 
-- [ ] `app/tools/obs_tools.py`
-  - `@require_sts_token(provider_name="huaweicloud-sts-provider", agency_session_name="personal-assistant-obs-session")`（复用 Feature 8 Provider）
-  - 装饰器自动注入 `sts_credentials: StsCredentials`（含 `access_key_id`, `secret_access_key`, `security_token`, `expiration`）
-  - 使用华为云 `obs` SDK（`ObsClient`）操作 OBS，通过 `sts_credentials` 初始化
-  - 读取对象内容后自动检测文件类型，对文本/JSON/CSV 返回可读字符串
-- [ ] OBS 对象列表/读取/元数据（读操作）
-- [ ] 单元测试：mock OBS client response
+- [ ] LangGraph ToolNode 注册 `list_emails`, `get_email`, `send_email`, `reply_to_email`, `search_emails`
+- [ ] 更新 system prompt，新增邮件能力描述（Agent 知道何时/如何使用邮件工具）
+- [ ] Guard 机制：`send_email` 标记为需要用户确认的写操作
 
-### 10.4 工具注册与 System Prompt
-
-- [ ] LangGraph ToolNode 注册 `list_emails`, `get_email`, `send_email`, `draft_reply`, `search_emails`
-- [ ] LangGraph ToolNode 注册 `list_obs_objects`, `get_obs_object`, `get_obs_object_metadata`
-- [ ] 更新 system prompt，新增邮件 + OBS 能力描述
-- [ ] Guard：`send_email` 标记为需要用户确认的写操作
-
-### 10.5 E2E 验证
+### 10a.5 E2E 验证
 
 - [ ] Web Chat：用户对话 "帮我看看收件箱" → Agent 返回邮件列表
 - [ ] Web Chat：用户对话 "帮我查一下最近关于项目进度的邮件" → Agent 搜索并返回
-- [ ] Web Chat：用户对话 "帮我回张三的邮件，说收到" → Agent 草拟回复内容，用户确认后发送
-- [ ] Web Chat：用户对话 "my-bucket 里有哪些文件" → Agent 返回 OBS 对象列表
-- [ ] Web Chat：用户对话 "帮我读一下 obs-report.json 的内容" → Agent 返回文件内容
-- [ ] 写操作 Guard：发送邮件→弹出确认→用户确认后执行
+- [ ] Web Chat：用户对话 "帮我回张三的邮件，说收到" → Agent 展示回复预览，用户确认后发送
+- [ ] 写操作 Guard：发送邮件 → 弹出确认 → 用户确认后执行
 - [ ] 跨 Session：第二次对话直接查邮件，无需重新授权
 
 ## 依赖
 
-- Feature 1（Agent 骨架 + Web Chat）
-- Feature 2（Memory）— 用户偏好和上下文
-- Feature 4（Inbound Identity）— 用户身份
-- Feature 1.2（PostgreSQL）— `tool_configs` 表
-- Feature 8（STS Tool）— 复用 `huaweicloud-sts-provider`
+- Feature 1（Agent 骨架 + Web Chat）✅ — 已完成
+- Feature 4（Inbound Identity — Microsoft Entra ID OAuth）✅ — 已完成
+- Feature 1.2（PostgreSQL）— 可选，`tool_configs` 表如有则可复用，无则本 Phase 内不依赖
+- Feature 2（Memory）— 可选，跨 Session Memory 如有则可复用，无则本 Phase 内不依赖
 
 ## 参考
 
@@ -147,7 +144,6 @@ Personal Assistant 已经通过 Feature 6（GitHub Tool）验证了 User Federat
 - SDK 导入：
   ```python
   from agentarts.sdk import IdentityClient, require_access_token, require_sts_token, require_api_key
-  from agentarts.sdk.identity import OAuth2Vendor, StsCredentials
+  from agentarts.sdk.identity.types import OAuth2Vendor, StsCredentials
   ```
 - Microsoft Graph API: [List messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages)
-- 华为云 OBS Python SDK: [对象操作](https://support.huaweicloud.com/sdk-python-devg-obs/obs_22_0500.html)

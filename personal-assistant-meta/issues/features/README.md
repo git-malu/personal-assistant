@@ -21,7 +21,8 @@ Personal Assistant 开发计划，15 个 Feature（含 1 个基础设施前置 F
 | [7](feature-7-m2m-tool.md) | 内部 API Tool (M2M) | Agent 调企业内部 API | Feature 1, 4, 1.2 | backlog |
 | [8](feature-8-sts-tool.md) | 云资源 Tool (STS) | Agent 访问 OBS 等云资源 | Feature 1, 4, 1.2 | backlog |
 | [9](feature-9-deployment.md) | 部署上线 + 可观测 | 生产环境 + 三渠道验证 | Feature 1-8, 1.1, 1.2, 10 | backlog |
-| [10](feature-10-outbound-email-obs/issue.md) | Outbound Email + OBS（AgentArts Python SDK） | 邮件处理（Microsoft Graph）+ OBS 文件查询（STS） | Feature 1, 2, 4, 1.2, 8 | backlog |
+| [10a](feature-10-outbound-email-obs/issue.md) | Outbound Email — Microsoft 365 邮件处理 | 邮件工具（Microsoft Graph API）+ AgentArts Identity SDK `@require_access_token` | Feature 1, 4 | ✅ 已实现 |
+| 10b | Outbound OBS 文件查询（STS） | 拆分为独立 issue，待 Feature 8 完成后创建 | Feature 1, 4, 8 | [Planned] |
 | [11](feature-11-github-workflow-terraform-deploy/issue.md) | GitHub Workflow + Terraform 自动化部署 | CI/CD 流水线（GitHub Actions + CDKTF + docker buildx），Client（OBS+CDN）+ Service（AgentArts）自动部署 | Feature 1, 1.1, 1.2, 9 | backlog |
 
 ## 依赖关系

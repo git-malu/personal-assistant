@@ -8,7 +8,7 @@
 personal-assistant-e2e/
 ├── conftest.py         # 共享 fixtures（service/client 启停、health check）
 ├── pyproject.toml      # pytest 配置 + 项目依赖
-│── tests/
+├── tests/
 │   ├── regression/     # 回归测试（按 bug 组织）
 │   └── features/       # 功能 E2E 测试（按 feature 组织）
 ├── AGENTS.md           # E2E 域专用 instructions

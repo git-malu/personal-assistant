@@ -70,12 +70,18 @@ flowchart LR
 
 ### 3.1 邮件处理
 
-- **收件箱摘要**：按优先级汇总未读邮件，提取关键信息（发件人、主题、紧急程度）
-- **草拟回复**：根据上下文草拟邮件回复内容，用户确认后发送
-- **邮件发送**：通过对话撰写并发送邮件，支持指定收件人、抄送和附件
+- **邮件列表**：列出收件箱或指定文件夹中的邮件，支持限制返回数量和筛选条件
+- **邮件详情**：获取单封邮件的完整内容，包括正文、发件人、收件人、附件列表
+- **邮件搜索**：按关键词搜索邮件，利用 Microsoft Graph API `$search` 能力
+- **草拟回复**：根据上下文草拟邮件回复内容，用户确认后执行
+- **邮件发送**：通过对话撰写并发送邮件，支持指定收件人、抄送
 - **敏感操作拦截**：发送邮件等写操作需用户二次确认（Guard 机制）
+- **实现方式**：通过 AgentArts Identity SDK 的 `m365-provider` OAuth2 Credential Provider，以 User Federation 模式调用 Microsoft Graph API。详见 Feature 10a。
+  <!-- updated by issue: feature-10a-outbound-email -->
 
 ### 3.2 云资源查询（OBS）
+
+> **状态**：已拆分至 Feature 10b（待 Feature 8 STS Tool 完成后实现），不在 Feature 10a scope 内。
 
 - **对象浏览**：按 Bucket 和路径前缀列出 OBS 对象存储中的文件
 - **文件读取**：读取 OBS 对象的文本内容，返回可读格式（纯文本、JSON、CSV 等）
@@ -83,6 +89,7 @@ flowchart LR
 - **只读安全**：MVP 阶段仅开放读取操作，不涉及文件写入或删除
 
 > 典型场景：运维人员通过对话 "帮我看看 my-bucket/logs/ 目录下有什么文件" 或 "读取 obs-config.json 的内容" 快速查阅云存储中的文件，无需登录 OBS 控制台。
+  <!-- updated by issue: feature-10a-outbound-email -->
 
 ---
 
@@ -221,7 +228,7 @@ llm:
 | **Phase 1** | 搭建 Agent 骨架：LangGraph chat loop + 本地开发环境 | 本地对话通 |
 | **Phase 2** | 集成 Memory：创建 Memory Space，保存/检索记忆 | 跨 Session 记忆 |
 | **Phase 3** | 配置 Inbound Identity：JWT + API Key 认证 | 用户登录后访问 |
-| **Phase 4** | 实现 Outbound OAuth2 (User Federation)：邮件 Tool | Agent 代用户查邮件 |
-| **Phase 4.5** | 实现 OBS 文件查询 Tool（STS 模式，复用 Feature 8 基础设施） | Agent 浏览和读取 OBS 文件 |
+| **Phase 4** | 实现 Outbound OAuth2 (User Federation)：邮件 Tool | Agent 代用户查/发邮件 |
+| **Phase 4.5** | 实现 OBS 文件查询 Tool（STS 模式，Feature 10b — 待 Feature 8 完成后） | Agent 浏览和读取 OBS 文件 |
 | **Phase 5** | Web Chat 前端：Vite + React + SSE 流式对话 + OAuth 登录 | 浏览器完整对话体验 |
 | **Phase 6** | 部署上线 + 全链路可观测 | 生产可用 |

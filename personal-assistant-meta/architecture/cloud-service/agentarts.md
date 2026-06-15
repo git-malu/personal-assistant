@@ -706,3 +706,191 @@ flowchart TB
 - Memory Space 创建后 API Key 仅返回一次，务必保存。
 - 记忆生成有延迟（文档示例中使用 30s 等待）。
 - 使用 IAM 子账号时需确保有 SWR FullAccess 权限。
+
+---
+
+## 11. CUSTOM_JWT 认证调试排障
+
+本节记录 CUSTOM_JWT（Microsoft Entra ID）认证模式的常见问题和调试经验（2026-06-13 实战总结）。
+
+### 11.1 认证层次：两层 401
+
+AgentArts CUSTOM_JWT 模式有两层认证，产生格式不同的 401 错误：
+
+```mermaid
+flowchart LR
+    CLIENT["客户端<br/>Authorization: Bearer &lt;JWT&gt;"] --> GW["Layer 1: AgentArts Gateway"]
+    GW -->|"JWT 验证失败"| ERR1["401<br/>{'code':401,'message':'Authentication failed!'}"]
+    GW -->|"验证成功"| CONTAINER["Layer 2: FastAPI 容器"]
+    CONTAINER -->|"X-HW-AgentGateway-User-Id<br/>header 缺失"| ERR2["401<br/>{'detail':'Missing X-HW-...'}"]
+    CONTAINER -->|"header 存在"| OK["200 OK"]
+```
+
+| 层次 | 错误格式 | 含义 | 排查方向 |
+|------|---------|------|---------|
+| Gateway | `{"code":401,"data":null,"message":"Authentication failed!"}` | JWT 被 Gateway 拒绝 | 检查 JWT claims（iss/aud/exp）、Gateway 出网能力 |
+| App | `{"detail":"Missing X-HW-AgentGateway-User-Id header"}` | Gateway 通过了但未注入用户 header | 检查调用方是否传了该 header |
+
+⚠️ **关键区分**：Gateway 层 401 说明请求根本没到达容器（容器日志无记录）；App 层 401 说明 Gateway 认证通过了。
+
+### 11.2 Header 来源与职责
+
+```mermaid
+flowchart LR
+    subgraph CLIENT["调用方 (agentarts invoke / curl / 浏览器)"]
+        GEN_SESSION["生成 session-id<br/>(UUID)"]
+        GEN_JWT["提供 JWT<br/>Authorization: Bearer &lt;jwt&gt;"]
+        GEN_UID["提取 sub/oid claim<br/>→ X-HW-AgentGateway-User-Id"]
+    end
+
+    subgraph GATEWAY["AgentArts Gateway"]
+        VALIDATE["① 验证 JWT<br/>- 拉 OIDC Discovery<br/>- 拉 JWKS 公钥<br/>- 验签 + 校验 claims"]
+    end
+
+    subgraph CONTAINER["FastAPI 容器"]
+        APP["POST /invocations<br/>读取 header 使用"]
+    end
+
+    GEN_SESSION -->|"header: x-hw-agentarts-session-id<br/>调用方传入（必填）"| APP
+    GEN_UID -->|"header: X-HW-AgentGateway-User-Id<br/>调用方传入（可选，但 app 需要）"| APP
+    GEN_JWT -->|"header: Authorization"| VALIDATE
+    VALIDATE -->|"✅ 验证通过<br/>转发请求到容器"| APP
+    VALIDATE -->|"❌ 验证失败"| ERR401["401 Authentication failed!"]
+```
+
+| Header | 谁提供 | 必填？ | 说明 |
+|--------|--------|--------|------|
+| `Authorization` | **调用方**传入 | ✅ | `Bearer <JWT>` 或 `Bearer <api-key>` |
+| `x-hw-agentarts-session-id` | **调用方**传入 | ✅ | `agentarts invoke` 自动生成 UUID；浏览器需前端代码生成 |
+| `X-HW-AgentGateway-User-Id` | **调用方**传入 | 否 | Gateway **不会自动注入**。需调用方从 JWT payload 提取 `sub` 或 `oid` claim 手动设置 |
+
+> **重要发现**：AgentArts Gateway 在 CUSTOM_JWT 模式下验证 JWT 后，**不会自动注入** `X-HW-AgentGateway-User-Id` header。`agentarts invoke` CLI 能工作是因为它内部从 JWT 解码后补了这个 header。浏览器端如果漏传此 header，会出现 App 层 401。
+
+### 11.3 `agentarts invoke` CLI 与 CUSTOM_JWT 的兼容性
+
+| 调用方式 | 认证方式 | CUSTOM_JWT 兼容？ |
+|----------|---------|:---:|
+| `agentarts invoke '{"message":"..."}'` | AK/SK IAM 签名 | ❌ Gateway 期望 JWT，不认 IAM 签名 |
+| `agentarts invoke --bearer-token "<jwt>" '{"message":"..."}'` | Bearer JWT | ✅ |
+| `agentarts invoke --bearer-token "<api-key>" '{"message":"..."}'` | Bearer API Key | ✅（如果配置了 key_auth） |
+
+**结论**：CUSTOM_JWT 模式下必须使用 `--bearer-token` 参数传入 JWT 或 API Key。
+
+### 11.4 JWT 验证失败排查清单
+
+Gateway 返回 401 时，按以下顺序排查：
+
+1. **解码 JWT 验证 claims**：`jwt.io` 或 `atob(jwt.split('.')[1])`，检查：
+   - `iss` 是否匹配 `discovery_url` 中的 tenant
+   - `aud` 是否在 `allowed_audience` 列表中
+   - `exp` 是否未过期（注意 UTC 时区）
+   - `azp`/`appid` 是否在 `allowed_clients` 列表中（如果配置了）
+   - `scp` 是否包含 `allowed_scopes`（如果配置了）
+
+2. **确认 token 类型**：必须是 **id_token**（OIDC），不是 access_token（OAuth 2.0）
+   - id_token 的 `aud` = app client ID
+   - access_token 的 `aud` = 资源 URL（如 `https://graph.microsoft.com`）
+
+3. **MSAL authority 配置**：前端 MSAL 必须使用精确 tenant ID，不能用 `common`：
+   ```typescript
+   authority: `https://login.microsoftonline.com/${tenantId}`  // ✅
+   authority: `https://login.microsoftonline.com/common`        // ❌ iss 不匹配
+   ```
+
+4. **Gateway 出网能力**：Gateway 需要访问 `login.microsoftonline.com` 拉取 OIDC Discovery 和 JWKS 公钥。如果 Gateway 部署在无公网访问的环境中，JWT 验签会静默失败。
+
+5. **配置变更需 delete + launch**：修改 `authorizer_type` 后仅执行 `agentarts launch` 可能不生效（Bug 11），必须 `agentarts delete` → `agentarts launch`。
+
+### 11.5 Token 过期与静默刷新
+
+Microsoft Entra ID 的 id_token 有效期通常为 1 小时。前端应实现主动刷新：
+
+```typescript
+// 发请求前检查 token 是否 60 秒内过期
+function isTokenExpiringSoon(idToken: string): boolean {
+  const payload = JSON.parse(atob(idToken.split('.')[1]));
+  return Date.now() >= (payload.exp - 60) * 1000;
+}
+
+// 即将过期 → 用 refresh token 静默续期
+if (isTokenExpiringSoon(idToken)) {
+  const fresh = await msalInstance.acquireTokenSilent({
+    scopes: ["openid", "profile", "email"],
+    account: msalInstance.getAllAccounts()[0],
+  });
+  idToken = fresh.idToken;
+}
+```
+
+`acquireTokenSilent` 优先从缓存读取，缓存过期时自动用 refresh token 换新（无用户交互）。
+
+**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 sessionStorage 加载已有 token：
+
+```typescript
+msalInstance.handleRedirectPromise().then(async (response) => {
+  if (response?.idToken) {
+    setToken(response.idToken);  // 登录跳转回来
+  } else {
+    const cached = await acquireIdTokenSilently();  // 普通页面加载
+    if (cached) setToken(cached);
+  }
+});
+```
+
+### 11.6 Netlify 部署：Edge Function vs Proxy Rewrite
+
+| 方案 | 超时 | 注入 header | CORS | 适用场景 |
+|------|:---:|:---:|:---:|---------|
+| Edge Function | ⏱️ 20s | ✅ | 无（同源） | API_KEY 模式（需注入 API key） |
+| Proxy Rewrite | ❌ 无 | ❌ | 无（同源） | CUSTOM_JWT 模式（JWT 已在浏览器） |
+| 直连 Gateway | ❌ 无 | N/A | ⚠️ 需 CORS | 调试用 |
+
+CUSTOM_JWT 模式下推荐 Proxy Rewrite：
+
+```toml
+# netlify.toml
+[[redirects]]
+  from = "/invocations"
+  to = "https://<gateway-domain>/runtimes/personal-assistant/invocations"
+  status = 200
+  force = true
+```
+
+Edge Function 的 20 秒超时对 SSE 流式对话是硬限制，CUSTOM_JWT 不需要它注入 API key 时应移除。
+
+### 11.7 Gateway 路由路径
+
+`url_match_type: ACCURATE_MATCH` 时，Gateway 只匹配精确路径。ExecuteRuntime API 的完整路径为：
+
+```
+/runtimes/{runtime_name}/invocations
+```
+
+例如：`/runtimes/personal-assistant/invocations`。直接访问 `/invocations` 会返回 `{"code":404,"message":"No matching policy found"}`。
+
+### 11.8 完整排障流程图
+
+```mermaid
+flowchart TD
+    START["401 错误"] --> PING{"/ping 是否 200?"}
+    PING -->|"否"| DEPLOY["Runtime 未就绪<br/>检查部署状态"]
+    PING -->|"是"| FMT{"错误格式?"}
+    FMT -->|"detail: Missing X-HW-..."| APP_LAYER["App 层 401<br/>Gateway 认证已通过"]
+    FMT -->|"code: 401, message: Authentication failed"| GW_LAYER["Gateway 层 401<br/>JWT 验证失败"]
+    
+    APP_LAYER --> CHECK_HDR{"请求是否带<br/>X-HW-AgentGateway-User-Id?"}
+    CHECK_HDR -->|"否"| FIX_HDR["前端从 JWT 提取 sub/oid<br/>设置为该 header"]
+    CHECK_HDR -->|"是"| CHECK_GW["Gateway 可能未注入<br/>检查 header 值与 JWT sub 是否一致"]
+    
+    GW_LAYER --> CHECK_JWT{"JWT 是否有效?"}
+    CHECK_JWT --> DECODE["① jwt.io 解码<br/>检查 iss/aud/exp"]
+    DECODE -->|"claims 错误"| FIX_CLAIMS["修复 MSAL authority<br/>或 Azure AD app 配置"]
+    DECODE -->|"claims 正确"| CHECK_EXP{"token 是否过期?"}
+    CHECK_EXP -->|"是"| REFRESH["重新登录或静默刷新"]
+    CHECK_EXP -->|"否"| CHECK_NET["② Gateway 能否出网<br/>访问 login.microsoftonline.com?"]
+    CHECK_NET -->|"否"| FIX_NET["配置 NAT Gateway / EIP"]
+    CHECK_NET -->|"是"| CHECK_CFG["③ 云端配置是否生效?<br/>agentarts runtime describe"]
+    CHECK_CFG -->|"不一致"| REDEPLOY["delete → launch<br/>（Bug 11 规避）"]
+    CHECK_CFG -->|"一致"| CHECK_SCOPE["④ 检查 allowed_scopes<br/>allowed_clients 配置"]
+    CHECK_SCOPE --> TRY_SIMPLE["尝试注释掉限制项<br/>逐个追加定位问题字段"]
+```

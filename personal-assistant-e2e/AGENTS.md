@@ -44,7 +44,7 @@ pytest personal-assistant-e2e/ -m regression
 pytest personal-assistant-e2e/ -m feature
 
 # 指定 bug 回归
-pytest personal-assistant-e2e/tests/regression/test_bug_1_rate_limit.py -v
+pytest personal-assistant-e2e/tests/regression/test_bug_1_playground_trailing_slash_404.py -v
 ```
 
 ## 谁来写测试

@@ -13,6 +13,8 @@
   "dependencies": {
     "@assistant-ui/react": "^0.14.14",
     "@assistant-ui/react-markdown": "^0.14.1",
+    "@azure/msal-browser": "^5.13.0",
+    "@azure/msal-react": "^5.4.4",
     "@base-ui/react": "^1.5.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@radix-ui/react-slot": "^1.2.5",

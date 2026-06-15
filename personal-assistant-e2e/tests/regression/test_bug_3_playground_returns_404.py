@@ -5,9 +5,8 @@ Related: personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/ (RESO
 BUG-3 was fixed by merging main (f51c0f7). The /playground endpoint now
 serves Chainlit content. These tests verify the fix remains in place.
 
-NOTE (refactor-2): The `test_root_still_serves_index_html` test is now
-obsolete because refactor-2 removed the StaticFiles mount — GET / now
-returns 404 by design. The playground-specific tests remain valid.
+NOTE: The `test_root_still_serves_index_html` test was removed because
+refactor-2 removed the StaticFiles mount. GET / now returns 404 by design.
 """
 
 import httpx
@@ -57,17 +56,3 @@ class TestBug3_PlaygroundReturns404:
         resp = httpx.get(f"{service_url}/ping")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
-
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles mount removed, "
-               "GET / now returns 404 by design."
-    )
-    def test_root_still_serves_index_html(self, service_url):
-        """Baseline: GET / should still serve the assistant-ui chat interface.
-
-        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
-        """
-        resp = httpx.get(f"{service_url}/")
-        assert resp.status_code == 200
-        assert "text/html" in resp.headers.get("content-type", "")
-        assert "Personal Assistant" in resp.text

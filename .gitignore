@@ -221,5 +221,11 @@ __marimo__/
 # Playwright CLI
 .playwright-cli
 
+# AgentArts runtime artifacts
+.agent_identity.json
+
 # Chainlit
 .chainlit/
+
+# E2E artifacts (screenshots, temp output)
+**/.files/

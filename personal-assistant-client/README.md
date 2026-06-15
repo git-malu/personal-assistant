@@ -2,7 +2,7 @@
 
 基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的 AI 助手 Web Chat 前端应用。提供对话界面、SSE 流式消息渲染、Markdown 内容展示，支持 Web Chat、飞书和 OfficeClaw 多接入渠道的客户端适配层。
 
-当前为 **Feature 1.1**（Web Chat 前端工程化）——Vite + React + TypeScript + Tailwind CSS。
+Vite + React + TypeScript + Tailwind CSS + assistant-ui。支持 OAuth 登录（Microsoft Entra ID）、登录落地页和聊天界面。
 
 ## 目录结构
 
@@ -10,12 +10,18 @@
 personal-assistant-client/
 ├── src/
 │   ├── components/
-│   │   ├── assistant-ui/             # assistant-ui 组件（thread, markdown-text, reasoning 等）
-│   │   ├── ui/                       # shadcn/ui 基础组件（button, dialog, avatar 等）
+│   │   ├── assistant-ui/             # assistant-ui 组件（thread, markdown-text, reasoning, attachment 等）
+│   │   ├── ui/                       # shadcn/ui 基础组件（button, dialog, avatar, tooltip, collapsible）
+│   │   ├── landing/                  # 登录落地页组件（LandingPage, LandingHero, FeatureTile 等）
+│   │   ├── chat/                     # 聊天界面组件（ChatPage）
 │   │   ├── RuntimeProvider.tsx       # assistant-ui RuntimeProvider 包装
-│   │   └── LoginPlaceholder.tsx      # OAuth 登录占位横幅（Feature 4 前不可交互）
+│   │   ├── LoginButton.tsx           # OAuth 登录按钮
+│   │   └── AuthGuard.tsx             # 认证守卫组件
+│   ├── stores/
+│   │   └── auth-store.ts            # 认证状态管理（MSAL）
 │   ├── lib/
 │   │   ├── chat-adapter.ts           # assistant-ui ChatModelAdapter（fetch POST + SSE）
+│   │   ├── auth.ts                   # MSAL 认证配置
 │   │   └── utils.ts                  # 工具函数（cn 等）
 │   ├── types/
 │   │   └── chat.ts                   # Message、SSEEvent 类型定义
@@ -30,6 +36,8 @@ personal-assistant-client/
 ├── tsconfig.json                  # TypeScript 配置
 ├── tsconfig.node.json             # Vite 配置文件 TypeScript 配置
 ├── package.json                   # 项目依赖与 scripts
+├── netlify.toml                   # Netlify 部署配置（staging 环境）
+├── DESIGN.md                      # 前端设计文档
 └── .gitignore
 ```
 
@@ -136,8 +144,8 @@ data: {"token":"","done":true}
 
 ## 后续 Feature
 
-| Feature | 内容 |
-|---------|------|
-| Feature 4 | OAuth 登录 UI（替换 LoginPlaceholder） |
-| Feature 5 | 飞书客户端适配 |
-| Feature 3 | OfficeClaw 客户端适配 |
+| Feature | 内容 | 状态 |
+|---------|------|------|
+| Feature 4 | OAuth 登录 UI（MSAL + Microsoft Entra ID） | 已实现 |
+| Feature 5 | 飞书客户端适配 | [Planned — not yet implemented] |
+| Feature 3 | OfficeClaw 客户端适配 | [Planned — not yet implemented] |

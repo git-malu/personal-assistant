@@ -85,6 +85,13 @@ jobs:
         env:
           HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
           HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          M365_CLIENT_ID: ${{ vars.M365_CLIENT_ID }}
+          M365_CLIENT_SECRET: ${{ secrets.M365_CLIENT_SECRET }}
+          M365_TENANT_ID: ${{ secrets.M365_TENANT_ID }}
         run: |
           cd personal-assistant-service
+          # Substitute ${VAR} placeholders in .agentarts_config.yaml with secret values
+          export MODEL_API_KEY="${DEEPSEEK_API_KEY}"
+          envsubst < .agentarts_config.yaml | tee .agentarts_config.yaml
           agentarts launch
