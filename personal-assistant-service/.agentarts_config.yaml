@@ -56,7 +56,7 @@ agents:
         commands: []
       environment_variables:
       - key: MODEL_NAME
-        value: deepseek-chat
+        value: deepseek-v4-pro
       - key: MODEL_URL
         value: https://api.deepseek.com
       - key: CORS_ALLOWED_ORIGINS
