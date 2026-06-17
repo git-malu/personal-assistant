@@ -18,17 +18,21 @@ def reset_config_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def reset_api_key_cache():
+def reset_api_key_cache(monkeypatch):
     """Clear _API_KEY_CACHE and os.environ credential entries before/after each test.
 
-    Uses os.environ.pop directly (not monkeypatch.delenv) in teardown so that
-    leaked env vars from _get_api_key_from_identity's os.environ[key]=value
-    are permanently removed rather than restored by monkeypatch after the test.
+    Setup: monkeypatch.delenv all *_API_KEY env vars (handles dotenv-loaded
+    keys from app.main.load_dotenv). monkeypatch restores them after the test.
+
+    Teardown: os.environ.pop (not monkeypatch.delenv) removes keys that
+    _get_api_key_from_identity wrote during the test (line 133), preventing
+    monkeypatch from accidentally restoring those leaked test values.
     """
     import os
 
-    for key in list(app.llm_config._API_KEY_CACHE.keys()):
-        os.environ.pop(key, None)
+    for key in list(os.environ.keys()):
+        if key.endswith("_API_KEY"):
+            monkeypatch.delenv(key, raising=False)
     app.llm_config._API_KEY_CACHE.clear()
     yield
     for key in list(app.llm_config._API_KEY_CACHE.keys()):
