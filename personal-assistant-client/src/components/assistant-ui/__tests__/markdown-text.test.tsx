@@ -34,7 +34,6 @@ vi.mock("@assistant-ui/react-markdown", async (importOriginal) => {
         className,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         containerProps: _containerProps,
-        ...rest
       } = props;
       
       // Since we can't reliably load react-markdown internally in this test environment,
