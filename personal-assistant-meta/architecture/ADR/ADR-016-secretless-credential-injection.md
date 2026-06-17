@@ -116,11 +116,13 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 
 - **拒绝理由**：(1) 部署后同样在控制台明文可见；(2) 换 Key 需要重新触发 CI/CD 流水线（编译 → 打包 → 部署），耗时数分钟，而平台侧修改只需 5 秒；(3) Key 经过 GitHub Secrets → Workflow runner → 部署 API 三条链路，每一条都是潜在泄露面。
 
-### AgentArts Identity + 进程级缓存（未来优化）
+### AgentArts Identity + 进程级缓存（已实现）
 
 在当前方案基础上，首次获取 Key 后缓存到 `os.environ`，后续调用直接读环境变量，避免重复 SDK IPC 调用。详见 [Refactor 8](../../issues/refactor/backlog/refactor-8-llm-api-key-caching/issue.md)。
 
-- **未在当前版本实现原因**：(1) 当前单 session 调用频率低，SDK 内部已有短时缓存；(2) 进程级缓存引入了"Key 更新后需重启服务才能生效"的 trade-off。属于优化项，非阻塞问题。
+- **已实现**（Refactor 8）：`llm_config.py` 新增 `_API_KEY_CACHE` 进程级缓存字典，`_get_api_key_from_identity()` 先查缓存，miss 时才调 SDK。获取后同时写入 `os.environ`（LangChain 底层自动读取环境变量）。多 provider 各自独立缓存。Key 更新需重启容器（与当前运维习惯一致）。
+
+<!-- updated by issue: refactor-8-llm-api-key-caching -->
 
 ## 影响
 
@@ -134,7 +136,7 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 | 代码注入 | `@requires_api_key` | `@require_api_key` |
 | 配置引用 | provider name | `credential_provider_name` |
 | CI 可见性 | 不可见 | 不可见 |
-| 运行时缓存 | 需手动 `os.environ` | 同上（待优化） |
+| 运行时缓存 | 需手动 `os.environ` | 已实现（`os.environ` 进程级缓存，Refactor 8） |
 | 本地开发 | AWS CLI credential chain | `.agent_identity.json` |
 
 ### 依赖
