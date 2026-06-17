@@ -1,4 +1,12 @@
-"""LLM provider configuration and AgentArts Identity credential loading."""
+"""LLM provider configuration and AgentArts Identity credential loading.
+
+Caching strategy: LLM API Keys are fetched once from AgentArts Identity SDK
+(@require_api_key decorator) per container lifecycle and cached in a
+module-level _API_KEY_CACHE dict + os.environ. Subsequent get_model() calls
+return cached keys with zero IPC overhead. Key rotation is handled by
+container restart (agentarts launch), which naturally clears all caches.
+See ADR-016 + Refactor 8 for design rationale.
+"""
 
 import os
 from pathlib import Path
@@ -12,6 +20,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
 
 _config: dict[str, Any] | None = None
+
+# 进程级 API Key 缓存，避免每次 get_model() 都触发 SDK IPC 调用
+# Key: credential_provider_name (如 "DEEPSEEK_API_KEY")
+# Value: 从 AgentArts Identity 获取的明文 API Key
+# 设计依据: ADR-016 § "AgentArts Identity + 进程级缓存"
+# 生命周期: 与容器进程一致；Key 轮转通过 agentarts launch 重建容器完成
+_API_KEY_CACHE: dict[str, str] = {}
 
 
 def _load_config() -> dict[str, Any]:
@@ -75,8 +90,33 @@ def _resolve_model_endpoint(provider_cfg: dict[str, Any]) -> tuple[str, str]:
 
 
 def _get_api_key_from_identity(credential_provider_name: str) -> str:
-    """Fetch an API key from AgentArts Identity via the SDK decorator."""
+    """Fetch an API key from AgentArts Identity via the SDK decorator.
 
+    Performs process-level caching: first retrieval goes through the SDK
+    (AgentArts Identity IPC, ~10-50ms), subsequent calls read the cached
+    value from _API_KEY_CACHE or os.environ (zero IPC overhead).
+
+    Cache tiers (checked in order):
+      1. _API_KEY_CACHE — module-level explicit cache (fastest)
+      2. os.environ — supports external injection / test fixture presets
+      3. @require_api_key SDK — AgentArts Identity Service IPC
+
+    Multi-provider isolation: each provider_name has its own cache entry.
+    Key rotation requires container restart (consistent with current ops).
+    """
+    # 1. Check process-level cache (fastest path)
+    cached = _API_KEY_CACHE.get(credential_provider_name)
+    if cached:
+        return cached
+
+    # 2. Check os.environ — supports external injection (e.g. test fixtures,
+    #    subprocess visibility, operator debugging)
+    env_key = os.environ.get(credential_provider_name)
+    if env_key:
+        _API_KEY_CACHE[credential_provider_name] = env_key
+        return env_key
+
+    # 3. Cache miss → fetch from AgentArts Identity via SDK
     @require_api_key(provider_name=credential_provider_name, into="api_key")
     def _fetch(api_key: str | None = None) -> str:
         if not api_key:
@@ -86,7 +126,13 @@ def _get_api_key_from_identity(credential_provider_name: str) -> str:
             )
         return api_key
 
-    return _fetch()
+    api_key = _fetch()
+
+    # 4. Populate both cache layers for subsequent zero-IPC access
+    _API_KEY_CACHE[credential_provider_name] = api_key
+    os.environ[credential_provider_name] = api_key
+
+    return api_key
 
 
 def get_model(provider: str | None = None) -> BaseChatModel:
