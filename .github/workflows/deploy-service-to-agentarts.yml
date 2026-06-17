@@ -6,6 +6,8 @@ on:
     paths:
       - "personal-assistant-service/**"
       - ".github/workflows/deploy-service-to-agentarts.yml"
+    paths-ignore:
+      - "personal-assistant-service/tests/**"
   workflow_dispatch:  # 手动触发
 
 jobs:
