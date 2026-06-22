@@ -1,6 +1,6 @@
 # Personal Assistant — Session 状态管理架构
 
-> 版本：v1.0 | 状态：Implemented | 关联 issue：[feature-session-checkpoint](../issues/features/feature-session-checkpoint/issue.md)
+> 版本：v1.1 | 状态：Target Design | 关联 issue：[feature-session-checkpoint](../issues/features/feature-session-checkpoint/issue.md)、[feature-14](../issues/features/feature-14-multi-session-runtime-prewarm/issue.md)
 
 ---
 
@@ -254,6 +254,33 @@ flowchart LR
 ---
 
 ## 4. Q2: 跨 Session 恢复（重启历史会话）
+
+### 4.0 Conversation、Runtime 与 UI history 分层
+
+Feature 14 将旧版 `session_id` 的三重职责拆分为三个独立 identity：
+
+| Identity | 生命周期 | 持久化位置 | 职责 |
+|----------|----------|------------|------|
+| `conversation_id` | durable | `conversations` | 产品 Conversation 主键 |
+| `thread_id` | 与 Conversation 相同 | LangGraph Checkpoint | Agent execution state key |
+| `runtime_session_id` | replaceable lease | `runtime_session_leases` | AgentArts execution routing |
+
+`conversation_messages` 是面向 UI 的稳定 read model；Checkpoint 保存完整 Agent
+state。正常 history hydration 只查询 read model，不扫描或解析 Checkpoint blob。
+
+```mermaid
+erDiagram
+    USER ||--o{ CONVERSATION : owns
+    CONVERSATION ||--|| LANGGRAPH_THREAD : persists_as
+    CONVERSATION ||--o{ CONVERSATION_MESSAGE : displays
+    USER ||--o{ RUNTIME_SESSION_LEASE : executes_through
+```
+
+旧版 `localStorage` Session ID 仅可作为 migration hint。BFF 将其与可信 `user_id`
+组合，通过 Service 的受控 migration endpoint 读取 public LangGraph state API，
+幂等投影 Human/AI messages，并记录 migration marker。失败不修改原 Checkpoint。
+
+<!-- updated by issue: feature-14-multi-session-runtime-prewarm -->
 
 ### 4.1 问题分解
 

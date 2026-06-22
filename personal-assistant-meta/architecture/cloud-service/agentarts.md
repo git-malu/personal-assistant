@@ -771,6 +771,25 @@ flowchart LR
 
 > **重要发现**：AgentArts Gateway 在 CUSTOM_JWT 模式下验证 JWT 后，**不会自动注入** `X-HW-AgentGateway-User-Id` header。`agentarts invoke` CLI 能工作是因为它内部从 JWT 解码后补了这个 header。浏览器端如果漏传此 header，会出现 App 层 401。
 
+### 11.2.1 Runtime Session lifecycle contract
+
+官方 API 参考文档版本 03（2026-06-11）定义：
+
+| 操作 | Contract | Session ID |
+|------|----------|------------|
+| Start | `POST /runtimes/{runtime_name}/sessions-start` + `Authorization` | response `data.session_id`，字符集 `[A-Za-z0-9_-]`，最长 64 |
+| Execute | `POST /runtimes/{runtime_name}/invocations...` | request header `X-Hw-Agentarts-Session-Id` 必选 |
+| Stop | `POST /runtimes/{runtime_name}/sessions-stop` + `Authorization` | request header `X-Hw-Agentarts-Session-Id` 必选 |
+
+`StartRuntimeSession` 没有 request body，也不接受调用方指定 Session ID；显式
+pre-warm 使用平台生成的 response ID。现有 implicit invocation fallback 仍可使用
+调用方生成的合法 ID。
+
+> 文档缺陷：StartRuntimeSession 的“请求示例”误写为 `sessions-stop`。实现以该节
+> URI、request schema 和 response schema 为准，不复制错误示例。
+
+<!-- updated by issue: feature-14-multi-session-runtime-prewarm -->
+
 ### 11.3 `agentarts invoke` CLI 与 CUSTOM_JWT 的兼容性
 
 | 调用方式 | 认证方式 | CUSTOM_JWT 兼容？ |

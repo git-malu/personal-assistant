@@ -128,6 +128,28 @@ flowchart LR
 
 ## 5. 对话交互
 
+### 5.0 Web Chat Conversation 管理
+
+Web Chat 以 durable Conversation 作为用户可见的对话单位。用户登录后可查看、
+创建、切换、重命名、归档和删除多个 Conversation；列表、标题、选中项和消息历史
+均从服务端恢复，不以单个浏览器 `localStorage` Session ID 作为事实源。
+
+```mermaid
+flowchart LR
+    User["用户"] --> Sidebar["Conversation Sidebar"]
+    Sidebar -->|"创建 / 切换 / 重命名 / 归档"| API["same-origin Conversation API"]
+    API --> Store[("PostgreSQL<br/>Conversation + Messages")]
+    Sidebar --> Thread["assistant-ui Thread"]
+    Store -->|"normalized history"| Thread
+```
+
+用户进入 Chat 时，系统在后台异步准备 user-scoped AgentArts Runtime Session。
+`warming`、`ready`、`degraded` 状态可以被 UI 感知，但 pre-warm 失败不得阻断创建
+Conversation 或发送消息。一个用户的多个 Conversation 和多个浏览器 Tab 默认复用
+同一个 active Runtime Session；Conversation history 不随 Runtime Session 回收而丢失。
+
+<!-- updated by issue: feature-14-multi-session-runtime-prewarm -->
+
 ### 5.1 对话流程
 
 ```mermaid

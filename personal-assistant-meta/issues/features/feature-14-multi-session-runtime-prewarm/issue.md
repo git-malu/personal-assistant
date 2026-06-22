@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: planning
 related:
   - feature-13-reset-session
   - feature-session-checkpoint

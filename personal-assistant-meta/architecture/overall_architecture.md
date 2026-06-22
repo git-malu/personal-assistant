@@ -70,6 +70,7 @@ flowchart TB
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
 | **Session State** | LangGraph Checkpoint | 短期会话状态持久化，keyed by `thread_id`，支持单 Session 多轮上下文保持和中断恢复。详见 [session-state-management.md](session-state-management.md) |
+| **Conversation** | PostgreSQL + Cloudflare Pages Functions BFF | durable Conversation metadata、UI message read model、user-scoped Runtime lease 与 same-origin API；`conversation_id` 与 LangGraph `thread_id` 1:1 |
 | **LLM** | typed Settings + internal Provider catalog | `.env.example` 是唯一配置目录；Pydantic Settings 校验 Runtime 参数，credential 由 AgentArts Identity 提供。详见 ADR-011 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域。详见 [ADR-003](ADR/ADR-003-agentarts-platform.md) |
 | **Memory** | AgentArts Memory SDK | 长期语义/偏好/情景记忆，跨 Session 持久化用户知识。与 Checkpoint 分工：Checkpoint 管短期会话状态，Memory 管长期用户知识。详见 [session-state-management.md](session-state-management.md) §2 |

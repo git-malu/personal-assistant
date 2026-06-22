@@ -287,6 +287,42 @@ event bus。
 
 <!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat, refactor-9-modularize-chat-adapter -->
 
+#### 2.1.6 Multi-Conversation Runtime
+
+Web Chat 使用 assistant-ui 的 `useRemoteThreadListRuntime` 管理多 Conversation。
+assistant-ui 的 `remoteId` 映射到产品 `conversation_id`；它不是 LangGraph
+`thread_id`，也不是 AgentArts Runtime Session ID。
+
+```mermaid
+flowchart LR
+    Sidebar["ConversationSidebar"] --> Runtime["useRemoteThreadListRuntime"]
+    Runtime --> Adapter["RemoteThreadListAdapter"]
+    Runtime --> Local["useLocalRuntime(chatAdapter)"]
+    Adapter --> API["same-origin /api/conversations"]
+    Local --> History["ThreadHistoryAdapter"]
+    History --> API
+    API --> Store[("PostgreSQL read model")]
+```
+
+`RemoteThreadListAdapter` 负责 `list`、`initialize`、`fetch`、`rename`、`archive`、
+`unarchive`、`delete` 和 `generateTitle`。每个 active thread 注入独立
+`ThreadHistoryAdapter`，从 `conversation_messages` 加载 normalized history。
+Provider 必须首屏即挂载 children；history loading/error UI 在 Thread 内渲染，不能
+用延迟挂载 Provider 的方式实现。
+
+页面首次加载先恢复 Conversation metadata，再 hydrate 选中 Conversation 的消息。
+切换时使用 request generation/AbortController 丢弃过期 response；hydration 完成前
+显示 skeleton，不短暂显示错误的空白 welcome state。Zustand 仅保存瞬时 UI 状态，
+不复制 Conversation truth。
+
+Runtime pre-warm 由 `RuntimeSessionProvider` 调用
+`POST /api/runtime-session/ensure`。状态机为 `warming → ready | degraded`；
+`degraded` 仍允许发送消息。原 `ResetSessionButton` 被 Conversation-aware
+`NewConversationButton` 替代，`localStorage["agentarts-session-id"]` 仅在 legacy
+checkpoint migration 期间作为 hint，完成迁移后删除。
+
+<!-- updated by issue: feature-14-multi-session-runtime-prewarm -->
+
 ### 2.2 飞书直连
 
 **接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`

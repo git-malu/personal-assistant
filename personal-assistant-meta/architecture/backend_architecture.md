@@ -159,6 +159,40 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 
 > **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
 
+### 2.2 Conversation BFF 与 Runtime lifecycle
+
+Web Chat 的 Conversation API、Runtime pre-warm 和 invocation proxy 部署在
+Cloudflare Pages Functions。该 BFF 在 AgentArts Runtime 之外运行，避免调用
+`sessions-start` 前先隐式启动被预热的 Runtime。BFF 通过 Hyperdrive 连接现有
+PostgreSQL，负责 JWT verification、ownership、idempotency、Runtime lease 与
+Conversation read model。
+
+```mermaid
+flowchart LR
+    Browser["Web Chat"] -->|"same-origin /api/*"| BFF["Cloudflare Pages Functions BFF"]
+    BFF -->|"Hyperdrive"| DB[("PostgreSQL")]
+    BFF -->|"sessions-start / sessions-stop"| Gateway["AgentArts Gateway"]
+    BFF -->|"X-Hw-Agentarts-Session-Id"| Invoke["Runtime /invocations"]
+    Invoke --> Agent["FastAPI AgentHandler"]
+    Agent --> Checkpoint[("LangGraph Checkpoint")]
+```
+
+BFF 验证 JWT 后取得可信 `user_id`。浏览器提供的 `conversation_id` 仅作为资源
+定位符；所有 query 均以 `(user_id, conversation_id)` 校验 ownership。BFF 不接受
+客户端指定 `thread_id` 或 `runtime_session_id`，也不返回平台管理凭据。
+
+Runtime Session lease 为 user-scoped，数据库 partial unique constraint 保证每个
+User 默认最多一个 `starting|active` lease。并发 ensure 使用 PostgreSQL
+transaction + advisory lock；锁内二次检查 lease 后才调用 `sessions-start`。若两个
+外部调用仍发生竞争，未取得 active lease 的 loser 必须 best-effort
+`sessions-stop`。
+
+FastAPI `/invocations` request body 新增必选 `conversation_id`。Runtime header
+只用于 execution routing；AgentHandler 通过可信 `user_id` 与已验证
+`conversation_id` 构造稳定 `thread_id = "{user_id}:{conversation_id}"`。
+
+<!-- updated by issue: feature-14-multi-session-runtime-prewarm -->
+
 ### 2.3 AgentArts Gateway Header 注入
 
 AgentArts Gateway 在转发请求到 Runtime 容器时，会注入以下 header。后端需在请求处理入口（`main.py` 的 `invocations()` 或 `auth.py`）提取并使用：
