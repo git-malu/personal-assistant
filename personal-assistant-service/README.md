@@ -13,6 +13,8 @@ personal-assistant-service/
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py     # deepagents Agent 编排 + LLM 模型连接
 │   ├── settings.py          # typed Runtime Settings（内部读取实现）
+│   ├── database.py          # SQLAlchemy psycopg 3 URL normalization
+│   ├── db_models.py         # Application-owned SQLAlchemy metadata
 │   ├── provider_catalog.py  # 内置 LLM Provider metadata（非用户配置）
 │   ├── llm_config.py        # LLM 配置解析 + Identity credential 获取
 │   ├── auth.py              # Gateway 注入身份 header 提取
@@ -41,7 +43,8 @@ personal-assistant-service/
 │   ├── test_tools_init.py   # 工具注册测试
 │   └── test_playground.py   # Chainlit Playground 测试
 ├── scripts/                 # 运维脚本（部署、冒烟测试等）
-├── migrations/              # Conversation/message/Runtime lease SQL
+├── migrations/              # Alembic revisions and migration environment
+├── alembic.ini              # Alembic configuration
 ├── .env.example             # 唯一面向使用者的 Service 配置入口
 ├── openapi.json             # OpenAPI 规范（自动生成）
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
@@ -78,6 +81,18 @@ cp .env.example .env
 
 本地开发填写 `.env`；生产环境在 AgentArts Runtime / CI/CD 注入同名环境变量。
 `app/settings.py` 是内部读取实现，不是需要修改的配置文件。
+
+配置 PostgreSQL 后，使用 Alembic 将 application-owned schema 升级到最新版本：
+
+```bash
+uv run alembic upgrade head
+uv run alembic current --check-heads
+```
+
+Migration 使用 SQLAlchemy 2.x + Alembic + psycopg 3。LangGraph Checkpointer
+内部表仍由 `AsyncPostgresSaver.setup()` 管理，不纳入应用 Alembic metadata。
+如果数据库曾手工执行旧版 Feature 14 SQL，先核对 schema 完全一致，再执行
+`uv run alembic stamp 0001_feature_14`，不得重复创建表。
 
 ### 3. 配置 LLM 凭据
 

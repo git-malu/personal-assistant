@@ -75,7 +75,7 @@ Pages Functions 是 Conversation/lifecycle authority：
 | `functions/api/runtime-session/*` | ensure/stop |
 | `functions/invocations.js` | ownership-aware proxy |
 | `functions/_shared/*` | JWT、DB、lease、response helpers |
-| `wrangler.toml` | Hyperdrive + auth/runtime vars |
+| `personal-assistant-infra/cloudflare.tf` | Hyperdrive binding + auth/runtime vars |
 | `preview/feature-14/index.html` | 保留为 approved visual reference |
 
 ## 5. Frontend tests

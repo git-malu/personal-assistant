@@ -3,13 +3,6 @@ pages_build_output_dir = "./dist"
 compatibility_date = "2026-06-18"
 compatibility_flags = ["nodejs_compat"]
 
-# Non-secret Pages Function runtime configuration. Sensitive values must use
-# Cloudflare secrets instead of plaintext vars.
-[vars]
-AGENTARTS_INVOCATIONS_URL = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations"
-RUNTIME_PREWARM_TIMEOUT_MS = "2500"
-
-# Production requires a Hyperdrive binding named HYPERDRIVE and OIDC secrets:
-# OIDC_JWKS_URL, OIDC_ISSUER, OIDC_AUDIENCE.
-# Configure the Hyperdrive ID in the Cloudflare dashboard so credentials never
-# enter this repository.
+# Production bindings and environment variables are managed by OpenTofu in
+# personal-assistant-infra/cloudflare.tf. Use .dev.vars for local Pages
+# Functions configuration; do not add production credentials here.

@@ -9,7 +9,44 @@ on:
   workflow_dispatch:  # 手动触发
 
 jobs:
+  migrate-database:
+    runs-on: ubuntu-latest
+
+    env:
+      POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: personal-assistant-service/uv.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install service dependencies
+        working-directory: personal-assistant-service
+        run: uv sync --frozen --no-dev
+
+      - name: Upgrade PostgreSQL schema
+        working-directory: personal-assistant-service
+        run: |
+          test -n "$POSTGRES_DSN" || {
+            echo "::error::POSTGRES_DSN GitHub secret is required"
+            exit 1
+          }
+          uv run --no-dev alembic upgrade head
+          uv run --no-dev alembic current --check-heads
+
   build-and-push:
+    needs: migrate-database
     runs-on: ubuntu-24.04-arm  # GitHub 原生 ARM64 runner，无需 QEMU 模拟
 
     steps:

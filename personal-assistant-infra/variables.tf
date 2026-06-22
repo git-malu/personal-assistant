@@ -69,3 +69,47 @@ variable "rds_password" {
   type        = string
   sensitive   = true
 }
+
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID"
+  type        = string
+}
+
+variable "cloudflare_pages_project_name" {
+  description = "Cloudflare Pages project name"
+  type        = string
+  default     = "agentarts-personal-assistant"
+}
+
+variable "cloudflare_production_branch" {
+  description = "Git branch deployed to the production Pages environment"
+  type        = string
+  default     = "main"
+}
+
+variable "agentarts_invocations_url" {
+  description = "AgentArts Runtime invocation endpoint used by Pages Functions"
+  type        = string
+  default     = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations"
+}
+
+variable "runtime_prewarm_timeout_ms" {
+  description = "Pages Functions prewarm timeout in milliseconds"
+  type        = number
+  default     = 2500
+}
+
+variable "oidc_jwks_url" {
+  description = "OIDC JSON Web Key Set URL"
+  type        = string
+}
+
+variable "oidc_issuer" {
+  description = "Expected OIDC token issuer"
+  type        = string
+}
+
+variable "oidc_audience" {
+  description = "Expected OIDC token audience"
+  type        = string
+}

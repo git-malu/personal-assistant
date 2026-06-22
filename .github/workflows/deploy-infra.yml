@@ -37,8 +37,14 @@ jobs:
       # HuaweiCloud Provider 认证
       HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
       HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+      # Cloudflare Provider authentication
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_region: "cn-southwest-2"
       TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
+      TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_oidc_jwks_url: ${{ vars.OIDC_JWKS_URL }}
+      TF_VAR_oidc_issuer: ${{ vars.OIDC_ISSUER }}
+      TF_VAR_oidc_audience: ${{ vars.OIDC_AUDIENCE }}
 
     steps:
       - name: Checkout

@@ -195,6 +195,10 @@ npm run test:watch
 | 测试 | Vitest + @testing-library/react |
 | Conversation BFF | Cloudflare Pages Functions + Hyperdrive + PostgreSQL |
 
+Production Pages Project、Hyperdrive binding 与 Functions 环境变量由
+`personal-assistant-infra/cloudflare.tf` 中的 OpenTofu 配置管理。Wrangler
+只负责上传 `dist` 与 Pages Functions 代码，避免 bindings 出现双重配置源。
+
 ## 架构
 
 ```

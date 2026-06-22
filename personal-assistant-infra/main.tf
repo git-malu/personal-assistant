@@ -1,14 +1,20 @@
 # ============================================================
-# Personal Assistant — 华为云基础资源
+# Personal Assistant — HuaweiCloud + Cloudflare 基础资源
 # ============================================================
 # IaC 工具：OpenTofu（Linux 基金会托管，MPL 协议）
 # 详见 ADR-006: personal-assistant-meta/architecture/ADR/ADR-006-iac-cdktf-typescript.md
 
 terraform {
+  required_version = ">= 1.9"
+
   required_providers {
     huaweicloud = {
       source  = "huaweicloud/huaweicloud"
       version = "~> 1.92"
+    }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
     }
   }
 
@@ -27,3 +33,7 @@ terraform {
 provider "huaweicloud" {
   region = var.region
 }
+
+# Authentication uses CLOUDFLARE_API_TOKEN. The token must have the minimum
+# account permissions required for Pages and Hyperdrive.
+provider "cloudflare" {}

@@ -17,3 +17,13 @@ output "rds_database_name" {
   description = "应用数据库名称"
   value       = huaweicloud_rds_pg_database.application.name
 }
+
+output "cloudflare_hyperdrive_id" {
+  description = "Hyperdrive configuration ID bound to Pages Functions"
+  value       = cloudflare_hyperdrive_config.personal_assistant.id
+}
+
+output "cloudflare_pages_subdomain" {
+  description = "Cloudflare Pages project subdomain"
+  value       = cloudflare_pages_project.personal_assistant.subdomain
+}

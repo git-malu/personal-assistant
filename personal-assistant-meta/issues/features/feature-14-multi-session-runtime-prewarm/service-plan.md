@@ -18,7 +18,7 @@ FastAPI 不再用 Runtime Session header 构造 `thread_id`。`AgentHandler` 接
 
 ### PostgreSQL schema
 
-新增 versioned SQL migration：
+使用 SQLAlchemy 2.x metadata + Alembic versioned migration（psycopg 3）新增：
 
 - `conversations`：`id`, `user_id`, `title`, `status`, timestamps,
   `idempotency_key`, `version`

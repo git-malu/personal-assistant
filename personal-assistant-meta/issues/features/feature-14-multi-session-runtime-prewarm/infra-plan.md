@@ -14,6 +14,10 @@ Cloudflare 增加：
   pre-warm timeout、idle timeout
 - RDS credential 仅存于 Hyperdrive configuration/Cloudflare secret，不写入 repo
 
+以上长期配置由 `personal-assistant-infra` 中的 OpenTofu
+`cloudflare/cloudflare` provider 管理；Wrangler 仅发布 Pages 静态资源与
+Functions 代码。
+
 RDS security group 必须允许 Hyperdrive origin connectivity。上线前轮换当前
 application DB credential，并为 BFF 创建 least-privilege role：
 
@@ -26,7 +30,7 @@ tables。
 
 ## 2. Deployment order
 
-1. apply SQL migration
+1. `uv run alembic upgrade head`
 2. 创建/验证 Hyperdrive
 3. deploy FastAPI contract
 4. deploy Pages Functions BFF
