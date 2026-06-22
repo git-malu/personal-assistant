@@ -2,6 +2,9 @@
 
 端到端测试，覆盖 Service + Client 联调场景。使用 **pytest** + **pytest-asyncio** + **httpx**。
 
+Feature 14 测试覆盖 durable `conversation_id` 与 replaceable Runtime Session 的
+identity 分离，以及同一用户多个 Conversation 共享 Runtime 时的上下文隔离。
+
 ## 目录结构
 
 ```

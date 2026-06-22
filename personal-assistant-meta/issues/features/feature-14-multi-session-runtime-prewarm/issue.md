@@ -1,5 +1,5 @@
 ---
-status: planning
+status: in_progress
 related:
   - feature-13-reset-session
   - feature-session-checkpoint

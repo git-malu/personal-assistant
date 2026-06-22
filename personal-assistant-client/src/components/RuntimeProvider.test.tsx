@@ -14,10 +14,24 @@ vi.mock("@assistant-ui/react", async (importOriginal) => {
   return {
     ...actual,
     useLocalRuntime: vi.fn(() => ({})),
+    useRemoteThreadListRuntime: vi.fn(
+      ({ runtimeHook }: { runtimeHook: () => unknown }) => runtimeHook(),
+    ),
+    useAuiState: vi.fn(() => "conversation-test"),
     AssistantRuntimeProvider: ({ children }: { children: ReactNode }) =>
       children,
   };
 });
+
+vi.mock("@/lib/conversations/api", () => ({
+  ensureRuntimeSession: vi.fn().mockResolvedValue({ status: "ready" }),
+  listMessages: vi.fn().mockResolvedValue({ messages: [] }),
+  listConversations: vi.fn().mockResolvedValue({ conversations: [] }),
+  createConversation: vi.fn(),
+  getConversation: vi.fn(),
+  updateConversation: vi.fn(),
+  deleteConversation: vi.fn(),
+}));
 
 describe("RuntimeProvider", () => {
   it("renders children inside AssistantRuntimeProvider", () => {

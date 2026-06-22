@@ -16,6 +16,7 @@ personal-assistant-service/
 │   ├── provider_catalog.py  # 内置 LLM Provider metadata（非用户配置）
 │   ├── llm_config.py        # LLM 配置解析 + Identity credential 获取
 │   ├── auth.py              # Gateway 注入身份 header 提取
+│   ├── conversations.py     # Conversation ownership defense-in-depth
 │   ├── identity.py          # Outbound Identity provider 配置与辅助函数
 │   ├── logging_config.py    # Structured logging formatter/filter/middleware
 │   ├── playground.py        # Chainlit Playground 挂载
@@ -40,6 +41,7 @@ personal-assistant-service/
 │   ├── test_tools_init.py   # 工具注册测试
 │   └── test_playground.py   # Chainlit Playground 测试
 ├── scripts/                 # 运维脚本（部署、冒烟测试等）
+├── migrations/              # Conversation/message/Runtime lease SQL
 ├── .env.example             # 唯一面向使用者的 Service 配置入口
 ├── openapi.json             # OpenAPI 规范（自动生成）
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
@@ -113,7 +115,9 @@ application 和 HTTP completion events 统一输出为 stdout JSON。`LOG_LEVEL`
 | `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | 统一对话入口；不传 `stream` 或 `stream:false` 返回 JSON，`stream:true` 返回 SSE |
 
-`/invocations` 需要可信用户身份和会话 ID。生产环境由 AgentArts Gateway 注入；本地直连时需要显式传入 `X-HW-AgentGateway-User-Id` 和 `x-hw-agentarts-session-id`。
+`/invocations` 需要可信用户身份和 Runtime Session ID。Web Chat body 额外传入
+durable `conversation_id`；LangGraph `thread_id` 固定使用
+`{user_id}:{conversation_id}`，不再由可替换 Runtime Session 派生。
 
 `message` 必须是非空字符串，`stream` 仅接受 JSON boolean。客户端未发送
 `Accept` 或发送 `*/*` 时保持兼容；若明确排除实际响应类型，服务返回 `406`：
@@ -147,7 +151,7 @@ curl -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
   -H "X-HW-AgentGateway-User-Id: dev-user" \
   -H "x-hw-agentarts-session-id: dev-session" \
-  -d '{"message":"你好"}'
+  -d '{"conversation_id":"11111111-1111-4111-8111-111111111111","message":"你好"}'
 
 # SSE 流式对话
 curl -N -X POST http://localhost:8080/invocations \
@@ -155,7 +159,7 @@ curl -N -X POST http://localhost:8080/invocations \
   -H "Accept: text/event-stream" \
   -H "X-HW-AgentGateway-User-Id: dev-user" \
   -H "x-hw-agentarts-session-id: dev-session" \
-  -d '{"message":"你好","stream":true}'
+  -d '{"conversation_id":"11111111-1111-4111-8111-111111111111","message":"你好","stream":true}'
 ```
 
 ### SSE 数据格式

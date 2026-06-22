@@ -11,13 +11,16 @@ const LandingPage = React.lazy(() => import("./components/landing/LandingPage"))
 function App() {
   const isAuthenticated = useIsAuthenticated();
   const hydrated = useAuthStore((s) => s.hydrated);
+  const isChatPreview =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("chat-preview") === "1";
 
   return (
     <AuthGuard>
       <ChunkErrorBoundary>
         <Suspense fallback={<LoadingState />}>
           {!hydrated ? <LoadingState /> :
-           isAuthenticated ? <ChatPage /> : <LandingPage />}
+           isAuthenticated || isChatPreview ? <ChatPage /> : <LandingPage />}
         </Suspense>
       </ChunkErrorBoundary>
     </AuthGuard>

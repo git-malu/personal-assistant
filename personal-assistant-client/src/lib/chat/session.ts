@@ -25,3 +25,10 @@ export function resetSessionId(): void {
   }
 }
 
+export function getLegacySessionHint(): string | null {
+  try {
+    return localStorage.getItem(SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}

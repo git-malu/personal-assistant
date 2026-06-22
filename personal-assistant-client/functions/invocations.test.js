@@ -99,4 +99,70 @@ describe("Cloudflare Pages invocations proxy", () => {
       message: "Frontend proxy is not configured",
     });
   });
+
+  it("uses the user active Runtime lease for a Conversation invocation", async () => {
+    const upstreamBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"token":"hello","done":false}\n\n' +
+              'data: {"token":"","done":true}\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(upstreamBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    globalThis.fetch = mockFetch;
+    const store = {
+      getConversation: vi.fn().mockResolvedValue({ id: "conversation-1" }),
+      getActiveLease: vi.fn().mockResolvedValue({
+        runtime_session_id: "runtime-user-1",
+      }),
+      appendMessage: vi.fn().mockResolvedValue({}),
+    };
+    const tasks = [];
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hw-agentgateway-user-id": "user-1",
+        },
+        body: JSON.stringify({
+          conversation_id: "conversation-1",
+          client_message_id: "11111111-1111-4111-8111-111111111111",
+          message: "hello",
+          stream: true,
+        }),
+      },
+    );
+    const response = await onRequestPost({
+      request,
+      env: {
+        ...env,
+        ALLOW_DEV_AUTH: "true",
+        CONVERSATION_STORE: store,
+      },
+      waitUntil: (task) => tasks.push(task),
+    });
+    await response.text();
+    await Promise.all(tasks);
+
+    const forwarded = mockFetch.mock.calls[0][0];
+    expect(forwarded.headers.get("x-hw-agentarts-session-id")).toBe(
+      "runtime-user-1",
+    );
+    expect(store.getConversation).toHaveBeenCalledWith(
+      "user-1",
+      "conversation-1",
+    );
+    expect(store.appendMessage).toHaveBeenCalledTimes(2);
+  });
 });

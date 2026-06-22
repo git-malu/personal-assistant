@@ -6,6 +6,7 @@ import type {
 import { handleChatEvent } from "@/lib/chat/chat-event-handler";
 import { invokeChat } from "@/lib/chat/chat-api-client";
 import { parseSSEStream } from "@/lib/chat/sse-parser";
+import { getSessionId } from "@/lib/chat/session";
 export { getSessionId, resetSessionId } from "@/lib/chat/session";
 
 /**
@@ -15,7 +16,10 @@ export { getSessionId, resetSessionId } from "@/lib/chat/session";
  * forwards them to the local service, while the production Cloudflare Pages
  * Function forwards them to AgentArts Runtime.
  */
-export const chatAdapter: ChatModelAdapter = {
+export function createChatAdapter(
+  getConversationId: () => string | undefined,
+): ChatModelAdapter {
+  return {
   async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
     const { messages, abortSignal } = options;
     const lastUserMessage = [...messages]
@@ -27,7 +31,17 @@ export const chatAdapter: ChatModelAdapter = {
       options.unstable_assistantMessageId ?? "unknown";
     let fullText = "";
 
-    const stream = await invokeChat(query, abortSignal);
+    const conversationId = getConversationId();
+    if (!conversationId) {
+      throw new Error("Conversation is still initializing. Please try again.");
+    }
+    const clientMessageId = lastUserMessage?.id ?? crypto.randomUUID();
+    const stream = await invokeChat(
+      query,
+      abortSignal,
+      conversationId,
+      clientMessageId,
+    );
 
     for await (const event of parseSSEStream(stream)) {
       const result = handleChatEvent(event, {
@@ -49,5 +63,8 @@ export const chatAdapter: ChatModelAdapter = {
       content: [{ type: "text", text: fullText }],
       status: { type: "complete", reason: "stop" },
     };
-  },
-};
+    },
+  };
+}
+
+export const chatAdapter = createChatAdapter(() => getSessionId());

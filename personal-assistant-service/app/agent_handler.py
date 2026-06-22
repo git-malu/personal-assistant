@@ -126,6 +126,8 @@ class AgentHandler:
         self.tools = build_tools()
         self._bundle: AgentBundle | None = None
         self._bundle_lock = asyncio.Lock()
+        self._thread_locks: dict[str, asyncio.Lock] = {}
+        self._thread_locks_guard = asyncio.Lock()
 
     def _build_agent(self):
         """Synchronously build a compiled Agent from the current credential."""
@@ -166,6 +168,16 @@ class AgentHandler:
         """Invalidate the published Bundle without interrupting in-flight calls."""
         async with self._bundle_lock:
             self._bundle = None
+
+    async def get_thread_state(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> Any:
+        """Read a LangGraph thread through the public Agent state API."""
+        agent = await self.get_agent()
+        config = self._build_config(user_id, conversation_id)
+        return await agent.aget_state(config)
 
     def _init_checkpointer(self, settings: Settings | None = None):
         """Initialize the synchronous Checkpointer or defer persistent backends."""
@@ -228,24 +240,38 @@ class AgentHandler:
             await context.__aexit__(None, None, None)
 
     @staticmethod
-    def _build_config(user_id: str, session_id: str | None = None) -> dict:
-        """构造 LangGraph config，thread_id = {user_id}:{session_id}。
+    def _build_config(user_id: str, conversation_id: str | None = None) -> dict:
+        """构造 LangGraph config，thread_id = {user_id}:{conversation_id}。
 
         user-scoped thread_id 从源头防止跨用户 session 泄露。
         """
-        sid = session_id or "default"
-        return {"configurable": {"thread_id": f"{user_id}:{sid}"}}
+        conversation = conversation_id or "default"
+        return {"configurable": {"thread_id": f"{user_id}:{conversation}"}}
+
+    async def _get_thread_lock(self, thread_id: str) -> asyncio.Lock:
+        """Return the process-local serialization lock for a Conversation."""
+        async with self._thread_locks_guard:
+            return self._thread_locks.setdefault(thread_id, asyncio.Lock())
 
     async def handle(
-        self, message: str, user_id: str = "anonymous", session_id: str | None = None
+        self,
+        message: str,
+        user_id: str = "anonymous",
+        conversation_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
-        config = self._build_config(user_id, session_id)
-        agent = await self.get_agent()
-        result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": message}]},
-            config=config,
-        )
+        # session_id remains a compatibility alias for non-Web-Chat channels.
+        conversation = conversation_id or session_id
+        config = self._build_config(user_id, conversation)
+        thread_id = config["configurable"]["thread_id"]
+        lock = await self._get_thread_lock(thread_id)
+        async with lock:
+            agent = await self.get_agent()
+            result = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": message}]},
+                config=config,
+            )
         messages = result.get("messages", [])
         if not messages:
             raise RuntimeError("Agent returned empty response")
@@ -255,44 +281,48 @@ class AgentHandler:
         self,
         message: str,
         user_id: str = "anonymous",
+        conversation_id: str | None = None,
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens and custom events via LangGraph stream_mode."""
-        config = self._build_config(user_id, session_id)
+        conversation = conversation_id or session_id
+        config = self._build_config(user_id, conversation)
+        thread_id = config["configurable"]["thread_id"]
 
         try:
-            agent = await self.get_agent()
-            async for chunk in agent.astream(
-                {"messages": [{"role": "user", "content": message}]},
-                stream_mode=["messages", "custom"],
-                config=config,
-            ):
-                mode, data = chunk
+            lock = await self._get_thread_lock(thread_id)
+            async with lock:
+                agent = await self.get_agent()
+                async for chunk in agent.astream(
+                    {"messages": [{"role": "user", "content": message}]},
+                    stream_mode=["messages", "custom"],
+                    config=config,
+                ):
+                    mode, data = chunk
 
-                # ── 1. Custom event from get_stream_writer() (auth URLs) ──
-                if mode == "custom":
-                    if isinstance(data, dict) and (
-                        data.get("auth_required") or data.get("auth_complete")
-                    ):
-                        yield (
-                            f"event: auth_card\n"
-                            f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                        )
-                    else:
-                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    # ── 1. Custom event from get_stream_writer() (auth URLs) ──
+                    if mode == "custom":
+                        if isinstance(data, dict) and (
+                            data.get("auth_required") or data.get("auth_complete")
+                        ):
+                            yield (
+                                f"event: auth_card\n"
+                                f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                            )
+                        else:
+                            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-                # ── 2. Token streaming (LLM output only, skip tool results) ──
-                elif mode == "messages":
-                    token_chunk, _metadata = data
-                    # ToolMessage content is for the LLM, not the user
-                    if getattr(token_chunk, "type", None) == "tool":
-                        continue
-                    token = getattr(token_chunk, "content", "") or ""
-                    if token:
-                        payload = json.dumps(
-                            {"token": token, "done": False}, ensure_ascii=False
-                        )
-                        yield f"data: {payload}\n\n"
+                    # ── 2. Token streaming (LLM output only, skip tool results) ──
+                    elif mode == "messages":
+                        token_chunk, _metadata = data
+                        if getattr(token_chunk, "type", None) == "tool":
+                            continue
+                        token = getattr(token_chunk, "content", "") or ""
+                        if token:
+                            payload = json.dumps(
+                                {"token": token, "done": False}, ensure_ascii=False
+                            )
+                            yield f"data: {payload}\n\n"
 
             # ── 3. Signal completion ──
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"

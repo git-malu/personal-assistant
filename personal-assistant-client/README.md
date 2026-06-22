@@ -2,7 +2,7 @@
 
 Personal Assistant 的 Web Chat 前端应用，负责用户登录、对话界面、SSE 流式消息渲染和 Markdown 内容展示。当前生产主入口为 Web Chat；飞书和 OfficeClaw 渠道仍在规划中。
 
-Vite + React + TypeScript + Tailwind CSS + assistant-ui。支持 OAuth 登录（Microsoft Entra ID）、登录落地页和聊天界面，并在请求后端时传递 `Authorization` 与 `x-hw-agentarts-session-id`，配合 AgentArts Gateway 完成 Inbound Identity。
+Vite + React + TypeScript + Tailwind CSS + assistant-ui。支持 OAuth 登录（Microsoft Entra ID）、多 Conversation sidebar、服务端 history hydration 与 user-scoped AgentArts Runtime pre-warm。
 
 ## 目录结构
 
@@ -13,14 +13,15 @@ personal-assistant-client/
 │   │   ├── assistant-ui/             # assistant-ui 组件（thread, markdown-text, reasoning, attachment 等）
 │   │   ├── ui/                       # shadcn/ui 基础组件（button, dialog, avatar, tooltip, collapsible）
 │   │   ├── landing/                  # 登录落地页组件（LandingPage, LandingHero, FeatureTile 等）
-│   │   ├── chat/                     # 聊天界面组件（ChatPage）
-│   │   ├── RuntimeProvider.tsx       # assistant-ui RuntimeProvider 包装
+│   │   ├── chat/                     # ChatPage、ConversationSidebar、RuntimeStatus
+│   │   ├── RuntimeProvider.tsx       # assistant-ui RemoteThreadListRuntime
 │   │   ├── LoginButton.tsx           # OAuth 登录按钮
 │   │   └── AuthGuard.tsx             # 认证守卫组件
 │   ├── stores/
 │   │   └── auth-store.ts            # 认证状态管理（MSAL）
 │   ├── lib/
 │   │   ├── chat-adapter.ts           # assistant-ui ChatModelAdapter（fetch POST + SSE）
+│   │   ├── conversations/            # RemoteThreadListAdapter + history/API
 │   │   ├── auth.ts                   # MSAL 认证配置
 │   │   └── utils.ts                  # 工具函数（cn 等）
 │   ├── types/
@@ -32,7 +33,9 @@ personal-assistant-client/
 │   ├── index.css                     # Tailwind 入口 + 自定义动画
 │   └── vite-env.d.ts                # Vite 类型声明
 ├── functions/
-│   └── invocations.js               # Cloudflare Pages Function，透传 JWT + SSE
+│   ├── api/                          # Conversation 与 Runtime lifecycle BFF
+│   ├── _shared/                      # JWT、Hyperdrive store、Runtime session
+│   └── invocations.js                # ownership-aware SSE proxy
 ├── index.html                     # Vite 入口 HTML
 ├── vite.config.ts                 # Vite 配置（代理 + React 插件 + Tailwind CSS）
 ├── wrangler.toml                  # Cloudflare Pages 项目配置
@@ -76,7 +79,8 @@ npm ci
 npm run dev
 ```
 
-开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过
+开发服务器默认监听 `http://localhost:5173`。本地 Conversation metadata 使用
+浏览器 fallback；`/invocations` 请求通过
 Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
 
 确保后端服务已启动：
@@ -91,6 +95,9 @@ LLM API Key 通过 AgentArts Identity 的 `DEEPSEEK_API_KEY` Credential Provider
 ### 4. 打开浏览器
 
 访问 `http://localhost:5173` 进入 Web Chat 对话界面。
+
+未登录时可用开发专属 URL `http://localhost:5173/?chat-preview=1` 检查 Chat UI；
+该分支在 production build 中不可用。
 
 ## 构建
 
@@ -186,6 +193,7 @@ npm run test:watch
 | 样式 | Tailwind CSS 4 + shadcn/ui |
 | Markdown 渲染 | @assistant-ui/react-markdown |
 | 测试 | Vitest + @testing-library/react |
+| Conversation BFF | Cloudflare Pages Functions + Hyperdrive + PostgreSQL |
 
 ## 架构
 
@@ -204,7 +212,8 @@ npm run test:watch
 
 ## SSE 协议
 
-前端通过 `fetch` 向 `POST /invocations` 发送 `{"message":"...","stream":true}`，并消费响应体中的 SSE 流：
+前端通过 `fetch` 向 `POST /invocations` 发送
+`conversation_id`、`client_message_id`、`message` 与 `stream`，并消费 SSE 流：
 
 ```
 data: {"token":"你","done":false}

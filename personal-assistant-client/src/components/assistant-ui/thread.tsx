@@ -64,6 +64,9 @@ export const Thread: FC = () => {
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
       >
         <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4">
+          <AuiIf condition={(s) => s.thread.isLoading}>
+            <ThreadHistorySkeleton />
+          </AuiIf>
           <AuiIf condition={(s) => s.thread.isEmpty}>
             <ThreadWelcome />
           </AuiIf>
@@ -86,6 +89,18 @@ export const Thread: FC = () => {
     </ThreadPrimitive.Root>
   );
 };
+
+const ThreadHistorySkeleton: FC = () => (
+  <div
+    className="flex flex-1 flex-col gap-5 py-12"
+    role="status"
+    aria-label="正在加载对话历史"
+  >
+    <div className="h-4 w-2/3 animate-pulse rounded-full bg-muted" />
+    <div className="h-4 w-5/6 animate-pulse rounded-full bg-muted" />
+    <div className="h-4 w-1/2 animate-pulse rounded-full bg-muted" />
+  </div>
+);
 
 const ThreadMessage: FC = () => {
   const role = useAuiState((s) => s.message.role);

@@ -24,12 +24,28 @@ from app.auth import (  # noqa: E402
     extract_gateway_user_id,
     extract_workload_access_token,
 )
+from app.conversations import (  # noqa: E402
+    assert_conversation_owner,
+    migrate_legacy_conversation,
+)
+from app.settings import get_settings  # noqa: E402
 
 
 class InvocationRequest(BaseModel):
     """Agent invocation request."""
 
     message: str = Field(description="User message sent to the Agent.")
+    conversation_id: str | None = Field(
+        default=None,
+        description=(
+            "Durable Conversation ID. Web Chat always supplies this field; "
+            "legacy non-Web channels may omit it during migration."
+        ),
+    )
+    client_message_id: str | None = Field(
+        default=None,
+        description="Client-generated idempotency key for the user message.",
+    )
     stream: StrictBool = Field(
         default=False,
         description="Return a Server-Sent Events stream instead of JSON.",
@@ -46,6 +62,12 @@ class ErrorResponse(BaseModel):
     """HTTP error response."""
 
     detail: str
+
+
+class LegacyMigrationRequest(BaseModel):
+    """One-time migration hint from the authenticated legacy Web Chat."""
+
+    legacy_session_id: str = Field(min_length=1, max_length=64)
 
 
 def _parse_invocation_request(body: object) -> InvocationRequest:
@@ -195,7 +217,14 @@ async def invocations(request: Request):
     stream = invocation.stream
     user_id = extract_gateway_user_id(request)
     session_id = extract_gateway_session_id(request)
+    conversation_id = invocation.conversation_id or session_id
     extract_workload_access_token(request)
+    if invocation.conversation_id:
+        await assert_conversation_owner(
+            get_settings(),
+            user_id,
+            invocation.conversation_id,
+        )
 
     mode = "stream" if stream else "sync"
     response_media_type = "text/event-stream" if stream else "application/json"
@@ -217,7 +246,7 @@ async def invocations(request: Request):
                 async for sse_data in handler.handle_stream(
                     message=message,
                     user_id=user_id,
-                    session_id=session_id,
+                    session_id=conversation_id,
                 ):
                     yield sse_data
                 status = "success"
@@ -251,7 +280,7 @@ async def invocations(request: Request):
         result = await handler.handle(
             message=message,
             user_id=user_id,
-            session_id=session_id,
+            session_id=conversation_id,
         )
     except Exception as e:
         logger.error(
@@ -267,6 +296,24 @@ async def invocations(request: Request):
         (time.perf_counter() - started_at) * 1000,
     )
     return JSONResponse(content=InvocationResponse(response=result).model_dump())
+
+
+@app.post("/invocations/internal/legacy-conversation-migrations")
+async def legacy_conversation_migration(
+    body: LegacyMigrationRequest,
+    request: Request,
+):
+    """Backfill one legacy Checkpoint without exposing arbitrary thread IDs."""
+    user_id = extract_gateway_user_id(request)
+    extract_workload_access_token(request)
+    handler: AgentHandler = request.app.state.agent_handler
+    state = await handler.get_thread_state(user_id, body.legacy_session_id)
+    return await migrate_legacy_conversation(
+        get_settings(),
+        user_id,
+        body.legacy_session_id,
+        state,
+    )
 
 
 # === Chainlit Playground（Agent 调试 UI）===

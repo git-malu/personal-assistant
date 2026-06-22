@@ -111,9 +111,10 @@ describe("chatAdapter", () => {
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(url).toBe("/invocations");
       expect(init.method).toBe("POST");
-      expect(init.body).toBe(
-        JSON.stringify({ message: "Hello World!", stream: true }),
-      );
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        message: "Hello World!",
+        stream: true,
+      });
     });
 
     it("sends streaming headers and excludes Authorization when idToken is null", async () => {
@@ -694,7 +695,10 @@ describe("chatAdapter", () => {
       const url = mockFetch.mock.calls[0][0] as string;
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(url).toBe("/invocations");
-      expect(init.body).toBe(JSON.stringify({ message: "", stream: true }));
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        message: "",
+        stream: true,
+      });
     });
   });
 

@@ -7,6 +7,7 @@ Covers:
   - Multi-turn context retention and session isolation
 """
 
+import asyncio
 from typing import TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -195,6 +196,46 @@ class TestConfigPassing:
         assert call_kwargs["config"] == {
             "configurable": {"thread_id": "user-42:sess-xyz"}
         }
+
+    @pytest.mark.asyncio
+    async def test_conversation_id_overrides_runtime_session(self, patched_handler):
+        """Web Chat conversation identity is independent from Runtime Session."""
+        handler, mock_agent, _ = patched_handler
+        mock_message = MagicMock(content="response")
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
+
+        await handler.handle(
+            message="Hello",
+            user_id="user-42",
+            conversation_id="conversation-1",
+            session_id="runtime-session-9",
+        )
+
+        config = mock_agent.ainvoke.call_args[1]["config"]
+        assert config == {"configurable": {"thread_id": "user-42:conversation-1"}}
+
+    @pytest.mark.asyncio
+    async def test_same_conversation_invocations_are_serialized(self, patched_handler):
+        """Concurrent writes to one LangGraph thread never overlap."""
+        handler, mock_agent, _ = patched_handler
+        active = 0
+        max_active = 0
+
+        async def invoke(_input, config=None):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return {"messages": [MagicMock(content="response")]}
+
+        mock_agent.ainvoke = invoke
+        await asyncio.gather(
+            handler.handle("one", user_id="user-1", conversation_id="conversation-1"),
+            handler.handle("two", user_id="user-1", conversation_id="conversation-1"),
+        )
+
+        assert max_active == 1
 
     @pytest.mark.asyncio
     async def test_handler_passes_config_with_default_session(self, patched_handler):

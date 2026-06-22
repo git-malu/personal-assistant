@@ -30,11 +30,18 @@ function sendChatRequest(
   query: string,
   abortSignal: AbortSignal,
   headers: Record<string, string>,
+  conversationId: string,
+  clientMessageId: string,
 ): Promise<Response> {
   return fetch("/invocations", {
     method: "POST",
     headers,
-    body: JSON.stringify({ message: query, stream: true }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      client_message_id: clientMessageId,
+      message: query,
+      stream: true,
+    }),
     signal: abortSignal,
   });
 }
@@ -62,10 +69,18 @@ function throwResponseError(response: Response): never {
 export async function invokeChat(
   query: string,
   abortSignal: AbortSignal,
+  conversationId: string = getSessionId(),
+  clientMessageId: string = crypto.randomUUID(),
 ): Promise<ReadableStream<Uint8Array>> {
   const idToken = await getRequestToken();
   const headers = buildHeaders(idToken);
-  let response = await sendChatRequest(query, abortSignal, headers);
+  let response = await sendChatRequest(
+    query,
+    abortSignal,
+    headers,
+    conversationId,
+    clientMessageId,
+  );
 
   if ((response.status === 401 || response.status === 403) && idToken) {
     const freshToken = await acquireIdTokenSilently();
@@ -76,7 +91,13 @@ export async function invokeChat(
 
     useAuthStore.getState().setIdToken(freshToken);
     applyTokenHeaders(headers, freshToken);
-    response = await sendChatRequest(query, abortSignal, headers);
+    response = await sendChatRequest(
+      query,
+      abortSignal,
+      headers,
+      conversationId,
+      clientMessageId,
+    );
   }
 
   if (!response.ok) {

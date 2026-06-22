@@ -37,6 +37,30 @@
                     "title": "Message",
                     "description": "User message sent to the Agent."
                   },
+                  "conversation_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Conversation Id",
+                    "description": "Durable Conversation ID. Web Chat always supplies this field; legacy non-Web channels may omit it during migration."
+                  },
+                  "client_message_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Client Message Id",
+                    "description": "Client-generated idempotency key for the user message."
+                  },
                   "stream": {
                     "type": "boolean",
                     "title": "Stream",
@@ -45,9 +69,7 @@
                   }
                 },
                 "type": "object",
-                "required": [
-                  "message"
-                ],
+                "required": ["message"],
                 "title": "InvocationRequest",
                 "description": "Agent invocation request."
               }
@@ -69,7 +91,7 @@
                   "type": "string",
                   "description": "Server-Sent Events stream."
                 },
-                "example": "data: {\"token\":\"你\",\"done\":false}\n\ndata: {\"token\":\"\",\"done\":true}\n\n"
+                "example": "data: {\"token\":\"��\",\"done\":false}\n\ndata: {\"token\":\"\",\"done\":true}\n\n"
               }
             }
           },
@@ -107,9 +129,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "detail"
-        ],
+        "required": ["detail"],
         "title": "ErrorResponse",
         "description": "HTTP error response."
       },
@@ -121,9 +141,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "response"
-        ],
+        "required": ["response"],
         "title": "InvocationResponse",
         "description": "Successful non-streaming invocation response."
       }
