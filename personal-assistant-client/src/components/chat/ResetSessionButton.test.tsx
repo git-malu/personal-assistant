@@ -35,6 +35,12 @@ import { ResetSessionButton } from "./ResetSessionButton";
 const mockCancelRun = vi.fn();
 const mockThreadReset = vi.fn();
 const mockComposerReset = vi.fn().mockResolvedValue(undefined);
+const mockSwitchToNewThread = vi.fn().mockResolvedValue(undefined);
+const mockGetThreadItem = vi.fn();
+const mockInitializeThreadListItem = vi.fn().mockResolvedValue(undefined);
+const mockGetAssistantRuntime = vi.fn();
+const mockRuntimeSwitchToNewThread = vi.fn().mockResolvedValue(undefined);
+const mockRuntimeInitializeMainItem = vi.fn().mockResolvedValue(undefined);
 const mockThread = vi.fn(() => ({
   cancelRun: mockCancelRun,
   reset: mockThreadReset,
@@ -42,22 +48,66 @@ const mockThread = vi.fn(() => ({
 const mockComposer = vi.fn(() => ({
   reset: mockComposerReset,
 }));
+const mockThreads = vi.fn(() => ({
+  switchToNewThread: mockSwitchToNewThread,
+  item: mockGetThreadItem,
+  __internal_getAssistantRuntime: mockGetAssistantRuntime,
+}));
 
 /**
  * Build the standard "not running" AUI mock state.
  */
 function setupStandardMocks() {
-  mockUseAui.mockReturnValue({
-    thread: mockThread,
-    composer: mockComposer,
-  });
-  mockUseAuiState.mockReturnValue(false);
+  mockUseAui.mockReset();
+  mockUseAuiState.mockReset();
   mockResetSessionId.mockReset();
   mockCancelRun.mockReset();
   mockThreadReset.mockReset();
   mockComposerReset.mockReset();
+  mockSwitchToNewThread.mockReset();
+  mockGetThreadItem.mockReset();
+  mockInitializeThreadListItem.mockReset();
+  mockGetAssistantRuntime.mockReset();
+  mockRuntimeSwitchToNewThread.mockReset();
+  mockRuntimeInitializeMainItem.mockReset();
   mockThread.mockReset();
   mockComposer.mockReset();
+  mockThreads.mockReset();
+
+  mockComposerReset.mockResolvedValue(undefined);
+  mockSwitchToNewThread.mockResolvedValue(undefined);
+  mockGetThreadItem.mockReturnValue({
+    initialize: mockInitializeThreadListItem,
+  });
+  mockInitializeThreadListItem.mockResolvedValue(undefined);
+  mockRuntimeSwitchToNewThread.mockResolvedValue(undefined);
+  mockRuntimeInitializeMainItem.mockResolvedValue(undefined);
+  mockGetAssistantRuntime.mockReturnValue({
+    threads: {
+      switchToNewThread: mockRuntimeSwitchToNewThread,
+      mainItem: {
+        initialize: mockRuntimeInitializeMainItem,
+      },
+    },
+  });
+  mockThread.mockReturnValue({
+    cancelRun: mockCancelRun,
+    reset: mockThreadReset,
+  });
+  mockComposer.mockReturnValue({
+    reset: mockComposerReset,
+  });
+  mockThreads.mockReturnValue({
+    switchToNewThread: mockSwitchToNewThread,
+    item: mockGetThreadItem,
+    __internal_getAssistantRuntime: mockGetAssistantRuntime,
+  });
+  mockUseAui.mockReturnValue({
+    thread: mockThread,
+    composer: mockComposer,
+    threads: mockThreads,
+  });
+  mockUseAuiState.mockReturnValue(false);
 }
 
 // ────────────────────────────────────────────────────
@@ -167,7 +217,7 @@ describe("ResetSessionButton", () => {
   });
 
   // ── CT-RS-06: Confirm executes full reset sequence ─
-  it("CT-RS-06: clicking Confirm calls cancelRun → thread.reset → composer.reset → resetSessionId → closes dialog", async () => {
+  it("CT-RS-06: clicking Confirm creates a new conversation before clearing the legacy session hint", async () => {
     const user = userEvent.setup();
     render(<ResetSessionButton />);
 
@@ -179,26 +229,35 @@ describe("ResetSessionButton", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    // All four operations should have been called exactly once
+    // All reset and new-conversation operations should have been called once.
     expect(mockCancelRun).toHaveBeenCalledTimes(1);
     expect(mockResetSessionId).toHaveBeenCalledTimes(1);
     expect(mockThreadReset).toHaveBeenCalledTimes(1);
     expect(mockComposer).toHaveBeenCalledTimes(1);
     expect(mockComposerReset).toHaveBeenCalledTimes(1);
+    expect(mockThreads).toHaveBeenCalledTimes(1);
+    expect(mockRuntimeSwitchToNewThread).toHaveBeenCalledTimes(1);
+    expect(mockRuntimeInitializeMainItem).toHaveBeenCalledTimes(1);
+    expect(mockSwitchToNewThread).not.toHaveBeenCalled();
+    expect(mockInitializeThreadListItem).not.toHaveBeenCalled();
 
-    // Verify order: cancelRun → thread.reset → composer.reset → resetSessionId
-    // (Panel H-02 fix: session ID cleared LAST to prevent inconsistency on UI failure)
+    // Verify order: UI reset → new remote thread → legacy hint cleanup.
     const callOrder = [
       mockCancelRun,
       mockThreadReset,
       mockComposer,
       mockComposerReset,
+      mockThreads,
+      mockRuntimeSwitchToNewThread,
+      mockRuntimeInitializeMainItem,
       mockResetSessionId,
     ].map((m) => m.mock?.invocationCallOrder?.[0] ?? Infinity);
 
     expect(callOrder[0]).toBeLessThan(callOrder[1]); // cancelRun before thread.reset
     expect(callOrder[1]).toBeLessThan(callOrder[2]); // thread.reset before composer
-    expect(callOrder[3]).toBeLessThan(callOrder[4]); // composer.reset before resetSessionId
+    expect(callOrder[3]).toBeLessThan(callOrder[4]); // composer.reset before threads
+    expect(callOrder[5]).toBeLessThan(callOrder[6]); // switch before initialize
+    expect(callOrder[6]).toBeLessThan(callOrder[7]); // initialize before resetSessionId
   });
 
   // ── CT-RS-07: Button disabled during streaming ───
@@ -210,6 +269,24 @@ describe("ResetSessionButton", () => {
 
     const button = screen.getByRole("button", { name: "新对话" });
     expect(button).toBeDisabled();
+  });
+
+  it("CT-RS-07b: falls back to store thread methods when runtime is unavailable", async () => {
+    mockGetAssistantRuntime.mockReturnValue(undefined);
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    expect(mockSwitchToNewThread).toHaveBeenCalledTimes(1);
+    expect(mockGetThreadItem).toHaveBeenCalledWith("main");
+    expect(mockInitializeThreadListItem).toHaveBeenCalledTimes(1);
+    expect(mockResetSessionId).toHaveBeenCalledTimes(1);
   });
 
   // ── CT-RS-08: Error in composer().reset() does not freeze dialog ─
@@ -278,6 +355,8 @@ describe("ResetSessionButton", () => {
     // Subsequent operations must NOT have been called
     expect(mockThreadReset).not.toHaveBeenCalled();
     expect(mockComposerReset).not.toHaveBeenCalled();
+    expect(mockSwitchToNewThread).not.toHaveBeenCalled();
+    expect(mockInitializeThreadListItem).not.toHaveBeenCalled();
     expect(mockResetSessionId).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
@@ -313,6 +392,8 @@ describe("ResetSessionButton", () => {
 
     // H-02 fix: since thread.reset threw, resetSessionId must NOT be called
     // (session ID preserved → user can retry with same session)
+    expect(mockSwitchToNewThread).not.toHaveBeenCalled();
+    expect(mockInitializeThreadListItem).not.toHaveBeenCalled();
     expect(mockResetSessionId).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();

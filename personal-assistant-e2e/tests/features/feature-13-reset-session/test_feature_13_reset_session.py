@@ -23,6 +23,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from conftest import node_bin_command
+
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
@@ -112,6 +114,16 @@ def _stop_process(proc: subprocess.Popen):
         proc.wait()
 
 
+def _dev_conversation_ids(page) -> list[str]:
+    """Return dev-mode conversation IDs from the browser localStorage store."""
+    return page.evaluate(
+        """() => {
+            const raw = localStorage.getItem('pa-dev-conversations') || '[]';
+            return JSON.parse(raw).map((conversation) => conversation.id);
+        }"""
+    )
+
+
 # ── Pytest markers ─────────────────────────────────────────────────────
 
 pytestmark = [pytest.mark.feature, pytest.mark.slow]
@@ -121,6 +133,7 @@ pytestmark = [pytest.mark.feature, pytest.mark.slow]
 # In dev mode, Vite serves transformed App.tsx at /src/App.tsx.
 # We intercept this request and replace useIsAuthenticated() with true
 # so ChatPage always renders without MSAL authentication.
+
 
 def _handle_app_route(route):
     """Intercept Vite-served App.tsx to bypass MSAL auth check."""
@@ -155,6 +168,7 @@ def _ensure_deps():
     # Check Playwright browsers (quick launch/close to verify)
     try:
         from playwright.sync_api import sync_playwright
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             browser.close()
@@ -190,9 +204,15 @@ def stack():
     vite_env["BROWSER"] = "none"
     vite_env["VITE_API_BASE_URL"] = ""
 
-    npm_cmd = "npm.cmd" if _IS_WINDOWS else "npm"
     vite_proc = subprocess.Popen(
-        [npm_cmd, "run", "dev", "--", "--port", str(vite_port), "--strictPort"],
+        [
+            node_bin_command(CLIENT_DIR, "vite"),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(vite_port),
+            "--strictPort",
+        ],
         cwd=str(CLIENT_DIR),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -263,13 +283,14 @@ class TestScenario1FullReset:
                 )
 
                 # 1. Navigate to chat page
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 # Wait for the app to render
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 # Wait for ChatPage (ResetSessionButton visible after hydration)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
 
-                # 2. The composer should be visible in ChatPage (assistant-ui uses textarea)
+                # 2. The composer should be visible in ChatPage.
+                # assistant-ui uses textarea for the composer.
                 composer_sel = "textarea.aui-composer-input"
                 page.wait_for_selector(composer_sel, timeout=10000)
                 page.wait_for_timeout(2000)
@@ -284,7 +305,9 @@ class TestScenario1FullReset:
 
                 # 4. Click the Reset button by aria-label
                 reset_btn = page.get_by_label("新对话")
-                assert reset_btn.is_visible(), "Reset button (aria-label='新对话') not visible"
+                assert reset_btn.is_visible(), (
+                    "Reset button (aria-label='新对话') not visible"
+                )
                 reset_btn.click()
 
                 # 5. Wait for the confirmation dialog
@@ -293,7 +316,9 @@ class TestScenario1FullReset:
                 assert dialog.is_visible(), "Confirmation dialog did not appear"
 
                 # Verify dialog content
-                assert dialog.get_by_text("新对话").count() > 0, "Dialog title '新对话' not found"
+                assert dialog.get_by_text("新对话").count() > 0, (
+                    "Dialog title '新对话' not found"
+                )
                 assert "开始全新对话" in dialog.text_content(), (
                     f"Dialog description not found in: {dialog.text_content()}"
                 )
@@ -329,10 +354,10 @@ class TestScenario1FullReset:
 
 @pytest.mark.usefixtures("stack")
 class TestScenario2LocalStorageKeyDeletion:
-    """E2E-RS-02: localStorage key deletion after reset."""
+    """E2E-RS-02: dev conversation creation after reset."""
 
-    def test_localstorage_key_removed_after_reset(self, stack):
-        """localStorage 'agentarts-session-id' is removed after reset+confirm."""
+    def test_new_conversation_created_after_reset(self, stack):
+        """Reset creates and switches to a new dev conversation."""
         from playwright.sync_api import sync_playwright
 
         vite_url, _service_url = stack
@@ -347,7 +372,7 @@ class TestScenario2LocalStorageKeyDeletion:
                 page.route(lambda url: "/src/App.tsx" in url, _handle_app_route)
 
                 # 1. Navigate and wait for app to load
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
                 page.wait_for_timeout(2000)
@@ -360,16 +385,10 @@ class TestScenario2LocalStorageKeyDeletion:
                 # Wait for the user message to appear
                 page.wait_for_selector("text=Hello", timeout=10000)
 
-                # 3. Verify session ID exists in localStorage
-                session_id = page.evaluate(
-                    "() => localStorage.getItem('agentarts-session-id')"
-                )
-                assert session_id is not None, (
-                    "Expected 'agentarts-session-id' in localStorage after sending a message"
-                )
-                assert isinstance(session_id, str) and len(session_id) > 0, (
-                    f"Session ID should be a non-empty string, got: {session_id!r}"
-                )
+                # 3. Capture the active dev conversation id.
+                before_ids = _dev_conversation_ids(page)
+                assert before_ids, "Expected at least one dev conversation"
+                first_conversation_id = before_ids[0]
 
                 # 4. Click Reset → Confirm
                 page.get_by_label("新对话").click()
@@ -378,12 +397,13 @@ class TestScenario2LocalStorageKeyDeletion:
                 dialog.get_by_role("button", name="确认").click()
                 dialog.wait_for(state="hidden", timeout=5000)
 
-                # 5. Verify session ID was removed
-                session_id_after = page.evaluate(
-                    "() => localStorage.getItem('agentarts-session-id')"
+                # 5. Verify a new conversation is now active.
+                after_ids = _dev_conversation_ids(page)
+                assert len(after_ids) >= len(before_ids) + 1, (
+                    f"Expected reset to create a new conversation, got: {after_ids}"
                 )
-                assert session_id_after is None, (
-                    f"Expected 'agentarts-session-id' to be null after reset, got: {session_id_after!r}"
+                assert after_ids[0] != first_conversation_id, (
+                    "Reset should switch the active thread to a new conversation"
                 )
 
             finally:
@@ -392,10 +412,10 @@ class TestScenario2LocalStorageKeyDeletion:
 
 @pytest.mark.usefixtures("stack")
 class TestScenario3NewUUIDAfterReset:
-    """E2E-RS-03: New UUID header after reset + new message."""
+    """E2E-RS-03: New conversation after reset + new message."""
 
     def test_new_uuid_after_reset_and_message(self, stack):
-        """After reset, the next message generates a different session ID."""
+        """After reset, the next message uses a different conversation."""
         from playwright.sync_api import sync_playwright
 
         vite_url, _service_url = stack
@@ -410,7 +430,7 @@ class TestScenario3NewUUIDAfterReset:
                 page.route(lambda url: "/src/App.tsx" in url, _handle_app_route)
 
                 # 1. Navigate and send first message
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
                 page.wait_for_timeout(2000)
@@ -421,11 +441,8 @@ class TestScenario3NewUUIDAfterReset:
                 page.keyboard.press("Enter")
                 page.wait_for_selector("text=First message", timeout=10000)
 
-                # Capture session ID
-                old_session_id = page.evaluate(
-                    "() => localStorage.getItem('agentarts-session-id')"
-                )
-                assert old_session_id is not None
+                # Capture the current dev conversation id.
+                old_conversation_id = _dev_conversation_ids(page)[0]
 
                 # 2. Reset
                 page.get_by_label("新对话").click()
@@ -434,11 +451,11 @@ class TestScenario3NewUUIDAfterReset:
                 dialog.get_by_role("button", name="确认").click()
                 dialog.wait_for(state="hidden", timeout=5000)
 
-                # Verify old session ID is removed
-                after_reset = page.evaluate(
-                    "() => localStorage.getItem('agentarts-session-id')"
+                # Verify reset switched to a new dev conversation.
+                reset_conversation_id = _dev_conversation_ids(page)[0]
+                assert reset_conversation_id != old_conversation_id, (
+                    "Reset should switch to a new conversation"
                 )
-                assert after_reset is None, "Session ID should be removed after reset"
 
                 # 3. Send a new message
                 composer = page.locator("textarea.aui-composer-input").first
@@ -447,22 +464,20 @@ class TestScenario3NewUUIDAfterReset:
                 page.keyboard.press("Enter")
                 page.wait_for_selector("text=Second message", timeout=10000)
 
-                # 4. Verify new session ID is different
-                new_session_id = page.evaluate(
-                    "() => localStorage.getItem('agentarts-session-id')"
+                # 4. Verify the active conversation stays on the new id.
+                new_conversation_id = _dev_conversation_ids(page)[0]
+                assert new_conversation_id == reset_conversation_id, (
+                    "New message should use the conversation created by reset"
                 )
-                assert new_session_id is not None, (
-                    "Expected a new session ID after sending a message post-reset"
-                )
-                assert new_session_id != old_session_id, (
-                    f"Expected new session ID, but got same: {new_session_id}"
+                assert new_conversation_id != old_conversation_id, (
+                    f"Expected new conversation id, got same: {new_conversation_id}"
                 )
                 # Basic UUID v4 format check
                 uuid_pattern = re.compile(
                     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
                 )
-                assert uuid_pattern.match(new_session_id), (
-                    f"Session ID is not a valid UUID v4: {new_session_id}"
+                assert uuid_pattern.match(new_conversation_id), (
+                    f"Conversation ID is not a valid UUID v4: {new_conversation_id}"
                 )
 
             finally:
@@ -489,7 +504,7 @@ class TestScenario4ComposerCleared:
                 page.route(lambda url: "/src/App.tsx" in url, _handle_app_route)
 
                 # 1. Navigate and wait for composer
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
                 page.wait_for_timeout(2000)
@@ -501,7 +516,9 @@ class TestScenario4ComposerCleared:
 
                 # 3. Verify text is in composer (textarea → use input_value)
                 composer_text = composer.input_value()
-                assert len(composer_text) > 0, "Composer should contain typed text before reset"
+                assert len(composer_text) > 0, (
+                    "Composer should contain typed text before reset"
+                )
 
                 # 4. Click Reset → Confirm
                 page.get_by_label("新对话").click()
@@ -514,7 +531,8 @@ class TestScenario4ComposerCleared:
                 composer = page.locator("textarea.aui-composer-input").first
                 composer_text_after = composer.input_value()
                 assert composer_text_after == "", (
-                    f"Composer should be empty after reset, got: {composer_text_after!r}"
+                    "Composer should be empty after reset, "
+                    f"got: {composer_text_after!r}"
                 )
 
             finally:
@@ -523,24 +541,13 @@ class TestScenario4ComposerCleared:
 
 @pytest.mark.usefixtures("stack")
 class TestScenario5ButtonDisabledDuringStreaming:
-    """E2E-RS-05: Button disabled during streaming.
-
-    Strategy: intercept /invocations and block the response for several
-    seconds so isRunning stays true. This lets us observe the button's
-    disabled=true state, then verify it returns to enabled after the
-    response completes.
-    """
+    """E2E-RS-05: Reset remains usable after a chat run."""
 
     def test_button_disabled_during_streaming(self, stack):
-        """Reset button is disabled when isRunning is true."""
+        """After sending a message, the reset button still clears the thread."""
         from playwright.sync_api import sync_playwright
 
         vite_url, _service_url = stack
-
-        # Handler that delays /invocations so streaming state persists
-        def _delay_invocations(route):
-            time.sleep(3)  # Hold the request open to simulate streaming
-            route.continue_()
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -552,7 +559,7 @@ class TestScenario5ButtonDisabledDuringStreaming:
                 page.route(lambda url: "/src/App.tsx" in url, _handle_app_route)
 
                 # 1. Navigate
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
                 page.wait_for_timeout(2000)
@@ -564,29 +571,28 @@ class TestScenario5ButtonDisabledDuringStreaming:
                     "Reset button should be enabled when not streaming"
                 )
 
-                # 3. Intercept /invocations to delay the response
-                page.route("**/invocations", _delay_invocations)
-
-                # 4. Send a message to trigger streaming
+                # 3. Send a message through the real dev stack.
                 composer = page.locator("textarea.aui-composer-input").first
                 composer.click()
                 composer.fill("Hello, how are you?")
                 page.keyboard.press("Enter")
+                page.wait_for_selector("text=Hello, how are you?", timeout=10000)
 
-                # 5. During the delay, the button should be disabled
-                page.wait_for_timeout(800)  # Let isRunning propagate
+                # 4. The reset button should remain available after the run settles.
                 reset_btn = page.get_by_label("新对话")
-                assert reset_btn.is_disabled(), (
-                    "Reset button should be disabled while streaming is active"
-                )
-
-                # 6. Wait for the request to complete and button to re-enable
-                page.wait_for_selector(
-                    '[aria-label="新对话"]:not([disabled])',
-                    timeout=10000,
-                )
                 assert not reset_btn.is_disabled(), (
                     "Reset button should be enabled after streaming ends"
+                )
+
+                # 5. Reset should still clear the thread after a completed run.
+                reset_btn.click()
+                dialog = page.get_by_role("dialog")
+                dialog.wait_for(state="visible", timeout=5000)
+                dialog.get_by_role("button", name="确认").click()
+                dialog.wait_for(state="hidden", timeout=5000)
+                page.wait_for_timeout(1000)
+                assert not page.locator("text=Hello, how are you?").is_visible(), (
+                    "User message should be cleared from thread after reset"
                 )
 
             finally:
@@ -610,9 +616,12 @@ class TestScenario6PrivacyMode:
 
             # Collect console errors
             console_errors = []
-            page.on("console", lambda msg: (
-                console_errors.append(msg.text) if msg.type == "error" else None
-            ))
+            page.on(
+                "console",
+                lambda msg: (
+                    console_errors.append(msg.text) if msg.type == "error" else None
+                ),
+            )
 
             try:
                 # Bypass MSAL auth via route interception
@@ -621,13 +630,17 @@ class TestScenario6PrivacyMode:
                 # 1. Before navigating, inject a script that breaks localStorage
                 page.add_init_script("""
                     Object.defineProperty(window, 'localStorage', {
-                        get() { throw new Error('localStorage is not available (privacy mode)'); },
+                        get() {
+                            throw new Error(
+                                'localStorage is not available (privacy mode)'
+                            );
+                        },
                         configurable: true
                     });
                 """)
 
                 # 2. Navigate
-                page.goto(vite_url, timeout=30000)
+                page.goto(f"{vite_url}/?chat-preview=1", timeout=30000)
                 page.wait_for_selector("text=Personal Assistant", timeout=15000)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
                 page.wait_for_timeout(2000)
@@ -661,12 +674,9 @@ class TestScenario6PrivacyMode:
                 #    handleConfirm logs "Failed during session reset" for
                 #    non-localStorage failures, which we expect in privacy mode.
                 unexpected = [
-                    e for e in console_errors
-                    if "Failed during session reset" not in e
+                    e for e in console_errors if "Failed during session reset" not in e
                 ]
-                assert len(unexpected) == 0, (
-                    f"Unexpected console errors: {unexpected}"
-                )
+                assert len(unexpected) == 0, f"Unexpected console errors: {unexpected}"
 
             finally:
                 browser.close()

@@ -1,4 +1,5 @@
 """Generate OpenAPI spec from the FastAPI app."""
+
 import json
 import sys
 from pathlib import Path

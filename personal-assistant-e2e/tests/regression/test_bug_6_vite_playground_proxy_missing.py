@@ -15,7 +15,7 @@ import pytest
 
 # Import shared ServiceProcess fixture from e2e conftest.
 # pytest automatically discovers conftest.py in the e2e root directory.
-from conftest import PROJECT_ROOT, ServiceProcess
+from conftest import PROJECT_ROOT, ServiceProcess, node_bin_command
 
 _CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 
@@ -31,7 +31,13 @@ class ClientDevProcess:
     def start(self, timeout: float = 30.0):
         """Start the Vite dev server."""
         self.process = subprocess.Popen(
-            ["npm", "run", "dev", "--", "--port", str(self.port)],
+            [
+                node_bin_command(_CLIENT_DIR, "vite"),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+            ],
             cwd=str(_CLIENT_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -56,7 +62,8 @@ class ClientDevProcess:
 
         self.stop()
         raise TimeoutError(
-            f"Vite dev server did not become ready within {timeout}s on port {self.port}"
+            "Vite dev server did not become ready within "
+            f"{timeout}s on port {self.port}"
         )
 
     def stop(self):
@@ -140,8 +147,7 @@ class TestBug6VitePlaygroundProxyMissing:
         if resp.status_code in (302, 307):
             location = resp.headers.get("Location", "")
             assert location.endswith("/playground/"), (
-                f"Expected redirect Location to end with /playground/, "
-                f"got {location!r}"
+                f"Expected redirect Location to end with /playground/, got {location!r}"
             )
 
         # Key assertion: response must NOT be the assistant-ui SPA.

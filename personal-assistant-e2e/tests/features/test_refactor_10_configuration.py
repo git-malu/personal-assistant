@@ -28,9 +28,7 @@ class TestUnifiedConfigurationContract:
             assert name in content
 
     def test_deployment_config_contains_no_removed_runtime_variables(self):
-        content = (SERVICE_DIR / ".agentarts_config.yaml").read_text(
-            encoding="utf-8"
-        )
+        content = (SERVICE_DIR / ".agentarts_config.yaml").read_text(encoding="utf-8")
 
         for removed in (
             "MODEL_API_KEY",
@@ -43,8 +41,7 @@ class TestUnifiedConfigurationContract:
         from app.main import app
 
         assert all(
-            middleware.cls is not CORSMiddleware
-            for middleware in app.user_middleware
+            middleware.cls is not CORSMiddleware for middleware in app.user_middleware
         )
 
     def test_legacy_variables_do_not_change_settings(self, monkeypatch):

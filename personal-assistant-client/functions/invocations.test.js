@@ -11,6 +11,7 @@ describe("Cloudflare Pages invocations proxy", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it("forwards the request to the full AgentArts Runtime path", async () => {
@@ -65,6 +66,7 @@ describe("Cloudflare Pages invocations proxy", () => {
   });
 
   it("returns 502 when the Gateway request fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
 
     const request = new Request(
@@ -163,6 +165,214 @@ describe("Cloudflare Pages invocations proxy", () => {
       "user-1",
       "conversation-1",
     );
+    expect(store.appendMessage).toHaveBeenCalledTimes(3);
+    expect(store.appendMessage.mock.calls[0][2]).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111111",
+      role: "user",
+      status: "pending",
+    });
+    expect(store.appendMessage.mock.calls[1][2]).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111111",
+      role: "user",
+      status: "complete",
+    });
+    expect(store.appendMessage.mock.calls[2][2]).toMatchObject({
+      role: "assistant",
+      status: "complete",
+    });
+  });
+
+  it("marks the user message failed when the upstream invocation fails", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "upstream failed" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    globalThis.fetch = mockFetch;
+    const store = {
+      getConversation: vi.fn().mockResolvedValue({ id: "conversation-1" }),
+      getActiveLease: vi.fn().mockResolvedValue({
+        runtime_session_id: "runtime-user-1",
+      }),
+      appendMessage: vi.fn().mockResolvedValue({}),
+    };
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hw-agentgateway-user-id": "user-1",
+        },
+        body: JSON.stringify({
+          conversation_id: "conversation-1",
+          client_message_id: "11111111-1111-4111-8111-111111111111",
+          message: "hello",
+          stream: true,
+        }),
+      },
+    );
+    const response = await onRequestPost({
+      request,
+      env: {
+        ...env,
+        ALLOW_DEV_AUTH: "true",
+        CONVERSATION_STORE: store,
+      },
+    });
+
+    expect(response.status).toBe(500);
     expect(store.appendMessage).toHaveBeenCalledTimes(2);
+    expect(store.appendMessage.mock.calls[0][2]).toMatchObject({
+      role: "user",
+      status: "pending",
+    });
+    expect(store.appendMessage.mock.calls[1][2]).toMatchObject({
+      role: "user",
+      status: "failed",
+    });
+  });
+
+  it("does not forward a Conversation invocation when the message id conflicts", async () => {
+    const mockFetch = vi.fn();
+    globalThis.fetch = mockFetch;
+    const store = {
+      getConversation: vi.fn().mockResolvedValue({ id: "conversation-1" }),
+      getActiveLease: vi.fn().mockResolvedValue({
+        runtime_session_id: "runtime-user-1",
+      }),
+      appendMessage: vi.fn().mockResolvedValue(null),
+    };
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hw-agentgateway-user-id": "user-1",
+        },
+        body: JSON.stringify({
+          conversation_id: "conversation-1",
+          client_message_id: "11111111-1111-4111-8111-111111111111",
+          message: "hello",
+          stream: true,
+        }),
+      },
+    );
+
+    const response = await onRequestPost({
+      request,
+      env: {
+        ...env,
+        ALLOW_DEV_AUTH: "true",
+        CONVERSATION_STORE: store,
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ message: "Message id conflict" });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(store.appendMessage).toHaveBeenCalledTimes(1);
+    expect(store.appendMessage.mock.calls[0][2]).toMatchObject({
+      role: "user",
+      status: "pending",
+    });
+  });
+
+  it("does not forward a retried Conversation invocation for an existing message", async () => {
+    const mockFetch = vi.fn();
+    globalThis.fetch = mockFetch;
+    const store = {
+      getConversation: vi.fn().mockResolvedValue({ id: "conversation-1" }),
+      getActiveLease: vi.fn().mockResolvedValue({
+        runtime_session_id: "runtime-user-1",
+      }),
+      appendMessage: vi.fn().mockResolvedValue({
+        id: "11111111-1111-4111-8111-111111111111",
+        status: "complete",
+        reused: true,
+      }),
+    };
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hw-agentgateway-user-id": "user-1",
+        },
+        body: JSON.stringify({
+          conversation_id: "conversation-1",
+          client_message_id: "11111111-1111-4111-8111-111111111111",
+          message: "hello",
+          stream: true,
+        }),
+      },
+    );
+
+    const response = await onRequestPost({
+      request,
+      env: {
+        ...env,
+        ALLOW_DEV_AUTH: "true",
+        CONVERSATION_STORE: store,
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      message: "Message already submitted",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(store.appendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the user message failed when the upstream request rejects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+    const store = {
+      getConversation: vi.fn().mockResolvedValue({ id: "conversation-1" }),
+      getActiveLease: vi.fn().mockResolvedValue({
+        runtime_session_id: "runtime-user-1",
+      }),
+      appendMessage: vi.fn().mockResolvedValue({}),
+    };
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-hw-agentgateway-user-id": "user-1",
+        },
+        body: JSON.stringify({
+          conversation_id: "conversation-1",
+          client_message_id: "11111111-1111-4111-8111-111111111111",
+          message: "hello",
+          stream: true,
+        }),
+      },
+    );
+
+    const response = await onRequestPost({
+      request,
+      env: {
+        ...env,
+        ALLOW_DEV_AUTH: "true",
+        CONVERSATION_STORE: store,
+      },
+    });
+
+    expect(response.status).toBe(502);
+    expect(store.appendMessage).toHaveBeenCalledTimes(2);
+    expect(store.appendMessage.mock.calls[0][2]).toMatchObject({
+      role: "user",
+      status: "pending",
+    });
+    expect(store.appendMessage.mock.calls[1][2]).toMatchObject({
+      role: "user",
+      status: "failed",
+    });
   });
 });

@@ -2,6 +2,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RuntimeProvider } from "@/components/RuntimeProvider";
 import { ConversationSidebar } from "./ConversationSidebar";
+import { ResetSessionButton } from "./ResetSessionButton";
 import { Menu, MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import { useAuiState } from "@assistant-ui/react";
@@ -33,12 +34,15 @@ function ChatShell() {
             </div>
             <div className="text-[11px] text-muted-foreground">Conversation</div>
           </div>
-          <button
-            className="grid size-10 place-items-center justify-self-end rounded-full hover:bg-muted"
-            aria-label="更多操作"
-          >
-            <MoreHorizontal className="size-4" />
-          </button>
+          <div className="flex items-center gap-1 justify-self-end">
+            <ResetSessionButton />
+            <button
+              className="grid size-10 place-items-center rounded-full hover:bg-muted"
+              aria-label="更多操作"
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+          </div>
         </header>
         <main className="min-h-0 flex-1">
           <Thread />

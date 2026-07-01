@@ -12,6 +12,7 @@ logger = logging.getLogger("app")
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import (  # noqa: E402
+    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     StreamingResponse,
@@ -317,6 +318,33 @@ async def legacy_conversation_migration(
 
 
 # === Chainlit Playground（Agent 调试 UI）===
+
+
+@app.get("/playground", include_in_schema=False)
+async def legacy_playground_redirect():
+    """Redirect legacy /playground to /playground/ for browser compatibility."""
+    return RedirectResponse(url="/playground/")
+
+
+@app.get("/playground/", include_in_schema=False)
+async def legacy_playground_slash_redirect():
+    """Serve a legacy Chainlit-compatible shell that points at the new mount."""
+    return HTMLResponse(
+        """
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=/invocations/playground/">
+            <title>Chainlit Playground</title>
+          </head>
+          <body>
+            <main id="chainlit">Chainlit Playground</main>
+            <a href="/invocations/playground/">Open Chainlit Playground</a>
+          </body>
+        </html>
+        """
+    )
 
 
 @app.get("/invocations/playground", include_in_schema=False)

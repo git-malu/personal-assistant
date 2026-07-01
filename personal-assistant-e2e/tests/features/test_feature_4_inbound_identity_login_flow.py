@@ -38,8 +38,8 @@ class FakeAgentHandler:
     ):
         self.stream_calls.append((message, user_id, session_id))
         for token in self._tokens:
-            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
+            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
 
 # ── Test Fixture ─────────────────────────────────────────────────────────
@@ -55,8 +55,9 @@ def identity_test_client():
     """
     fake_handler = FakeAgentHandler()
 
-    with patch("app.llm_config.init_chat_model", return_value=MagicMock()), patch(
-        "app.agent_handler.AgentHandler", return_value=fake_handler
+    with (
+        patch("app.llm_config.init_chat_model", return_value=MagicMock()),
+        patch("app.agent_handler.AgentHandler", return_value=fake_handler),
     ):
         from app.main import app
 
@@ -94,9 +95,7 @@ def test_invocations_with_valid_gateway_user_id(identity_test_client):
     )
     msg, user_id, session_id = fake_handler.handle_calls[0]
     assert msg == "Hello"
-    assert user_id == "dev-user", (
-        f"Expected user_id='dev-user', got {user_id!r}"
-    )
+    assert user_id == "dev-user", f"Expected user_id='dev-user', got {user_id!r}"
     assert session_id == "test-session-e2e", (
         f"Expected session_id='test-session-e2e', got {session_id!r}"
     )

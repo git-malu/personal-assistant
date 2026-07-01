@@ -116,8 +116,15 @@ export function ConversationSidebar({
     if (creating) return;
     setCreating(true);
     try {
-      await aui.threads().switchToNewThread();
-      await aui.threadListItem().initialize();
+      const assistantRuntime = aui.threads().__internal_getAssistantRuntime?.();
+      if (assistantRuntime) {
+        await assistantRuntime.threads.switchToNewThread();
+        await assistantRuntime.threads.mainItem.initialize();
+      } else {
+        const threads = aui.threads();
+        await threads.switchToNewThread();
+        await threads.item("main").initialize();
+      }
     } finally {
       setCreating(false);
       onClose();

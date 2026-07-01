@@ -28,11 +28,15 @@ import httpx
 import pytest
 from playwright.sync_api import Browser, Page, sync_playwright
 
+from conftest import node_bin_command, subprocess_text_kwargs
+
 # ── Paths ────────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
-SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent / ".files" / "screenshots"
+SCREENSHOTS_DIR = (
+    Path(__file__).resolve().parent.parent.parent / ".files" / "screenshots"
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -70,13 +74,21 @@ def vite_url() -> str:
 
     # Ensure dependencies are installed
     if not (CLIENT_DIR / "node_modules").is_dir():
-        pytest.skip("node_modules/ not found — run 'npm install' in personal-assistant-client/")
+        pytest.skip(
+            "node_modules/ not found — run 'npm install' in personal-assistant-client/"
+        )
 
     _vite_port = _find_free_port()
     env = {**os.environ, "BROWSER": "none"}
 
     _vite_proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", str(_vite_port)],
+        [
+            node_bin_command(CLIENT_DIR, "vite"),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(_vite_port),
+        ],
         cwd=str(CLIENT_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -99,7 +111,9 @@ def vite_url() -> str:
         time.sleep(1)
     else:
         _stop_vite()
-        raise TimeoutError(f"Vite dev server did not start within 60s on port {_vite_port}")
+        raise TimeoutError(
+            f"Vite dev server did not start within 60s on port {_vite_port}"
+        )
 
     yield f"http://localhost:{_vite_port}"
 
@@ -159,10 +173,14 @@ def _screenshot(page: Page, name: str) -> str:
     return str(path)
 
 
-def _assert_element_visible(page: Page, locator_selector: str, description: str) -> None:
+def _assert_element_visible(
+    page: Page, locator_selector: str, description: str
+) -> None:
     """Assert that an element matching the locator is visible on the page."""
     loc = page.locator(locator_selector).first
-    assert loc.is_visible(), f"Expected {description} to be visible (selector: {locator_selector})"
+    assert loc.is_visible(), (
+        f"Expected {description} to be visible (selector: {locator_selector})"
+    )
 
 
 def _assert_text_visible(page: Page, text: str, description: str) -> None:
@@ -270,7 +288,8 @@ class TestCTALandingPage:
         pill_buttons = page.locator("button.rounded-full")
         count = pill_buttons.count()
         assert count > 0, (
-            f"Expected at least 1 button with 'rounded-full' class (Apple pill), found {count}"
+            "Expected at least 1 button with 'rounded-full' class "
+            f"(Apple pill), found {count}"
         )
 
     def test_cta_buttons_trigger_navigation_on_click(self, page: Page):
@@ -285,7 +304,8 @@ class TestCTALandingPage:
         # LoginPage should appear with "登录 Personal Assistant" heading
         heading = page.get_by_text("登录 Personal Assistant")
         assert heading.is_visible(), (
-            "Expected LoginPage with '登录 Personal Assistant' after clicking '开始对话'"
+            "Expected LoginPage with '登录 Personal Assistant' after "
+            "clicking '开始对话'"
         )
         assert page.locator("body").is_visible(), (
             "Page should still be alive after CTA click (no crash)"
@@ -428,9 +448,11 @@ class TestLoginPageDisabledProviders:
     def test_wechat_disabled_with_badge(self, page: Page):
         """WeChat row: '即将支持' badge."""
         self._open_login_page(page)
-        wechat_row = page.locator("div").filter(
-            has=page.get_by_text("微信账号")
-        ).filter(has=page.get_by_text("即将支持"))
+        wechat_row = (
+            page.locator("div")
+            .filter(has=page.get_by_text("微信账号"))
+            .filter(has=page.get_by_text("即将支持"))
+        )
         assert wechat_row.count() > 0, "WeChat row should contain '即将支持' badge"
 
 
@@ -488,7 +510,8 @@ class TestScrollToCapabilities:
         page.wait_for_timeout(1000)
         scroll_y = page.evaluate("() => window.scrollY")
         assert scroll_y > 0, (
-            f"Expected page to scroll down after clicking '了解更多', but scrollY={scroll_y}"
+            "Expected page to scroll down after clicking '了解更多', "
+            f"but scrollY={scroll_y}"
         )
         # Verify #capabilities element is now in viewport
         is_visible = page.locator("#capabilities").evaluate(
@@ -496,7 +519,8 @@ class TestScrollToCapabilities:
             "return r.top < window.innerHeight && r.bottom > 0; }"
         )
         assert is_visible, (
-            "#capabilities section should be visible in viewport after clicking '了解更多'"
+            "#capabilities section should be visible in viewport after "
+            "clicking '了解更多'"
         )
 
     def test_feature_tile_learn_more_scrolls(self, page: Page):
@@ -504,7 +528,8 @@ class TestScrollToCapabilities:
         # Scroll to top first
         page.evaluate("() => window.scrollTo(0, 0)")
         page.wait_for_timeout(200)
-        # Find all "了解更多" buttons — there should be at least 2 (hero + feature tiles)
+        # Find all "了解更多" buttons.
+        # There should be at least 2 (hero + feature tiles).
         learn_more_btns = page.get_by_role("button", name="了解更多")
         count = learn_more_btns.count()
         if count > 1:
@@ -542,13 +567,18 @@ class TestLoadingState:
         resolved successfully without errors.
         """
         # Page is already loaded by the fixture; verify landing content renders
-        assert page.locator("h1").first.is_visible(), "Expected Landing Page heading to be visible after loading"
+        assert page.locator("h1").first.is_visible(), (
+            "Expected Landing Page heading to be visible after loading"
+        )
 
     def test_landing_page_has_no_console_errors(self, page: Page):
         """Page loads without JavaScript console errors."""
         # Collect any console errors that occurred during page load
         errors: list[str] = []
-        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        page.on(
+            "console",
+            lambda msg: errors.append(msg.text) if msg.type == "error" else None,
+        )
         # Reload to capture full console output
         page.reload(wait_until="networkidle")
         for err in errors:
@@ -556,7 +586,11 @@ class TestLoadingState:
             if "client_id" in err.lower() or "msal" in err.lower():
                 continue
         # If there are unexpected errors, warn but don't fail
-        unexpected = [e for e in errors if "client_id" not in e.lower() and "msal" not in e.lower()]
+        unexpected = [
+            e
+            for e in errors
+            if "client_id" not in e.lower() and "msal" not in e.lower()
+        ]
         assert len(unexpected) == 0, f"Unexpected console errors: {unexpected[:5]}"
 
 
@@ -581,7 +615,7 @@ class TestResponsiveDesign:
 
     @pytest.mark.parametrize("width", BREAKPOINTS)
     def test_responsive_viewport(self, browser: Browser, vite_url: str, width: int):
-        """At each breakpoint: screenshot, no overflow-x, correct grid columns, nav visibility."""
+        """Check responsive layout at each breakpoint."""
         context = browser.new_context(viewport={"width": width, "height": 900})
         context.route("**/login.microsoftonline.com/**", lambda route: route.abort())
         page = context.new_page()
@@ -610,7 +644,8 @@ class TestResponsiveDesign:
                 expected_info = "4 columns"
             # We verify at least 4 cards exist (the grid layout handles column count)
             assert cards >= 4, (
-                f"At {width}px ({expected_info}): expected at least 4 cards, found {cards}"
+                f"At {width}px ({expected_info}): expected at least 4 cards, "
+                f"found {cards}"
             )
 
             # 4. Check GlobalNav brand name visibility
@@ -656,7 +691,8 @@ class TestAccessibility:
         h1_count = page.locator("h1").count()
         h2_count = page.locator("h2").count()
         assert (h1_count + h2_count) >= 1, (
-            f"Expected at least 1 heading (h1 or h2), found h1={h1_count}, h2={h2_count}"
+            "Expected at least 1 heading (h1 or h2), "
+            f"found h1={h1_count}, h2={h2_count}"
         )
 
     def test_buttons_have_discernible_text(self, page: Page):
@@ -665,11 +701,15 @@ class TestAccessibility:
         count = buttons.count()
         empty_buttons = 0
         for i in range(count):
-            name = buttons.nth(i).get_attribute("aria-label") or buttons.nth(i).inner_text()
+            name = (
+                buttons.nth(i).get_attribute("aria-label")
+                or buttons.nth(i).inner_text()
+            )
             if not name or not name.strip():
                 empty_buttons += 1
         assert empty_buttons == 0, (
-            f"Found {empty_buttons} buttons without discernible text out of {count} total"
+            f"Found {empty_buttons} buttons without discernible text "
+            f"out of {count} total"
         )
 
 
@@ -694,7 +734,8 @@ class TestGlobalNav:
         has_dev_mode = page.get_by_text("Dev Mode").is_visible()
         has_login = page.get_by_text("登录").is_visible()
         assert has_dev_mode or has_login, (
-            "Expected GlobalNav to show either 'Dev Mode' (no MSAL) or '登录' (MSAL configured)"
+            "Expected GlobalNav to show either 'Dev Mode' (no MSAL) "
+            "or '登录' (MSAL configured)"
         )
 
     def test_globalnav_screenshot(self, page: Page):
@@ -752,9 +793,9 @@ class TestLandingFooter:
         """Footer contains copyright notice with current year."""
         str(__import__("datetime").datetime.now().year)
         copyright_text = page.locator("footer").inner_text()
-        assert "Copyright" in copyright_text or "All rights reserved" in copyright_text, (
-            f"Expected copyright notice in footer, got: {copyright_text[:200]}"
-        )
+        assert (
+            "Copyright" in copyright_text or "All rights reserved" in copyright_text
+        ), f"Expected copyright notice in footer, got: {copyright_text[:200]}"
 
     def test_footer_screenshot(self, page: Page):
         """Take a screenshot of the footer area."""
@@ -803,11 +844,11 @@ class TestClientUnitTests:
             pytest.skip("node_modules/ not found")
 
         result = subprocess.run(
-            ["npx", "vitest", "run"],
+            [node_bin_command(CLIENT_DIR, "vitest"), "run"],
             cwd=str(CLIENT_DIR),
             capture_output=True,
-            text=True,
             timeout=120,
+            **subprocess_text_kwargs(),
         )
 
         stdout = result.stdout
@@ -840,9 +881,7 @@ class TestClientUnitTests:
         authenticated MSAL session (out of scope for unauthenticated E2E).
         """
         chatpage_path = CLIENT_DIR / "src" / "components" / "chat" / "ChatPage.tsx"
-        assert chatpage_path.is_file(), (
-            f"ChatPage.tsx not found at {chatpage_path}"
-        )
+        assert chatpage_path.is_file(), f"ChatPage.tsx not found at {chatpage_path}"
 
         app_path = CLIENT_DIR / "src" / "App.tsx"
         app_content = app_path.read_text()

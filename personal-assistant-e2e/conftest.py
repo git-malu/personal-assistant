@@ -17,6 +17,16 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 
+# Local E2E traffic must never go through a developer/system HTTP proxy.
+_LOCAL_NO_PROXY = "localhost,127.0.0.1,::1"
+for _proxy_env_name in ("NO_PROXY", "no_proxy"):
+    current_no_proxy = os.environ.get(_proxy_env_name, "")
+    entries = [entry.strip() for entry in current_no_proxy.split(",") if entry.strip()]
+    for local_entry in _LOCAL_NO_PROXY.split(","):
+        if local_entry not in entries:
+            entries.append(local_entry)
+    os.environ[_proxy_env_name] = ",".join(entries)
+
 # Add service directory to sys.path so that `from app.main import app` works
 # when pytest is invoked from the e2e directory or project root.
 _SERVICE_SRC = str(SERVICE_DIR)
@@ -30,6 +40,27 @@ def _get_uv_path() -> str:
     if uv_path.exists():
         return str(uv_path)
     return "uv"
+
+
+def node_command(name: str) -> str:
+    """Return a Node CLI executable name that works on Windows and Unix."""
+    if os.name == "nt" and not name.endswith(".cmd"):
+        return f"{name}.cmd"
+    return name
+
+
+def node_bin_command(project_dir: Path, name: str) -> str:
+    """Return a local node_modules/.bin command path when available."""
+    suffix = ".cmd" if os.name == "nt" else ""
+    command = project_dir / "node_modules" / ".bin" / f"{name}{suffix}"
+    if command.exists():
+        return str(command)
+    return node_command(name)
+
+
+def subprocess_text_kwargs() -> dict[str, object]:
+    """Decode captured subprocess output consistently across platforms."""
+    return {"text": True, "encoding": "utf-8", "errors": "replace"}
 
 
 @pytest.fixture(scope="session")

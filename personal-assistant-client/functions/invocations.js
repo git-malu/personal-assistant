@@ -68,7 +68,24 @@ async function persistAssistantMessage(
   }
 }
 
+async function updateUserMessageStatus(env, persistence, status) {
+  if (!persistence) return;
+  try {
+    await withStore(env, (store) =>
+      store.appendMessage(persistence.userId, persistence.conversationId, {
+        id: persistence.userMessageId,
+        role: "user",
+        content: [{ type: "text", text: persistence.message }],
+        status,
+      }),
+    );
+  } catch (error) {
+    console.error("Failed to update persisted user message status", error);
+  }
+}
+
 export async function onRequestPost({ request, env, waitUntil }) {
+  let persistence;
   try {
     const invocationsUrl = getInvocationsUrl(env);
     const bodyBuffer = await request.arrayBuffer();
@@ -85,7 +102,6 @@ export async function onRequestPost({ request, env, waitUntil }) {
       if (value) headers.set(name, value);
     }
 
-    let persistence;
     if (
       invocation?.conversation_id &&
       (env?.HYPERDRIVE || env?.CONVERSATION_STORE)
@@ -112,16 +128,33 @@ export async function onRequestPost({ request, env, waitUntil }) {
         }
         const userMessageId =
           invocation.client_message_id || crypto.randomUUID();
-        await store.appendMessage(userId, invocation.conversation_id, {
-          id: userMessageId,
-          role: "user",
-          content: [{ type: "text", text: invocation.message }],
-          status: "complete",
-        });
+        const userMessage = await store.appendMessage(
+          userId,
+          invocation.conversation_id,
+          {
+            id: userMessageId,
+            role: "user",
+            content: [{ type: "text", text: invocation.message }],
+            status: "pending",
+          },
+        );
+        if (!userMessage) {
+          throw new Response(
+            JSON.stringify({ message: "Message id conflict" }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (userMessage.reused) {
+          throw new Response(
+            JSON.stringify({ message: "Message already submitted" }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
         return {
           userId,
           conversationId: invocation.conversation_id,
           userMessageId,
+          message: invocation.message,
         };
       });
     }
@@ -138,6 +171,13 @@ export async function onRequestPost({ request, env, waitUntil }) {
     responseHeaders.set("Cache-Control", "no-store");
 
     let responseBody = upstreamResponse.body;
+    if (persistence) {
+      await updateUserMessageStatus(
+        env,
+        persistence,
+        upstreamResponse.ok ? "complete" : "failed",
+      );
+    }
     if (responseBody && persistence && upstreamResponse.ok) {
       const [browserStream, persistenceStream] = responseBody.tee();
       responseBody = browserStream;
@@ -159,6 +199,7 @@ export async function onRequestPost({ request, env, waitUntil }) {
     });
   } catch (error) {
     if (error instanceof Response) return error;
+    await updateUserMessageStatus(env, persistence, "failed");
     console.error("AgentArts proxy request failed", error);
     if (
       error instanceof Error &&

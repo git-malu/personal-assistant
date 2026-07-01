@@ -12,7 +12,7 @@ Scenario 5 — Integration-level / Real Service (2 tests)
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,25 +84,40 @@ class FakeEmailHandler:
     # ── Streaming token lists ─────────────────────────────────────────
 
     STREAM_TOKENS_INBOX = [
-        "你有 ", "3 封", "未读", "邮件", "：\n",
+        "你有 ",
+        "3 封",
+        "未读",
+        "邮件",
+        "：\n",
         "| 发件人 | 主题 | 时间 |\n",
         "| 张三 | 项目进度更新 | 2026-06-14 |",
     ]
 
     STREAM_TOKENS_SEARCH = [
-        "搜索到 ", "2 封", "关于", "「项目进度」", "的邮件",
+        "搜索到 ",
+        "2 封",
+        "关于",
+        "「项目进度」",
+        "的邮件",
     ]
 
     STREAM_TOKENS_REPLY_PREVIEW = [
-        "📧 ", "**回复预览**\n\n",
-        "**收件人**: ", "张三 ", "<zhangsan@example.com>\n",
-        "**主题**: ", "Re: 项目进度更新\n",
+        "📧 ",
+        "**回复预览**\n\n",
+        "**收件人**: ",
+        "张三 ",
+        "<zhangsan@example.com>\n",
+        "**主题**: ",
+        "Re: 项目进度更新\n",
     ]
 
     STREAM_TOKENS_SEND_PREVIEW = [
-        "📧 ", "**新邮件预览**\n\n",
-        "**收件人**: ", "zhangsan@example.com\n",
-        "**主题**: ", "你好\n",
+        "📧 ",
+        "**新邮件预览**\n\n",
+        "**收件人**: ",
+        "zhangsan@example.com\n",
+        "**主题**: ",
+        "你好\n",
     ]
 
     STREAM_TOKENS_REPLY_SENT = ["邮件已回复", " ✅"]
@@ -114,7 +129,9 @@ class FakeEmailHandler:
     # ── Handler: non-streaming ────────────────────────────────────────
 
     async def handle(
-        self, message: str, user_id: str = "anonymous",
+        self,
+        message: str,
+        user_id: str = "anonymous",
         session_id: str | None = None,
     ) -> str:
         self.handle_calls.append((message, user_id, session_id))
@@ -124,24 +141,34 @@ class FakeEmailHandler:
         # ── Guard: awaiting reply confirmation ──
         if state == "awaiting_reply":
             self._session_state[sid] = _resolve_guard(
-                message, sid, self._session_state,
-                confirm_value="reply_sent", cancel_value="reply_cancelled",
+                message,
+                sid,
+                self._session_state,
+                confirm_value="reply_sent",
+                cancel_value="reply_cancelled",
             )
-            return _guard_response(self._session_state[sid],
-                                   sent=self.REPLY_SENT,
-                                   cancelled=self.REPLY_CANCELLED,
-                                   preview=self.REPLY_PREVIEW)
+            return _guard_response(
+                self._session_state[sid],
+                sent=self.REPLY_SENT,
+                cancelled=self.REPLY_CANCELLED,
+                preview=self.REPLY_PREVIEW,
+            )
 
         # ── Guard: awaiting send confirmation ──
         if state == "awaiting_send":
             self._session_state[sid] = _resolve_guard(
-                message, sid, self._session_state,
-                confirm_value="send_confirmed", cancel_value="send_cancelled",
+                message,
+                sid,
+                self._session_state,
+                confirm_value="send_confirmed",
+                cancel_value="send_cancelled",
             )
-            return _guard_response(self._session_state[sid],
-                                   sent="邮件已发送 ✅",
-                                   cancelled="已取消，不发送。",
-                                   preview=self.SEND_PREVIEW)
+            return _guard_response(
+                self._session_state[sid],
+                sent="邮件已发送 ✅",
+                cancelled="已取消，不发送。",
+                preview=self.SEND_PREVIEW,
+            )
 
         # ── Message routing ──
         if "收件箱" in message:
@@ -163,7 +190,9 @@ class FakeEmailHandler:
     # ── Handler: SSE streaming ────────────────────────────────────────
 
     async def handle_stream(
-        self, message: str, user_id: str = "anonymous",
+        self,
+        message: str,
+        user_id: str = "anonymous",
         session_id: str | None = None,
         message_queue=None,
     ):
@@ -174,8 +203,11 @@ class FakeEmailHandler:
         # ── Guard: awaiting reply confirmation (streaming) ──
         if state == "awaiting_reply":
             new_state = _resolve_guard(
-                message, sid, self._session_state,
-                confirm_value="reply_sent", cancel_value="reply_cancelled",
+                message,
+                sid,
+                self._session_state,
+                confirm_value="reply_sent",
+                cancel_value="reply_cancelled",
             )
             self._session_state[sid] = new_state
             if new_state == "reply_sent":
@@ -187,8 +219,11 @@ class FakeEmailHandler:
         # ── Guard: awaiting send confirmation (streaming) ──
         elif state == "awaiting_send":
             new_state = _resolve_guard(
-                message, sid, self._session_state,
-                confirm_value="send_confirmed", cancel_value="send_cancelled",
+                message,
+                sid,
+                self._session_state,
+                confirm_value="send_confirmed",
+                cancel_value="send_cancelled",
             )
             self._session_state[sid] = new_state
             if new_state == "send_confirmed":
@@ -211,8 +246,8 @@ class FakeEmailHandler:
             tokens = self.STREAM_TOKENS_GENERIC
 
         for token in tokens:
-            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
+            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
 
 # ── Guard helpers ─────────────────────────────────────────────────────────
@@ -239,8 +274,7 @@ def _resolve_guard(
     return state_dict.get(session_id, "")
 
 
-def _guard_response(state: str, sent: str, cancelled: str,
-                    preview: str) -> str:
+def _guard_response(state: str, sent: str, cancelled: str, preview: str) -> str:
     """Map guard state to response text."""
     if "sent" in state or "confirmed" in state:
         return sent
@@ -265,8 +299,10 @@ def email_test_client():
     """
     fake_handler = FakeEmailHandler()
 
-    with patch("app.llm_config.init_chat_model", return_value=MagicMock()), \
-         patch("app.agent_handler.AgentHandler", return_value=fake_handler):
+    with (
+        patch("app.llm_config.init_chat_model", return_value=MagicMock()),
+        patch("app.agent_handler.AgentHandler", return_value=fake_handler),
+    ):
         from app.main import app
 
         # Ensure the handler is set (lifespan will call get_agent_handler
@@ -319,9 +355,7 @@ def test_list_inbox_non_streaming(email_test_client):
     )
     msg, user_id, session_id = fake_handler.handle_calls[0]
     assert msg == "帮我看看收件箱"
-    assert user_id == "test-user", (
-        f"Expected user_id='test-user', got {user_id!r}"
-    )
+    assert user_id == "test-user", f"Expected user_id='test-user', got {user_id!r}"
     assert session_id == "e2e-session-1", (
         f"Expected session_id='e2e-session-1', got {session_id!r}"
     )
@@ -395,9 +429,9 @@ def test_list_inbox_sse_streaming(email_test_client):
 
     # Accumulated text must contain email keywords
     assert len(accumulated) > 0, "No tokens accumulated from SSE stream"
-    assert any(
-        kw in accumulated for kw in ("邮件", "未读", "发件人", "张三")
-    ), f"Expected email keywords in stream: {accumulated[:200]}"
+    assert any(kw in accumulated for kw in ("邮件", "未读", "发件人", "张三")), (
+        f"Expected email keywords in stream: {accumulated[:200]}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -525,9 +559,7 @@ def test_reply_to_email_cancel_flow(email_test_client):
     assert ("已取消" in response2) or ("不发送" in response2), (
         f"Round 2 should confirm cancellation, got: {response2[:200]}"
     )
-    assert "已回复" not in response2, (
-        "Cancellation must NOT contain '已回复'"
-    )
+    assert "已回复" not in response2, "Cancellation must NOT contain '已回复'"
 
 
 @pytest.mark.feature
@@ -557,9 +589,9 @@ def test_direct_send_shows_preview(email_test_client):
         f"Preview should mention recipient, got: {response[:200]}"
     )
     # Must ask for confirmation
-    assert any(
-        phrase in response for phrase in ("确认", "发送吗", "需要发送")
-    ), f"Preview should ask for confirmation, got: {response[:200]}"
+    assert any(phrase in response for phrase in ("确认", "发送吗", "需要发送")), (
+        f"Preview should ask for confirmation, got: {response[:200]}"
+    )
     # Must NOT auto-send
     assert "已发送" not in response, (
         "Preview must NOT contain '已发送' before confirmation"
@@ -653,8 +685,7 @@ def test_cross_session_independent_state(email_test_client):
         headers=headers_a,
     )
     assert r2.status_code == 200
-    assert ("已取消" in r2.json()["response"]) or \
-           ("不发送" in r2.json()["response"])
+    assert ("已取消" in r2.json()["response"]) or ("不发送" in r2.json()["response"])
 
     # Session B: query inbox — must still work
     r3 = client.post(
@@ -711,15 +742,50 @@ def _import_email_tools():
     mock_agentarts_sdk.require_access_token = _make_passthrough_decorator
     mock_agentarts_sdk.IdentityClient = MagicMock()
 
-    with patch.dict(sys.modules, {
-        "agentarts": MagicMock(),
-        "agentarts.sdk": mock_agentarts_sdk,
-        "agentarts.sdk.identity": MagicMock(),
-        "agentarts.sdk.identity.types": MagicMock(),
-    }):
-        from app.tools.email_tools import reply_to_email, send_email  # noqa: E402
+    saved_email_module = sys.modules.pop("app.tools.email_tools", None)
+    try:
+        with patch.dict(
+            sys.modules,
+            {
+                "agentarts": MagicMock(),
+                "agentarts.sdk": mock_agentarts_sdk,
+                "agentarts.sdk.identity": MagicMock(),
+                "agentarts.sdk.identity.types": MagicMock(),
+            },
+        ):
+            from app.tools.email_tools import reply_to_email, send_email  # noqa: E402
 
-        return send_email, reply_to_email
+            return send_email, reply_to_email
+    finally:
+        if saved_email_module is not None:
+            sys.modules["app.tools.email_tools"] = saved_email_module
+
+
+def _import_email_tools_module():
+    """Import the email tools module with agentarts.sdk mocked."""
+    import importlib
+    import sys
+    from unittest.mock import MagicMock
+
+    mock_agentarts_sdk = MagicMock()
+    mock_agentarts_sdk.require_access_token = _make_passthrough_decorator
+    mock_agentarts_sdk.IdentityClient = MagicMock()
+
+    saved_email_module = sys.modules.pop("app.tools.email_tools", None)
+    try:
+        with patch.dict(
+            sys.modules,
+            {
+                "agentarts": MagicMock(),
+                "agentarts.sdk": mock_agentarts_sdk,
+                "agentarts.sdk.identity": MagicMock(),
+                "agentarts.sdk.identity.types": MagicMock(),
+            },
+        ):
+            return importlib.import_module("app.tools.email_tools")
+    finally:
+        if saved_email_module is not None:
+            sys.modules["app.tools.email_tools"] = saved_email_module
 
 
 def _mock_graph_client():
@@ -757,15 +823,11 @@ def test_send_email_confirm_false_returns_preview():
         )
     )
 
-    assert result["sent"] is False, (
-        f"Expected sent=False, got: {result}"
-    )
+    assert result["sent"] is False, f"Expected sent=False, got: {result}"
     assert result.get("requires_confirmation") is True, (
         f"Expected requires_confirmation=True, got: {result}"
     )
-    assert "preview" in result, (
-        f"Expected preview dict, got: {result}"
-    )
+    assert "preview" in result, f"Expected preview dict, got: {result}"
     assert result["preview"]["to"] == ["test@example.com"]
     assert result["preview"]["subject"] == "Hello"
     assert "body_preview" in result["preview"]
@@ -794,15 +856,11 @@ def test_reply_to_email_confirm_false_returns_preview():
         )
     )
 
-    assert result["sent"] is False, (
-        f"Expected sent=False, got: {result}"
-    )
+    assert result["sent"] is False, f"Expected sent=False, got: {result}"
     assert result.get("requires_confirmation") is True, (
         f"Expected requires_confirmation=True, got: {result}"
     )
-    assert "preview" in result, (
-        f"Expected preview dict, got: {result}"
-    )
+    assert "preview" in result, f"Expected preview dict, got: {result}"
     assert result["preview"]["email_id"] == "AAMkAGFiYmNk"
     assert "body_preview" in result["preview"]
     assert "请确认" in result.get("error", ""), (
@@ -819,16 +877,14 @@ def test_send_email_confirm_true_sends():
     """
     from unittest.mock import patch
 
-    send_email, _ = _import_email_tools()
+    email_tools = _import_email_tools_module()
     mock_client = _mock_graph_client()
 
     import asyncio
 
-    with patch(
-        "app.tools.email_tools._get_client", return_value=mock_client
-    ), patch("app.tools.email_tools._ensure_provider", AsyncMock()):
+    with patch.object(email_tools, "_get_client", return_value=mock_client):
         result = asyncio.run(
-            send_email(
+            email_tools.send_email(
                 to=["test@example.com"],
                 subject="Hello",
                 body="This is a test email",
@@ -840,9 +896,7 @@ def test_send_email_confirm_true_sends():
     assert result["sent"] is True, (
         f"Expected sent=True with confirm=True, got: {result}"
     )
-    assert result["error"] is None, (
-        f"Expected no error, got: {result}"
-    )
+    assert result["error"] is None, f"Expected no error, got: {result}"
     # Verify Graph API was called (POST to /sendMail)
     mock_client.post.assert_called_once()
     call_args = mock_client.post.call_args
@@ -871,12 +925,8 @@ def test_send_email_input_validation():
         )
     )
 
-    assert result["sent"] is False, (
-        f"Expected sent=False for empty to, got: {result}"
-    )
-    assert "error" in result, (
-        f"Expected error key, got: {result}"
-    )
+    assert result["sent"] is False, f"Expected sent=False for empty to, got: {result}"
+    assert "error" in result, f"Expected error key, got: {result}"
     assert "recipient" in result["error"].lower(), (
         f"Expected error about recipients, got: {result['error']}"
     )
@@ -916,9 +966,7 @@ def test_reply_to_email_input_validation():
             access_token="fake-token",
         )
     )
-    assert result["sent"] is False, (
-        f"Expected sent=False for empty body, got: {result}"
-    )
+    assert result["sent"] is False, f"Expected sent=False for empty body, got: {result}"
     assert "body" in result.get("error", "").lower(), (
         f"Expected error about body, got: {result}"
     )

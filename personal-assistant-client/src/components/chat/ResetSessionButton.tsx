@@ -35,7 +35,18 @@ export function ResetSessionButton() {
       // 3. 清空输入框（异步操作）
       await aui.composer().reset();
 
-      // 4. 最后清除 localStorage session ID
+      // 4. 切换并初始化新的 remote thread，保持与侧边栏“新对话”一致。
+      const assistantRuntime = aui.threads().__internal_getAssistantRuntime?.();
+      if (assistantRuntime) {
+        await assistantRuntime.threads.switchToNewThread();
+        await assistantRuntime.threads.mainItem.initialize();
+      } else {
+        const threads = aui.threads();
+        await threads.switchToNewThread();
+        await threads.item("main").initialize();
+      }
+
+      // 5. 最后清除 legacy localStorage session hint
       //    放在 UI 重置之后：若 UI 重置失败，session ID 保持不变，用户可重试
       resetSessionId();
     } catch (e) {

@@ -57,9 +57,7 @@ def test_invocations_without_user_id_header_returns_401(auth_test_app):
     )
     data = resp.json()
     assert "detail" in data, f"Expected 'detail' in 401 response: {data}"
-    assert (
-        "Missing X-HW-AgentGateway-User-Id header" in data["detail"]
-    ), (
+    assert "Missing X-HW-AgentGateway-User-Id header" in data["detail"], (
         "Expected 'Missing X-HW-AgentGateway-User-Id header' "
         f"in detail, got: {data['detail']}"
     )
@@ -147,8 +145,8 @@ class TestExtractGatewayUserId:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_request.headers.get.side_effect = (
-            lambda key, default="": headers.get(key, default)
+        mock_request.headers.get.side_effect = lambda key, default="": headers.get(
+            key, default
         )
         return mock_request
 

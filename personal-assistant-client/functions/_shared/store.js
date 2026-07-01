@@ -138,36 +138,69 @@ export function createPostgresStore(client) {
     },
 
     async appendMessage(userId, conversationId, message) {
-      const { rows } = await client.query(
-        `INSERT INTO conversation_messages
-           (id, conversation_id, parent_id, role, content, sequence, status)
-         SELECT $3, c.id,
-                COALESCE(
-                  $4,
-                  (SELECT id FROM conversation_messages
-                    WHERE conversation_id = c.id
-                    ORDER BY sequence DESC LIMIT 1)
-                ),
-                $5, $6::jsonb,
-                COALESCE((SELECT MAX(sequence) + 1
-                            FROM conversation_messages
-                           WHERE conversation_id = c.id), 1),
-                $7
-           FROM conversations c
-          WHERE c.user_id = $1 AND c.id = $2 AND c.status <> 'deleted'
-         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
-         RETURNING id, parent_id, role, content, sequence, status, created_at`,
-        [
-          userId,
-          conversationId,
-          message.id,
-          message.parent_id ?? null,
-          message.role,
-          JSON.stringify(message.content),
-          message.status ?? "complete",
-        ],
-      );
-      return rows[0] ?? null;
+      const query = () =>
+        client.query(
+          `WITH target_conversation AS (
+             SELECT c.id
+               FROM conversations c
+              WHERE c.user_id = $1 AND c.id = $2 AND c.status <> 'deleted'
+              FOR UPDATE
+           )
+           INSERT INTO conversation_messages
+             (id, conversation_id, parent_id, role, content, sequence, status)
+           SELECT $3, c.id,
+                  COALESCE(
+                    $4,
+                    (SELECT id FROM conversation_messages
+                      WHERE conversation_id = c.id
+                      ORDER BY sequence DESC LIMIT 1)
+                  ),
+                  $5, $6::jsonb,
+                  COALESCE((SELECT MAX(sequence) + 1
+                              FROM conversation_messages
+                             WHERE conversation_id = c.id), 1),
+                  $7
+             FROM target_conversation c
+           ON CONFLICT (id) DO UPDATE
+              SET status = CASE
+                    WHEN EXCLUDED.status = 'pending'
+                    THEN conversation_messages.status
+                    ELSE EXCLUDED.status
+                  END,
+                  updated_at = NOW()
+            WHERE conversation_messages.conversation_id = EXCLUDED.conversation_id
+              AND conversation_messages.role = EXCLUDED.role
+              AND conversation_messages.content = EXCLUDED.content
+           RETURNING id, parent_id, role, content, sequence, status, created_at,
+                     (xmax <> 0) AS reused`,
+          [
+            userId,
+            conversationId,
+            message.id,
+            message.parent_id ?? null,
+            message.role,
+            JSON.stringify(message.content),
+            message.status ?? "complete",
+          ],
+        );
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const { rows } = await query();
+          return rows[0] ?? null;
+        } catch (error) {
+          if (
+            error?.code === "23505" &&
+            error?.constraint ===
+              "conversation_messages_conversation_sequence_uq" &&
+            attempt < 2
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      return null;
     },
 
     async getActiveLease(userId) {

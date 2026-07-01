@@ -22,6 +22,15 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/ping': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/playground': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+      },
       '/invocations/playground': {
         target: 'http://localhost:8080',
         changeOrigin: true,

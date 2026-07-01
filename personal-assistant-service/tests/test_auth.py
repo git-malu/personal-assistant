@@ -115,6 +115,7 @@ class TestExtractWorkloadAccessToken:
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
             from app.auth import extract_workload_access_token
+
             extract_workload_access_token(request)
             mock_set.assert_called_once_with(token_value)
 
@@ -125,6 +126,7 @@ class TestExtractWorkloadAccessToken:
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
             from app.auth import extract_workload_access_token
+
             extract_workload_access_token(request)
             mock_set.assert_called_once_with(None)
 
@@ -136,6 +138,7 @@ class TestExtractWorkloadAccessToken:
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
             from app.auth import extract_workload_access_token
+
             extract_workload_access_token(request)
             mock_set.assert_called_once_with(None)
 
@@ -146,6 +149,7 @@ class TestExtractWorkloadAccessToken:
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
             from app.auth import extract_workload_access_token
+
             extract_workload_access_token(request)
             mock_set.assert_called_once_with("valid-token")
 
@@ -157,5 +161,6 @@ class TestExtractWorkloadAccessToken:
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
             from app.auth import extract_workload_access_token
+
             extract_workload_access_token(request)
             mock_set.assert_called_once_with(None)
