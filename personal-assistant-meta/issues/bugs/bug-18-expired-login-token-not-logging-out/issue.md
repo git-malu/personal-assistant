@@ -1,5 +1,5 @@
 ---
-status: todo
+status: resolved
 related: ["feature-4-inbound-identity"]
 ---
 
@@ -82,15 +82,15 @@ sequenceDiagram
 
 ## 验收标准
 
-- [ ] 已过期 token 不会出现在新的 `/invocations` 请求 header 中。
-- [ ] token 临近过期且 silent refresh 成功时，请求使用刷新后的 token。
-- [ ] silent refresh 失败时，不发送旧 token，并将用户切换到 signed-out 状态。
-- [ ] 401/403 最多触发一次 refresh/retry；重试仍失败后自动登出，不形成请求循环。
-- [ ] 自动登出后 ChatPage 不再显示，用户可从 Landing Page 重新登录。
-- [ ] Zustand 与 MSAL 的认证状态在自动登出后保持一致。
-- [ ] 刷新页面后不会从 MSAL cache 恢复已经失效的登录状态。
-- [ ] `npm run test` 和 `npm run build` 通过。
-- [ ] `personal-assistant-e2e` 中新增并通过 token expiry regression test。
+- [x] 已过期 token 不会出现在新的 `/invocations` 请求 header 中。
+- [x] token 临近过期且 silent refresh 成功时，请求使用刷新后的 token。
+- [x] silent refresh 失败时，不发送旧 token，并将用户切换到 signed-out 状态。
+- [x] 401/403 最多触发一次 refresh/retry；重试仍失败后自动登出，不形成请求循环。
+- [x] 自动登出后 ChatPage 不再显示，用户可从 Landing Page 重新登录。
+- [x] Zustand 与 MSAL 的认证状态在自动登出后保持一致。
+- [x] 刷新页面后不会从 MSAL cache 恢复已经失效的登录状态。
+- [x] `npm run test` 和 `npm run build` 通过。
+- [x] `personal-assistant-e2e` 中新增并通过 token expiry regression test。
 
 ## Affected Specs / Architecture Docs
 
@@ -109,4 +109,3 @@ sequenceDiagram
 | `personal-assistant-client/src/stores/auth-store.ts` | Zustand token 状态 |
 | `personal-assistant-client/src/main.tsx` | MSAL event 与 Zustand 同步 |
 | `personal-assistant-client/src/App.tsx` | `useIsAuthenticated()` 决定 ChatPage/LandingPage |
-

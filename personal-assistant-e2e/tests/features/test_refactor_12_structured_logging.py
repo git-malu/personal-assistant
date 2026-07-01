@@ -36,6 +36,17 @@ class TestStructuredLoggingContract:
             }
             assert config["loggers"]["uvicorn.access"]["handlers"] == []
 
+    def test_production_logging_uses_console_formatter(self):
+        config = yaml.safe_load(
+            (SERVICE_DIR / "config/logging.prod.yaml").read_text(encoding="utf-8")
+        )
+
+        assert set(config["formatters"]) == {"console"}
+        assert config["formatters"]["console"]["()"] == (
+            "app.logging_config.ConsoleFormatter"
+        )
+        assert config["handlers"]["console"]["formatter"] == "console"
+
     def test_container_uses_production_logging_config(self):
         dockerfile = (SERVICE_DIR / "Dockerfile").read_text(encoding="utf-8")
 

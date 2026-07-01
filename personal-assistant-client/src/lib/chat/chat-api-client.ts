@@ -1,20 +1,23 @@
-import { acquireIdTokenSilently } from "@/lib/auth";
+import { acquireIdTokenSilently, clearInboundAuthSession } from "@/lib/auth";
 import { useAuthStore } from "@/stores/auth-store";
 import { extractUserIdFromToken, isTokenExpiringSoon } from "./jwt";
 import { getSessionId } from "./session";
+
+const AUTH_REQUIRED_MESSAGE = "Authentication required. Please sign in.";
 
 function applyTokenHeaders(
   headers: Record<string, string>,
   idToken: string,
 ): void {
   headers.Authorization = `Bearer ${idToken}`;
+  delete headers["X-HW-AgentGateway-User-Id"];
   const userId = extractUserIdFromToken(idToken);
   if (userId) {
     headers["X-HW-AgentGateway-User-Id"] = userId;
   }
 }
 
-function buildHeaders(idToken: string | null): Record<string, string> {
+export function buildHeaders(idToken: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",
     "Content-Type": "application/json",
@@ -46,22 +49,25 @@ function sendChatRequest(
   });
 }
 
-async function getRequestToken(): Promise<string | null> {
+export async function getRequestToken(): Promise<string | null> {
   let idToken = useAuthStore.getState().idToken;
   if (idToken && isTokenExpiringSoon(idToken)) {
     const freshToken = await acquireIdTokenSilently();
     if (freshToken) {
       useAuthStore.getState().setIdToken(freshToken);
       idToken = freshToken;
+    } else {
+      await clearInboundAuthSession();
+      throw new Error(AUTH_REQUIRED_MESSAGE);
     }
   }
   return idToken;
 }
 
-function throwResponseError(response: Response): never {
+async function throwResponseError(response: Response): Promise<never> {
   if (response.status === 401 || response.status === 403) {
-    useAuthStore.getState().clearToken();
-    throw new Error("Authentication required. Please sign in.");
+    await clearInboundAuthSession();
+    throw new Error(AUTH_REQUIRED_MESSAGE);
   }
   throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
 }
@@ -85,8 +91,8 @@ export async function invokeChat(
   if ((response.status === 401 || response.status === 403) && idToken) {
     const freshToken = await acquireIdTokenSilently();
     if (!freshToken) {
-      useAuthStore.getState().clearToken();
-      throw new Error("Authentication required. Please sign in.");
+      await clearInboundAuthSession();
+      throw new Error(AUTH_REQUIRED_MESSAGE);
     }
 
     useAuthStore.getState().setIdToken(freshToken);
@@ -101,7 +107,7 @@ export async function invokeChat(
   }
 
   if (!response.ok) {
-    throwResponseError(response);
+    await throwResponseError(response);
   }
   if (!response.body) {
     throw new Error("No response body");

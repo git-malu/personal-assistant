@@ -68,30 +68,86 @@ flowchart LR
 
 ## 3. 功能模块
 
-### 3.1 邮件处理
+详细 use case 已拆分到 [`UseCase/`](use-cases/README.md)。当前功能模块分为两类：基础身份能力和已注册 tool 能力。
 
-- **邮件列表**：列出收件箱或指定文件夹中的邮件，支持限制返回数量和筛选条件
-- **邮件详情**：获取单封邮件的完整内容，包括正文、发件人、收件人、附件列表
-- **邮件搜索**：按关键词搜索邮件，利用 Microsoft Graph API `$search` 能力
-- **草拟回复**：根据上下文草拟邮件回复内容，用户确认后执行
-- **邮件发送**：通过对话撰写并发送邮件，支持指定收件人、抄送
-- **敏感操作拦截**：发送邮件等写操作需用户二次确认（Guard 机制）
-- **OAuth2 鉴权**：首次使用邮件功能时，系统通过 `system_message` SSE 事件直接向用户呈现 Microsoft 365 授权链接，用户点击完成授权后即可正常使用邮件工具。授权链接不经过 LLM 转述，确保 URL 完整准确
-- **实现方式**：通过 AgentArts Identity SDK 的 `m365-provider` OAuth2 Credential Provider，以 User Federation 模式调用 Microsoft Graph API。详见 Feature 10a。
-  <!-- updated by issue: feature-10a-outbound-email -->
-  <!-- updated by issue: refactor-email-auth-normal-control-flow -->
+| 类型 | 模块 | Use Case 文档 | 当前状态 |
+|---|---|---|---|
+| 基础身份能力 | Web Chat Inbound Identity | [`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md) | 已实现 |
+| 基础身份能力 | Session Isolation | [`UseCase/session-isolation.md`](use-cases/session-isolation.md) | 已实现 |
+| Tool 能力 | Email Tools | [`UseCase/email-tools.md`](use-cases/email-tools.md) | 已实现 |
+| Tool 能力 | Calendar Tools | [`UseCase/calendar-tools.md`](use-cases/calendar-tools.md) | 已实现 |
+| Tool 能力 | GitHub Tools | [`UseCase/github-tools.md`](use-cases/github-tools.md) | 已实现 |
+| Tool 能力 | Gitee Tools | [`UseCase/gitee-tools.md`](use-cases/gitee-tools.md) | 已实现 |
+| Tool 能力 | HuaweiCloud IAM Tools | [`UseCase/huaweicloud-iam-tools.md`](use-cases/huaweicloud-iam-tools.md) | 已实现 |
 
-### 3.2 云资源查询（OBS）
+### 3.1 Web Chat Inbound Identity
 
-> **状态**：已拆分至 Feature 10b（待 Feature 8 STS Tool 完成后实现），不在 Feature 10a scope 内。
+用户通过 Microsoft Entra ID 登录 Web Chat 后，浏览器向 `/invocations` 发送 `Authorization: Bearer <id_token>` 和 `x-hw-agentarts-session-id`。AgentArts Gateway 负责校验 JWT，并向 Service 注入可信用户、会话和 Workload token。
 
-- **对象浏览**：按 Bucket 和路径前缀列出 OBS 对象存储中的文件
-- **文件读取**：读取 OBS 对象的文本内容，返回可读格式（纯文本、JSON、CSV 等）
-- **元数据查询**：查询对象大小、类型、最后修改时间等元信息
-- **只读安全**：MVP 阶段仅开放读取操作，不涉及文件写入或删除
+- **登录入口**：Web Chat + Microsoft Entra ID。
+- **可信身份来源**：`X-HW-AgentGateway-User-Id`。
+- **会话来源**：`x-hw-agentarts-session-id`。
+- **Workload Identity**：`X-HW-AgentGateway-Workload-Access-Token` 用于 Runtime 访问 AgentArts Identity。
+- **详细规格**：[`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md)。
 
-> 典型场景：运维人员通过对话 "帮我看看 my-bucket/logs/ 目录下有什么文件" 或 "读取 obs-config.json 的内容" 快速查阅云存储中的文件，无需登录 OBS 控制台。
-  <!-- updated by issue: feature-10a-outbound-email -->
+### 3.2 Session Isolation
+
+系统使用 Gateway 注入的可信 `user_id` 和 session id 构造 LangGraph checkpoint key：`thread_id = "{user_id}:{session_id}"`。该设计支持同一 Session 内多轮对话连续，同时避免不同用户或不同 Session 之间发生状态串扰。
+
+- **同一 Session 连续**：Agent 能恢复当前 Session 的短期上下文。
+- **不同 Session 隔离**：同一用户的不同 Session 不共享 checkpoint。
+- **跨用户隔离**：即使不同用户使用相同 session id，最终 thread_id 仍不同。
+- **Checkpoint 后端**：支持 in-memory、SQLite 和 PostgreSQL。
+- **详细规格**：[`UseCase/session-isolation.md`](use-cases/session-isolation.md)。
+
+### 3.3 Email Tools
+
+Email Tools 以 User Federation 模式调用 Microsoft Graph Mail API，支持邮件列表、邮件详情、邮件搜索、发送邮件和回复邮件。
+
+- **Provider**：`m365-email-provider`。
+- **读操作**：`list_emails`、`get_email`、`search_emails`。
+- **写操作**：`send_email`、`reply_to_email`。
+- **Guard**：发送和回复必须先展示预览并获得用户明确确认。
+- **详细规格**：[`UseCase/email-tools.md`](use-cases/email-tools.md)。
+
+### 3.4 Calendar Tools
+
+Calendar Tools 以 User Federation 模式只读访问 Microsoft 365 Calendar，是当前项目中 AgentArts OAuth2 full flow 的完整示范。
+
+- **Provider**：`m365-calendar-provider`。
+- **Scope**：`https://graph.microsoft.com/Calendars.Read`。
+- **只读能力**：`list_calendar_events`、`get_calendar_event`、`search_calendar_events`。
+- **OAuth2 Full Flow**：Service-owned callback、signed state、replay guard、`complete_resource_token_auth`。
+- **详细规格**：[`UseCase/calendar-tools.md`](use-cases/calendar-tools.md)。
+
+### 3.5 GitHub Tools
+
+GitHub Tools 以用户身份访问 GitHub API，支持仓库列表、目录查看、文件读取、代码搜索和仓库 star。
+
+- **Provider**：`github-provider`。
+- **读操作**：`github_list_repositories`、`github_list_repo_contents`、`github_get_file_content`、`github_search_code`。
+- **写操作**：`github_star_repository`。
+- **Tool-level Guard**：`confirm=False` 返回预览，用户确认后 `confirm=True` 才执行 star。
+- **详细规格**：[`UseCase/github-tools.md`](use-cases/github-tools.md)。
+
+### 3.6 Gitee Tools
+
+Gitee Tools 以用户身份访问 Gitee API，当前提供仓库列表读取能力。
+
+- **Provider**：`gitee-provider`。
+- **只读能力**：`gitee_list_repositories`。
+- **授权方式**：OAuth2 User Federation + AuthCard。
+- **详细规格**：[`UseCase/gitee-tools.md`](use-cases/gitee-tools.md)。
+
+### 3.7 HuaweiCloud IAM Tools
+
+HuaweiCloud IAM Tools 使用 AgentArts Identity STS Credential Provider 获取短期云凭证，调用 Huawei Cloud IAM API 进行只读查询。
+
+- **Provider**：`iam-users-readonly`。
+- **能力**：`huaweicloud_list_iam_users`。
+- **凭据类型**：STS 临时凭证，不使用长期 AK/SK。
+- **安全边界**：只读查询，不返回 AK/SK/Token。
+- **详细规格**：[`UseCase/huaweicloud-iam-tools.md`](use-cases/huaweicloud-iam-tools.md)。
 
 ---
 
@@ -237,11 +293,12 @@ llm:
 | 验证项 | 说明 |
 |--------|------|
 | **Inbound Auth** | 用户通过 OAuth 2.0 / API Key 认证后访问 Agent |
-| **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 Microsoft 365 邮件 API |
-| **OBS 文件查询** | Agent 列出和读取 OBS 对象存储中的文件内容 |
+| **Session Isolation** | 同一用户同一 Session 多轮连续，不同用户或不同 Session 不串扰 |
+| **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 Microsoft 365、GitHub、Gitee 等外部 API |
+| **Calendar OAuth2 Full Flow** | Calendar 授权 callback 由 Service 完成 `complete_resource_token_auth` |
+| **STS 云凭证** | Agent 使用 `iam-users-readonly` STS Provider 只读查询华为云 IAM 用户 |
 | **Chat Loop** | 多轮对话 + 工具调用 + 流式响应 |
-| **Memory** | 跨 Session 持久化用户偏好和上下文 |
-| **Guard** | 发送邮件等写操作需用户确认 |
+| **Guard** | 发送邮件、回复邮件、GitHub star 等写操作需用户确认 |
 
 ---
 
@@ -250,9 +307,10 @@ llm:
 | Phase | 内容 | 验证点 |
 |-------|------|--------|
 | **Phase 1** | 搭建 Agent 骨架：LangGraph chat loop + 本地开发环境 | 本地对话通 |
-| **Phase 2** | 集成 Memory：创建 Memory Space，保存/检索记忆 | 跨 Session 记忆 |
-| **Phase 3** | 配置 Inbound Identity：JWT + API Key 认证 | 用户登录后访问 |
-| **Phase 4** | 实现 Outbound OAuth2 (User Federation)：邮件 Tool | Agent 代用户查/发邮件 |
-| **Phase 4.5** | 实现 OBS 文件查询 Tool（STS 模式，Feature 10b — 待 Feature 8 完成后） | Agent 浏览和读取 OBS 文件 |
-| **Phase 5** | Web Chat 前端：Vite + React + SSE 流式对话 + OAuth 登录 | 浏览器完整对话体验 |
-| **Phase 6** | 部署上线 + 全链路可观测 | 生产可用 |
+| **Phase 2** | 配置 Inbound Identity：Microsoft Entra ID Custom JWT + API Key | 用户登录后访问 |
+| **Phase 3** | 实现 Session Checkpoint | 同 Session 多轮连续，跨用户隔离 |
+| **Phase 4** | 实现 Outbound OAuth2 User Federation Tools | 邮件、日历、GitHub、Gitee 以用户身份访问 |
+| **Phase 5** | 实现 STS 云资源只读 Tool | 使用短期 STS 查询华为云 IAM 用户 |
+| **Phase 6** | Web Chat 前端：Vite + React + SSE 流式对话 + OAuth 登录 | 浏览器完整对话体验 |
+| **Phase 7** | 部署上线 + 全链路可观测 | 生产可用 |
+| **Roadmap** | AgentArts Memory、飞书直连、OfficeClaw | 跨 Session 长期记忆与更多客户端渠道 |

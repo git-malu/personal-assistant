@@ -5,8 +5,8 @@
 
 本文仅保留 Legacy topology、退役边界和排障经验。Production Web Chat 当前由
 Cloudflare Pages 承载，详见
-[`cloudflare/pages.md`](./cloudflare/pages.md) 与
-[`ADR-017`](../ADR/ADR-017-cloudflare-pages-proxy.md)。
+[`cloudflare/pages.md`](../cloudflare/pages.md) 与
+[`ADR-017`](../../ADR/ADR-017-cloudflare-pages-proxy.md)。
 
 ## Historical topology
 

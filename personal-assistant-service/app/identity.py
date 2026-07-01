@@ -3,32 +3,15 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from dataclasses import dataclass
 
 from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
-from agentarts.sdk.service.identity.polling.token_poller import TokenPoller
 
 from app.settings import get_settings
-
-DEFAULT_GITHUB_SCOPES = ("repo", "read:user")
-GITHUB_PROVIDER_NAME = "github-provider"
 
 _GITHUB_AUTHORIZATION_URL: ContextVar[str | None] = ContextVar(
     "github_authorization_url",
     default=None,
 )
-
-
-@dataclass(slots=True)
-class AuthorizationRequired(Exception):  # noqa: N818
-    """Signal that end-user consent is required before an access token exists."""
-
-    provider_name: str
-    authorization_url: str | None = None
-    message: str = "GitHub authorization is required"
-
-    def __post_init__(self) -> None:
-        Exception.__init__(self, self.message)
 
 
 def capture_github_authorization_url(url: str) -> None:
@@ -41,6 +24,16 @@ def get_gitee_provider_name() -> str:
     return get_settings().gitee_provider_name
 
 
+def get_github_provider_name() -> str:
+    """Return the configured GitHub OAuth provider name."""
+    return get_settings().github_provider_name
+
+
+def get_github_scopes_list() -> list[str]:
+    """Return the configured GitHub OAuth2 scopes."""
+    return get_settings().github_scope_list
+
+
 def get_iam_users_readonly_config() -> dict[str, str]:
     """Return outbound IAM Users credential provider settings."""
     settings = get_settings()
@@ -50,20 +43,6 @@ def get_iam_users_readonly_config() -> dict[str, str]:
         "region": settings.iam_users_region,
         "endpoint": settings.effective_iam_users_endpoint,
     }
-
-
-@dataclass(slots=True)
-class GitHubAuthorizationRequiredPoller(TokenPoller):
-    """Stop SDK polling and ask the agent to show the authorization URL."""
-
-    provider_name: str = GITHUB_PROVIDER_NAME
-
-    async def poll_for_token(self) -> str:
-        raise AuthorizationRequired(
-            provider_name=self.provider_name,
-            authorization_url=_GITHUB_AUTHORIZATION_URL.get(),
-            message=f"{self.provider_name} authorization is required",
-        )
 
 
 def get_runtime_user_id() -> str | None:

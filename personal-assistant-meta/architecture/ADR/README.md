@@ -24,6 +24,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-016](ADR-016-secretless-credential-injection.md) | Secretless Credential Injection via AgentArts Identity | Accepted | 所有敏感凭据通过 AgentArts Identity 存储，代码通过 `@require_api_key` / `@require_access_token` / `@require_sts_token` 声明依赖，运行时由平台注入，代码仓库和 CI/CD 零密钥 |
 | [ADR-017](ADR-017-cloudflare-pages-proxy.md) | Cloudflare Pages 托管与 Same-Origin API Proxy | Accepted | Cloudflare Pages 托管 SPA，Pages Function 透明代理 JWT 与 SSE 到 AgentArts Gateway |
 | [ADR-018](ADR-018-service-structured-logging.md) | Service Structured Logging 与统一配置所有权 | Accepted | Uvicorn `--log-config` 统一 process logging，本地 console、生产 JSON，并关联 request/session/trace context |
+| [ADR-019](ADR-019-web-chat-bff-boundary.md) | Web Chat BFF 边界与 Full BFF 演进 | Accepted | 当前 Cloudflare Pages Function 是 lightweight BFF/proxy；full BFF / token handler 作为高敏 Web Chat 的未来演进方向 |
 
 ## 决策原则
 

@@ -34,6 +34,18 @@ def test_dev_and_prod_configs_cover_the_same_loggers():
     assert prod["loggers"]["uvicorn.access"]["handlers"] == []
 
 
+def test_prod_logging_config_uses_console_formatter():
+    prod = yaml.safe_load((PROJECT_ROOT / "config/logging.prod.yaml").read_text())
+
+    assert prod["formatters"] == {
+        "console": {
+            "()": "app.logging_config.ConsoleFormatter",
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        }
+    }
+    assert prod["handlers"]["console"]["formatter"] == "console"
+
+
 def test_json_formatter_emits_standard_fields():
     record = logging.LogRecord(
         name="app.http",

@@ -87,6 +87,8 @@ class JsonFormatter(logging.Formatter):
         "span_id": "span_id",
         "http.request.method": "http_method",
         "url.path": "url_path",
+        "url.raw_path": "url_raw_path",
+        "url.root_path": "url_root_path",
         "http.route": "http_route",
         "http.response.status_code": "http_status_code",
         "duration_ms": "duration_ms",
@@ -202,6 +204,24 @@ class RequestLoggingMiddleware:
         route = scope.get("route")
         route_path = getattr(route, "path", None)
         level = logging.ERROR if status_code >= 500 else logging.INFO
+        raw_path = scope.get("raw_path")
+        if isinstance(raw_path, bytes):
+            raw_path = raw_path.decode("latin-1", errors="replace")
+        if status_code == 404:
+            self.logger.info(
+                "HTTP request returned 404",
+                extra={
+                    "event_name": "http.request.not_found",
+                    "http_method": scope.get("method"),
+                    "url_path": scope.get("path"),
+                    "url_raw_path": raw_path,
+                    "url_root_path": scope.get("root_path"),
+                    "http_route": route_path,
+                    "http_status_code": status_code,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "status": status,
+                },
+            )
         self.logger.log(
             level,
             "HTTP request completed",
@@ -210,6 +230,8 @@ class RequestLoggingMiddleware:
                 "event_name": "http.request.completed",
                 "http_method": scope.get("method"),
                 "url_path": scope.get("path"),
+                "url_raw_path": raw_path,
+                "url_root_path": scope.get("root_path"),
                 "http_route": route_path,
                 "http_status_code": status_code,
                 "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),

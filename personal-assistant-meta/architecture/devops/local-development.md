@@ -104,6 +104,32 @@ USER_FEDERATION 模式需要用户完成一次 OAuth 授权：
 3. 用户在浏览器中完成授权
 4. 后续调用自动使用刷新后的 token
 
+Calendar OAuth2 production callback 由 Cloudflare Pages BFF 接住。本地 `npm run dev`
+没有 Pages Function，因此 callback URL 配成 Vite fallback shell 路径：
+
+```bash
+OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar
+```
+
+该 URL 会先进入本地 React fallback shell；shell 只把 callback query 发给
+`/invocations/auth/oauth2/callback/m365-calendar`，再由 Vite proxy 到 FastAPI
+`/auth/oauth2/callback/m365-calendar`。本地 fallback 不获取 MSAL token，也不执行业务
+completion 决策；生产仍以 Cloudflare Pages Function BFF 为准。
+
+production / Pages preview 若启用 BFF callback secret，需要在 Pages 与 Service 同时配置：
+
+```bash
+OAUTH2_CALLBACK_BFF_SECRET=<same-random-secret>
+```
+
+纯 Vite local fallback 没有 server-side Pages Function 注入该 header，因此本地
+`OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar`
+时不要在 Service `.env` 配置 `OAUTH2_CALLBACK_BFF_SECRET`；除非你用
+`wrangler pages dev` 或其它本地 BFF 同时注入同名 header。
+
+production 配置 `POSTGRES_DSN` 后，Service 会把 OAuth2 callback nonce 的
+active/completed 状态写入 PostgreSQL；未配置时仅使用进程内 fallback，适合本地开发。
+
 > 开发阶段可用 API Key（`key_auth`）方式绕过 OAuth，直接在 `agentarts_config.yaml` 中配置。
 
 ---

@@ -12,6 +12,10 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 ## 当前架构
 
 - AgentArts Runtime 使用 PUBLIC Mode，以保留 IAM、LLM 和外部 API Egress。
+- AgentArts Calendar OAuth2 return URL allowlist 暂通过 `terraform_data`
+  + `local-exec` 调用 infra SDK helper 管理；HuaweiCloud Provider 当前未暴露
+  Agent Identity Workload Identity 资源。OpenTofu 拥有该 allowlist 的完整
+  desired state，helper 会全量覆盖云端列表。
 - RDS 位于现有 VPC/Subnet，但通过独立 EIP 提供 Demo 公网连接。
 - RDS Security Group 仅开放 TCP 5432；当前 Demo 来源为 `0.0.0.0/0`。
 - 应用 DSN 必须使用 `sslmode=require` 和非管理员账号 `pa_app`。
@@ -26,10 +30,50 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 ## 前置条件
 
 - OpenTofu CLI ≥ 1.9
+- uv（用于执行 `scripts/configure_calendar_oauth_return_url.py`）
 - Provider credentials：`HW_ACCESS_KEY` / `HW_SECRET_KEY`
 - Cloudflare Provider credential：`CLOUDFLARE_API_TOKEN`
 - OBS backend credentials：`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
 - 与待管理资源匹配的最小 IAM permissions
+
+## 手动执行 Calendar OAuth helper
+
+`agent_identity.tf` 里的 `terraform_data + local-exec` 使用同一个脚本，
+可以手动查看或同步 Agent Identity 的 OAuth2 return URL allowlist。
+
+先进入目录并准备凭据：
+
+```bash
+cd personal-assistant-infra
+
+export HW_ACCESS_KEY="<your-access-key>"
+export HW_SECRET_KEY="<your-secret-key>"
+export AWS_ACCESS_KEY_ID="$HW_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$HW_SECRET_KEY"
+```
+
+查看当前 allowlist：
+
+```bash
+uv run python scripts/configure_calendar_oauth_return_url.py \
+  --list-current \
+  --workload-identity-name agent-personal-assistant \
+  --region cn-southwest-2
+```
+
+同步 allowlist（只有加 `--apply` 才会写入云端）：
+
+```bash
+uv run python scripts/configure_calendar_oauth_return_url.py \
+  --workload-identity-name agent-personal-assistant \
+  --region cn-southwest-2 \
+  --return-url "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar" \
+  --return-url "http://localhost:5173/auth/callback/m365-calendar" \
+  --apply
+```
+
+`--return-url` 可以重复传入；如果不传，脚本也会读取
+`OAUTH2_CALENDAR_CALLBACK_URL`。
 
 ## 本地验证
 
@@ -60,11 +104,15 @@ tofu plan
 ```text
 personal-assistant-infra/
 ├── main.tf                # OpenTofu、Provider 与 OBS backend
+├── agent_identity.tf      # Agent Identity OAuth2 return URL allowlist bridge
+├── scripts/               # Infra helper scripts
 ├── vpc.tf                 # Existing VPC/Subnet 与 RDS Security Group
 ├── rds.tf                 # PostgreSQL 17、应用账号与数据库
 ├── eip.tf                 # RDS EIP 与 Association
 ├── cloudflare.tf          # Hyperdrive、Pages Project 与 Functions bindings
 ├── outputs.tf             # RDS Private/Public Endpoint metadata
+├── pyproject.toml         # Infra helper Python dependencies
+├── uv.lock                # Infra helper Python dependency lockfile
 ├── variables.tf           # 通用变量
 ├── .terraform.lock.hcl    # Provider 版本锁
 ├── .gitignore
@@ -123,4 +171,4 @@ Zone 与 `pa-terraform-state`，删除 CNAME 和 Legacy website bucket。
 - [ADR-006 IaC 选型](../personal-assistant-meta/architecture/ADR/ADR-006-iac-cdktf-typescript.md)
 - [Cloudflare Pages](../personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md)
 - [CI/CD 架构](../personal-assistant-meta/architecture/devops/cicd.md)
-- [Legacy domain 记录](../personal-assistant-meta/architecture/cloud-service/domain.md)
+- [Legacy domain 记录](../personal-assistant-meta/architecture/cloud-service/huaweicloud/domain.md)

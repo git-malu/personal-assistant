@@ -355,9 +355,7 @@ class TestGetEmail:
         resp.raise_for_status.side_effect = error
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.get_email(
-                email_id="invalid", access_token="mock-token"
-            )
+            result = await et.get_email(email_id="invalid", access_token="mock-token")
 
         assert "error" in result
         assert "get_email" in result["error"] or "404" in result["error"]
@@ -450,9 +448,7 @@ class TestSearchEmails:
         resp.raise_for_status.side_effect = error
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.search_emails(
-                query="test", access_token="mock-token"
-            )
+            result = await et.search_emails(query="test", access_token="mock-token")
 
         assert "error" in result
         assert "search_emails" in result["error"] or "400" in result["error"]
@@ -617,8 +613,6 @@ class TestSendEmail:
         mock_client.post.assert_not_called()
 
 
-
-
 # ═══════════════════════════════════════════════════════════════
 # reply_to_email tests
 # ═══════════════════════════════════════════════════════════════
@@ -760,7 +754,6 @@ class TestReplyToEmail:
 # ═══════════════════════════════════════════════════════════════
 
 
-
 class TestHandleAuthUrl:
     """Tests for handle_auth_url() with get_stream_writer."""
 
@@ -768,24 +761,25 @@ class TestHandleAuthUrl:
     async def test_handle_auth_url_writes_to_stream_writer(self):
         """UT-HAU-01: handle_auth_url calls get_stream_writer with auth URL."""
         writer_mock = MagicMock()
-        with patch(
-            "app.tools.email_tools.get_stream_writer", return_value=writer_mock
-        ):
+        with patch("app.tools.email_tools.get_stream_writer", return_value=writer_mock):
             await et.handle_auth_url("https://auth.example.com/login")
 
             writer_mock.assert_called_once()
             data = writer_mock.call_args[0][0]
             assert data["auth_url"] == "https://auth.example.com/login"
             assert data["auth_required"] is True
-            assert data["provider"] == "m365-provider-common"
+            assert data["provider"] == "m365-email-provider"
 
     @pytest.mark.asyncio
     async def test_handle_auth_url_runtime_error_graceful(self):
         """UT-HAU-02: handle_auth_url logs warning when get_stream_writer fails."""
-        with patch(
-            "app.tools.email_tools.get_stream_writer",
-            side_effect=RuntimeError("not in graph context"),
-        ), patch("app.tools.email_tools.logger") as mock_logger:
+        with (
+            patch(
+                "app.tools.email_tools.get_stream_writer",
+                side_effect=RuntimeError("not in graph context"),
+            ),
+            patch("app.tools.email_tools.logger") as mock_logger,
+        ):
             await et.handle_auth_url("https://auth.example.com/login")
 
             mock_logger.warning.assert_called_once()
@@ -871,15 +865,15 @@ class TestToolErrorFormatting:
     def test_format_timeout_error(self):
         """UT-ERR-01: TimeoutException → 中文超时提示."""
         import httpx
-        result = et._format_tool_error(
-            httpx.TimeoutException("timeout"), "list_emails"
-        )
+
+        result = et._format_tool_error(httpx.TimeoutException("timeout"), "list_emails")
         assert "请求超时" in result["error"]
         assert "list_emails" in result["error"]
 
     def test_format_connect_error(self):
         """UT-ERR-02: ConnectError → 中文连接失败提示."""
         import httpx
+
         result = et._format_tool_error(
             httpx.ConnectError("connection refused"), "get_email"
         )
@@ -891,6 +885,7 @@ class TestToolErrorFormatting:
         from unittest.mock import MagicMock
 
         import httpx
+
         mock_response = MagicMock()
         mock_response.status_code = 429
         exc = httpx.HTTPStatusError(
@@ -904,6 +899,7 @@ class TestToolErrorFormatting:
         from unittest.mock import MagicMock
 
         import httpx
+
         mock_response = MagicMock()
         mock_response.status_code = 503
         exc = httpx.HTTPStatusError(
@@ -917,6 +913,7 @@ class TestToolErrorFormatting:
         from unittest.mock import MagicMock
 
         import httpx
+
         mock_response = MagicMock()
         mock_response.status_code = 401
         exc = httpx.HTTPStatusError(
@@ -933,5 +930,3 @@ class TestToolErrorFormatting:
 
 
 # ═══════════════════════════════════════════════════════════════
-
-

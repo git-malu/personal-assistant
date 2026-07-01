@@ -7,6 +7,31 @@ from agentarts.sdk.runtime.model import (
 from fastapi import HTTPException, Request
 
 
+def extract_authorization_user_token(request: Request) -> str:
+    """Extract the JWT from the Authorization header for AgentArts Identity."""
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header",
+        )
+    if authorization.lower() == "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header",
+        )
+
+    scheme, separator, token = authorization.partition(" ")
+    if not separator:
+        return authorization
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header",
+        )
+    return token.strip()
+
+
 def extract_gateway_user_id(request: Request) -> str:
     """Extract verified user_id from AgentArts Gateway injected header.
 

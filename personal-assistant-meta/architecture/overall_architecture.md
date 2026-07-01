@@ -89,6 +89,8 @@ flowchart TB
 |------|------|
 | [`api.md`](api.md) | Web Chat、Cloudflare Pages Function、AgentArts Gateway 与 FastAPI 的 API path 及映射关系 |
 | `frontend_architecture.md` | 三种客户端渠道（Web Chat / 飞书直连 / OfficeClaw）、渠道对比、选择指南、部署拓扑 |
+| [`auth/inbound-auth-lifecycle.md`](auth/inbound-auth-lifecycle.md) | Web Chat Inbound Auth lifecycle：MSAL、Zustand、ID Token、silent refresh、AuthGuard 与 Landing/Chat gate |
+| [`auth/feature-15-calendar-oauth2-architecture.md`](auth/feature-15-calendar-oauth2-architecture.md) | Feature 15 Calendar OAuth2 full flow：AuthCard、Service-owned callback、state-scoped UI status、`UserIdentifier` 参数约束 |
 | `backend_architecture.md` | FastAPI 路由设计、Agent 处理逻辑、LangGraph 编排、AgentArts SDK 集成、项目结构 |
 
 ### 2.1 前后端关系

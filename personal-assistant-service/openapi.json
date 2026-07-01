@@ -117,6 +117,84 @@
           }
         }
       }
+    },
+    "/auth/oauth2/callback/m365-calendar": {
+      "get": {
+        "summary": "Calendar Oauth2 Callback",
+        "description": "Complete Calendar OAuth2 from the backend-owned callback endpoint.",
+        "operationId": "calendar_oauth2_callback_auth_oauth2_callback_m365_calendar_get",
+        "responses": {
+          "200": {
+            "description": "Callback status as HTML for direct browser opens or JSON for the local development fallback.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "m365-calendar-auth",
+                      "title": "Type",
+                      "description": "Calendar OAuth2 callback envelope type."
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "title": "Requestid",
+                      "description": "OAuth2 state used as the UI request id."
+                    },
+                    "provider": {
+                      "type": "string",
+                      "title": "Provider",
+                      "description": "AgentArts resource credential provider name."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "complete",
+                        "failed",
+                        "pending"
+                      ],
+                      "title": "Status",
+                      "description": "Backend-owned OAuth2 completion status."
+                    },
+                    "message": {
+                      "type": "string",
+                      "title": "Message",
+                      "description": "Human-readable callback status message."
+                    },
+                    "state": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "State",
+                      "description": "OAuth2 state."
+                    }
+                  },
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "requestId",
+                    "provider",
+                    "status",
+                    "message"
+                  ],
+                  "title": "OAuth2CallbackResponse",
+                  "description": "Calendar OAuth2 callback status returned to the BFF result page."
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

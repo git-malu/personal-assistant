@@ -5,6 +5,7 @@ and environment configuration across E2E test scenarios.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -44,8 +45,21 @@ def _get_uv_path() -> str:
 
 def node_command(name: str) -> str:
     """Return a Node CLI executable name that works on Windows and Unix."""
+    resolved = shutil.which(name)
+    if resolved:
+        return resolved
     if os.name == "nt" and not name.endswith(".cmd"):
-        return f"{name}.cmd"
+        resolved_cmd = shutil.which(f"{name}.cmd")
+        if resolved_cmd:
+            return resolved_cmd
+        if name == "npm":
+            fallback = shutil.which("pnpm") or shutil.which("pnpm.cmd")
+            if fallback:
+                return fallback
+        if name == "npx":
+            fallback = shutil.which("pnpm") or shutil.which("pnpm.cmd")
+            if fallback:
+                return fallback
     return name
 
 

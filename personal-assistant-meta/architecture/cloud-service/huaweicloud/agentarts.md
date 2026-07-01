@@ -707,7 +707,7 @@ flowchart TB
 - Docker 版本需 **≥18.06**。
 - SWR 不支持 OCI 镜像（Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`）。
 - **Runtime 架构**：`runtime.arch` 默认值为 `x86_64`。部署 ARM64 镜像必须显式设为 `arm64`，否则容器调度到 x86 节点会静默失败（`stdout="" stderr=""`，无任何日志输出）。
-- **Gateway 路由**：AgentArts API Gateway 默认 `url_match_type: ACCURATE_MATCH`，仅转发 `/invocations`。需显式设为 `PREFIX_MATCH` 才能转发 `/invocations/*` 子路径。Gateway 不支持自定义路由表或 wildcard。
+- **Gateway 路由**：AgentArts API Gateway 默认 `url_match_type: ACCURATE_MATCH`，仅转发 `/invocations`。需显式设为 `PREFIX_MATCH` 才能匹配 `/invocations/*` 子路径。Gateway 不支持自定义路由表或 wildcard。`PREFIX_MATCH` 只是 Gateway policy 匹配规则，不等同于普通 reverse proxy；外部 Runtime path 与容器内 ASGI path 的映射必须通过 smoke test 验证，详见 §11.7。
 - Memory Space 创建后 API Key 仅返回一次，务必保存。
 - 记忆生成有延迟（文档示例中使用 30s 等待）。
 - 使用 IAM 子账号时需确保有 SWR FullAccess 权限。
@@ -848,7 +848,7 @@ if (isTokenExpiringSoon(idToken)) {
 
 `acquireTokenSilent` 优先从缓存读取，缓存过期时自动用 refresh token 换新（无用户交互）。
 
-**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 sessionStorage 加载已有 token：
+**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 MSAL cache 加载已有 token。Calendar OAuth2 production callback 已由 Cloudflare Pages Function BFF 承接，不再要求 callback tab 从 MSAL cache 静默取得 ID Token：
 
 ```typescript
 msalInstance.handleRedirectPromise().then(async (response) => {
@@ -865,8 +865,8 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 
 > 本节保留历史排障信息。Production Frontend 已迁移到 Cloudflare Pages，
 > 当前拓扑与运维命令见
-> [`cloudflare/pages.md`](./cloudflare/pages.md) 和
-> [ADR-017](../ADR/ADR-017-cloudflare-pages-proxy.md)。
+> [`cloudflare/pages.md`](../cloudflare/pages.md) 和
+> [ADR-017](../../ADR/ADR-017-cloudflare-pages-proxy.md)。
 
 | 方案 | 超时 | 注入 header | CORS | 适用场景 |
 |------|:---:|:---:|:---:|---------|
@@ -896,6 +896,31 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 ```
 
 例如：`/runtimes/personal-assistant/invocations`。直接访问 `/invocations` 会返回 `{"code":404,"message":"No matching policy found"}`。
+
+#### 11.7.1 `PREFIX_MATCH` path 映射结论（2026-06-27 实测）
+
+结论：`/invocations` 是 AgentArts Gateway policy 前缀。带 suffix 时，Gateway 去掉 `/runtimes/{runtime_name}/invocations`，把 suffix 作为容器内 path。
+
+| Gateway 外部 path | FastAPI 容器内 path |
+|-------------------|---------------------|
+| `/runtimes/{runtime_name}/invocations` | `/invocations` |
+| `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
+| `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
+
+`/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
+
+Cloudflare Pages BFF 可复用该 Gateway full Runtime path 转发 Calendar OAuth2
+callback，也可以通过 `AGENTARTS_OAUTH_CALLBACK_URL` 配置 direct Service callback
+upstream。无论走哪条 upstream，Service 都用 signed state 做 callback 绑定和 replay
+control，并以 callback context 恢复的 `Authorization` user token 调用
+`complete_resource_token_auth`；不要用 service token 覆盖该 user token。
+
+#### 11.7.2 404 判别
+
+- `{"code":404,"data":null,"message":"No matching policy found"}`：没有命中 AgentArts Gateway policy。
+- `{"detail":"Not Found"}`：请求已进入容器，但 FastAPI 没有匹配到容器内 path。
+- 需要确认当前镜像注册了哪些 route 时，请访问：
+  `/runtimes/personal-assistant/invocations/openapi.json`。
 
 ### 11.8 完整排障流程图
 

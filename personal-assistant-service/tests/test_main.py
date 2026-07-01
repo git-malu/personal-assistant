@@ -6,6 +6,7 @@ from unittest.mock import ANY, patch
 
 import httpx
 import pytest
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from agentarts.sdk.runtime.model import (
     ACCESS_TOKEN_HEADER,
     SESSION_HEADER,
@@ -14,6 +15,8 @@ from agentarts.sdk.runtime.model import (
 from starlette.routing import Mount  # noqa: E402
 
 from app.main import app  # noqa: E402
+from app.oauth2_state import verify_oauth2_state
+from app.settings import get_settings
 
 
 class FakeAgentHandler:
@@ -147,6 +150,27 @@ async def test_invocations_returns_response(client, fake_handler):
     assert fake_handler.handle_calls[0][0] == "Hello, assistant!"
     assert fake_handler.handle_calls[0][1] == "user-1"
     assert fake_handler.handle_calls[0][2] == "sess-abc"
+
+
+@pytest.mark.asyncio
+async def test_invocations_sets_oauth2_custom_state_for_calendar(client):
+    response = await client.post(
+        "/invocations",
+        json={"message": "Hello, assistant!"},
+        headers={
+            USER_ID_HEADER: "user-1",
+            SESSION_HEADER: "sess-abc",
+        },
+    )
+
+    assert response.status_code == 200
+    claims = verify_oauth2_state(
+        AgentArtsRuntimeContext.get_oauth2_custom_state(),
+        settings=get_settings(),
+        expected_user_id="user-1",
+        expected_provider=get_settings().m365_calendar_provider_name,
+    )
+    assert claims.session_id == "sess-abc"
 
 
 # ---------------------------------------------------------------------------

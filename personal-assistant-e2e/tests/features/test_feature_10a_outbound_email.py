@@ -707,7 +707,7 @@ def test_cross_session_independent_state(email_test_client):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 3b: Tool-level confirm parameter behavior
+# Scenario 3b: Direct tool invocation behavior
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -803,77 +803,10 @@ def _mock_graph_client():
 
 
 @pytest.mark.feature
-def test_send_email_confirm_false_returns_preview():
-    """E2E-11: send_email with confirm=False (default) returns preview.
+def test_send_email_sends_with_valid_token():
+    """E2E-11: send_email calls Graph API when access_token is present.
 
-    Verifies the tool-level Guard: calling send_email without confirm
-    returns requires_confirmation=True and a preview, does NOT call Graph API.
-    """
-    send_email, _ = _import_email_tools()
-
-    import asyncio
-
-    result = asyncio.run(
-        send_email(
-            to=["test@example.com"],
-            subject="Hello",
-            body="This is a test email",
-            confirm=False,
-            access_token="fake-token",
-        )
-    )
-
-    assert result["sent"] is False, f"Expected sent=False, got: {result}"
-    assert result.get("requires_confirmation") is True, (
-        f"Expected requires_confirmation=True, got: {result}"
-    )
-    assert "preview" in result, f"Expected preview dict, got: {result}"
-    assert result["preview"]["to"] == ["test@example.com"]
-    assert result["preview"]["subject"] == "Hello"
-    assert "body_preview" in result["preview"]
-    assert "请确认" in result.get("error", ""), (
-        f"Expected Chinese confirmation prompt in error, got: {result}"
-    )
-
-
-@pytest.mark.feature
-def test_reply_to_email_confirm_false_returns_preview():
-    """E2E-12: reply_to_email with confirm=False returns preview.
-
-    Verifies the tool-level Guard: calling reply_to_email without confirm
-    returns requires_confirmation=True and a preview with email_id + body_preview.
-    """
-    _, reply_to_email = _import_email_tools()
-
-    import asyncio
-
-    result = asyncio.run(
-        reply_to_email(
-            email_id="AAMkAGFiYmNk",
-            body="收到，感谢更新。",
-            confirm=False,
-            access_token="fake-token",
-        )
-    )
-
-    assert result["sent"] is False, f"Expected sent=False, got: {result}"
-    assert result.get("requires_confirmation") is True, (
-        f"Expected requires_confirmation=True, got: {result}"
-    )
-    assert "preview" in result, f"Expected preview dict, got: {result}"
-    assert result["preview"]["email_id"] == "AAMkAGFiYmNk"
-    assert "body_preview" in result["preview"]
-    assert "请确认" in result.get("error", ""), (
-        f"Expected Chinese confirmation prompt in error, got: {result}"
-    )
-
-
-@pytest.mark.feature
-def test_send_email_confirm_true_sends():
-    """E2E-11b: send_email with confirm=True actually sends (calls Graph API).
-
-    Verifies that when confirm=True, the function proceeds to call the Graph API
-    and returns sent=True on 202 response.
+    User confirmation is enforced by Agent policy, not by the tool signature.
     """
     from unittest.mock import patch
 
@@ -888,14 +821,11 @@ def test_send_email_confirm_true_sends():
                 to=["test@example.com"],
                 subject="Hello",
                 body="This is a test email",
-                confirm=True,
                 access_token="fake-token",
             )
         )
 
-    assert result["sent"] is True, (
-        f"Expected sent=True with confirm=True, got: {result}"
-    )
+    assert result["sent"] is True, f"Expected sent=True with valid token, got: {result}"
     assert result["error"] is None, f"Expected no error, got: {result}"
     # Verify Graph API was called (POST to /sendMail)
     mock_client.post.assert_called_once()

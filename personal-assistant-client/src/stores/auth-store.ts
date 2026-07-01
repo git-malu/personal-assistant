@@ -13,5 +13,5 @@ export const useAuthStore = create<AuthState>((set) => ({
   hydrated: false,
   setIdToken: (token) => set({ idToken: token }),
   setHydrated: (value) => set({ hydrated: value }),
-  clearToken: () => set({ idToken: null, hydrated: false }),
+  clearToken: () => set({ idToken: null }),
 }));

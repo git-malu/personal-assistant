@@ -1,6 +1,6 @@
 # Personal Assistant — API 路径与映射
 
-> 状态：Active | 更新时间：2026-06-18
+> 状态：Active | 更新时间：2026-06-27
 
 本文描述当前 Web Chat、Cloudflare Pages Function、AgentArts Gateway 与
 FastAPI 容器之间的 API path 及映射关系。当前生产对话 API 最终统一收敛到
@@ -101,9 +101,17 @@ AgentArts Gateway 的外部 path 必须包含 Runtime prefix：
 /runtimes/personal-assistant/invocations
 ```
 
-Gateway 当前使用 `PREFIX_MATCH`，转发 `/invocations` 及其子路径。外部请求
-仍必须包含 `/runtimes/personal-assistant` Runtime prefix；直接请求 Gateway
-origin 的 `/invocations` 不会命中 policy。
+Gateway 当前使用 `PREFIX_MATCH`。结论：`/invocations` 是 Gateway policy
+前缀；带 suffix 时，Gateway 去掉 `/runtimes/{runtime_name}/invocations`，
+把 suffix 作为容器内 path。
+
+| Gateway 外部 path | FastAPI 容器内 path |
+|-------------------|---------------------|
+| `/runtimes/{runtime_name}/invocations` | `/invocations` |
+| `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
+| `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
+
+`/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
 
 Gateway 完成 JWT validation，并在转发到容器时注入或提供平台 headers，
 包括：
@@ -112,8 +120,13 @@ Gateway 完成 JWT validation，并在转发到容器时注入或提供平台 he
 - `x-hw-agentarts-session-id`
 - `X-HW-AgentGateway-Workload-Access-Token`
 
-容器接收到的应用路由仍是根级 `POST /invocations`，而不是带
-`/runtimes/personal-assistant` prefix 的路径。
+错误判别：
+
+- `No matching policy found`：没有命中 AgentArts Gateway policy。
+- `{"detail":"Not Found"}`：请求已进入容器，但 FastAPI 没有匹配到容器内 path。
+
+平台行为细节见
+[`cloud-service/huaweicloud/agentarts.md` §11.7](cloud-service/huaweicloud/agentarts.md#117-gateway-路由路径)。
 
 ## 3. FastAPI API
 
@@ -123,6 +136,7 @@ Gateway 完成 JWT validation，并在转发到容器时注入或提供平台 he
 |--------|-------------|--------|-------------------------|------|
 | `GET` | `/ping` | AgentArts 控制面、本地开发者 | 否 | Liveness health check，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | Web Chat、AgentArts SDK、其他 AgentArts Client | 是 | 统一对话入口，支持同步 JSON 和 SSE |
+| `GET` | `/auth/oauth2/callback/m365-calendar` | Cloudflare Pages BFF server-side callback forward | 是，通过 BFF direct upstream 或 Gateway full Runtime path | 完成 Calendar Resource Token Auth session binding，并返回 callback result |
 | `GET` | `/invocations/playground` | 开发者 | 是，通过 Gateway full Runtime path | Redirect 到 `/invocations/playground/` |
 | `GET` / WebSocket | `/invocations/playground/*` | Chainlit Browser Client | 是，通过 Gateway full Runtime path | Chainlit Playground 静态资源、HTTP API 与 WebSocket |
 
@@ -202,6 +216,17 @@ flowchart LR
     Vite -->|"same path + dev-user header"| FastAPI["FastAPI<br/>POST :8080/invocations"]
 ```
 
+Calendar OAuth2 production callback 由 Cloudflare Pages Function BFF 接住，
+server-side 转发到 Service callback API。Vite 本地开发没有 Pages Function，
+因此保留 React fallback shell 调 `/invocations` proxy：
+
+```text
+http://localhost:5173/auth/callback/m365-calendar
+-> React fallback shell
+-> http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar
+-> http://localhost:8080/auth/oauth2/callback/m365-calendar
+```
+
 ## 5. Path 可达性矩阵
 
 | 场景 | Browser 请求 path | 中间映射 | 最终 FastAPI path | 当前可用 |
@@ -209,6 +234,8 @@ flowchart LR
 | Cloudflare production | `/invocations` | Pages Function → Gateway full Runtime path | `/invocations` | 是 |
 | Wrangler Pages local preview | `/invocations` | Local Pages Function → production Gateway | `/invocations` | 是，需要有效 JWT |
 | Vite + local Backend | `/invocations` | Vite Proxy → `localhost:8080` | `/invocations` | 是 |
+| Vite + local Calendar OAuth fallback shell | `/auth/callback/m365-calendar` | React fallback shell → Vite `/invocations` proxy | `/auth/oauth2/callback/m365-calendar` | 是 |
+| Cloudflare Calendar OAuth BFF callback | `/auth/callback/m365-calendar` | Pages Function BFF → direct callback upstream 或 Gateway full Runtime path | `/auth/oauth2/callback/m365-calendar` | 是 |
 | Backend direct local | `/invocations` | 无 | `/invocations` | 是 |
 | Backend Playground local | `/invocations/playground` | 无 | `/invocations/playground` | 是 |
 | Gateway direct invocation | `/runtimes/personal-assistant/invocations` | Gateway | `/invocations` | 是，需要有效 JWT |

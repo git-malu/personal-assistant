@@ -52,7 +52,7 @@ personal-assistant-service/
 ├── Dockerfile               # ARM64 容器镜像
 ├── config/
 │   ├── logging.dev.yaml     # 本地 UTC console logs
-│   └── logging.prod.yaml    # 生产 single-line JSON logs
+│   └── logging.prod.yaml    # 生产 UTC console logs
 ├── .agentarts_config.yaml   # AgentArts 平台部署配置
 └── .dockerignore
 ```
@@ -116,7 +116,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload \
 ```
 
 Production container 使用 `config/logging.prod.yaml`，将 Uvicorn lifecycle、
-application 和 HTTP completion events 统一输出为 stdout JSON。`LOG_LEVEL`
+application 和 HTTP completion events 统一输出为常规 stdout console logs。`LOG_LEVEL`
 同时控制全部 logger；request ID 会通过 `X-Request-ID` response header 返回。
 
 ### 5. 打开浏览器

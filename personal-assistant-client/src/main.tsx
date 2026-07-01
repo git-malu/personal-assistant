@@ -24,7 +24,7 @@ msalInstance.initialize().then(() => {
     if (response?.idToken) {
       useAuthStore.getState().setIdToken(response.idToken);
     } else {
-      // No redirect in progress — load existing token from MSAL cache (sessionStorage)
+      // No redirect in progress — load existing token from the shared MSAL cache.
       const cachedToken = await acquireIdTokenSilently();
       if (cachedToken) {
         useAuthStore.getState().setIdToken(cachedToken);

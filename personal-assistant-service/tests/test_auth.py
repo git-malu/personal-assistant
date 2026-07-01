@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.auth import (
+    extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
 )
@@ -66,6 +67,31 @@ class TestExtractGatewayUserId:
         request = _make_request({USER_ID_HEADER: "   "})
         with pytest.raises(HTTPException) as exc_info:
             extract_gateway_user_id(request)
+        assert exc_info.value.status_code == 401
+
+
+class TestExtractAuthorizationUserToken:
+    """Tests for extracting the user JWT from Authorization."""
+
+    def test_returns_bearer_token(self) -> None:
+        request = _make_request({"Authorization": "Bearer jwt-token"})
+        assert extract_authorization_user_token(request) == "jwt-token"
+
+    def test_returns_raw_token_when_scheme_absent(self) -> None:
+        request = _make_request({"Authorization": "jwt-token"})
+        assert extract_authorization_user_token(request) == "jwt-token"
+
+    def test_raises_401_when_header_missing(self) -> None:
+        request = _make_request({"other-header": "value"})
+        with pytest.raises(HTTPException) as exc_info:
+            extract_authorization_user_token(request)
+        assert exc_info.value.status_code == 401
+        assert "Authorization" in exc_info.value.detail
+
+    def test_raises_401_when_bearer_token_empty(self) -> None:
+        request = _make_request({"Authorization": "Bearer "})
+        with pytest.raises(HTTPException) as exc_info:
+            extract_authorization_user_token(request)
         assert exc_info.value.status_code == 401
 
 

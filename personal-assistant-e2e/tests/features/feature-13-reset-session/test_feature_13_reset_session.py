@@ -147,6 +147,10 @@ def _handle_app_route(route):
         "const isAuthenticated = useIsAuthenticated();",
         "const isAuthenticated = true; // E2E bypass",
     )
+    body = body.replace(
+        "const canShowChat = isAuthenticated && Boolean(idToken);",
+        "const canShowChat = true; // E2E bypass",
+    )
 
     route.fulfill(
         status=resp.status,

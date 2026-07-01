@@ -9,13 +9,17 @@ from app.settings import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache():
+def clear_settings_cache(monkeypatch):
+    monkeypatch.delenv("OAUTH2_CALENDAR_CALLBACK_URL", raising=False)
+    monkeypatch.delenv("OAUTH2_CALLBACK_BFF_SECRET", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
 
 
-def test_defaults():
+def test_defaults(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
     settings = Settings(_env_file=None)
 
     assert settings.log_level == "INFO"
@@ -24,6 +28,12 @@ def test_defaults():
     assert settings.llm_agent_bundle_ttl_seconds == 300.0
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
+    assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
+    )
+    assert str(settings.graph_base_url).rstrip("/") == (
+        "https://graph.microsoft.com/v1.0/me"
+    )
 
 
 def test_environment_overrides_defaults(monkeypatch):
@@ -79,6 +89,32 @@ def test_agent_bundle_ttl_can_be_overridden(monkeypatch):
     assert settings.llm_agent_bundle_ttl_seconds == 120.0
 
 
+def test_graph_base_url_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "GRAPH_BASE_URL",
+        "https://graph.microsoft.com/v1.0/users/current",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.graph_base_url).rstrip("/") == (
+        "https://graph.microsoft.com/v1.0/users/current"
+    )
+
+
+def test_calendar_callback_url_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "OAUTH2_CALENDAR_CALLBACK_URL",
+        "http://localhost:5173/auth/callback/m365-calendar",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
+        "http://localhost:5173/auth/callback/m365-calendar"
+    )
+
+
 @pytest.mark.parametrize("ttl", [0, -1])
 def test_agent_bundle_ttl_must_be_positive(ttl):
     with pytest.raises(ValidationError, match="llm_agent_bundle_ttl_seconds"):
@@ -92,12 +128,16 @@ def test_empty_optional_values_are_unset():
         postgres_dsn="",
         sqlite_db_path="",
         iam_users_endpoint="",
+        oauth2_calendar_callback_url="",
+        oauth2_callback_bff_secret="",
     )
 
     assert settings.llm_base_url is None
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
     assert settings.iam_users_endpoint is None
+    assert settings.oauth2_calendar_callback_url is None
+    assert settings.oauth2_callback_bff_secret is None
 
 
 def test_settings_are_frozen():

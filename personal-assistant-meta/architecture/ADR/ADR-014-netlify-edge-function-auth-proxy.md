@@ -237,4 +237,4 @@ curl -i -X OPTIONS \
 - [ADR-015: OBS + CDN 路径分发避免网关 CORS OPTIONS 预检拦截](./ADR-015-obs-cdn-path-routing-no-cors.md)
 - [前端架构 §6.2 Web Chat 前端部署](../frontend_architecture.md#62-web-chat-前端部署)
 - [后端架构 §2.1 AgentArts Gateway 路由约束](../backend_architecture.md#21-agentarts-gateway-路由约束)
-- [AgentArts §11.7 Gateway 路由路径](../cloud-service/agentarts.md#117-gateway-路由路径)
+- [AgentArts §11.7 Gateway 路由路径](../cloud-service/huaweicloud/agentarts.md#117-gateway-路由路径)

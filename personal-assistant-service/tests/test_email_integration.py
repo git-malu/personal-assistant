@@ -32,9 +32,7 @@ class TestEmailIntegration:
     def check_env(self):
         """Skip integration tests unless explicitly enabled."""
         if os.environ.get("RUN_EMAIL_INTEGRATION") != "1":
-            pytest.skip(
-                "Set RUN_EMAIL_INTEGRATION=1 and preconfigure m365-provider"
-            )
+            pytest.skip("Set RUN_EMAIL_INTEGRATION=1 and preconfigure m365-provider")
 
     # ── IT-01 ──
 

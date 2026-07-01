@@ -19,7 +19,7 @@ agents:
       arch: arm64
       agent_gateway_id: null
       agent_id: 24556b84-099e-4ba6-af90-bf7daded6679
-      execution_agency_name: null
+      execution_agency_name: DefaultAgentArtsRuntimeAgency
       invoke_config:
         protocol: HTTP
         port: 8080
@@ -49,7 +49,7 @@ agents:
         logs:
           enabled: true
       artifact_source:
-        url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
+        url: ${AGENTARTS_IMAGE_URL}
         commands: []
       environment_variables:
       - key: LOG_LEVEL
@@ -62,10 +62,8 @@ agents:
         value: ${LLM_CREDENTIAL_PROVIDER}
       - key: POSTGRES_DSN
         value: ${POSTGRES_DSN}
-      - key: HUAWEICLOUD_SDK_AK
-        value: ${HUAWEICLOUD_SDK_AK}
-      - key: HUAWEICLOUD_SDK_SK
-        value: ${HUAWEICLOUD_SDK_SK}
+      - key: OAUTH2_CALENDAR_CALLBACK_URL
+        value: ${OAUTH2_CALENDAR_CALLBACK_URL}
       tags:
       - key: app
         value: personal-assistant

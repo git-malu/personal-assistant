@@ -1,0 +1,7 @@
+[project]
+name = "personal-assistant-infra"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "huaweicloudsdkagentidentity>=3.1.199",
+]

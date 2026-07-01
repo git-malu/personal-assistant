@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.parse import quote
@@ -10,27 +11,77 @@ from urllib.parse import quote
 import httpx
 from agentarts.sdk import require_access_token
 from langchain_core.tools import tool
+from langgraph.config import get_stream_writer
 
 from app.identity import (
-    DEFAULT_GITHUB_SCOPES,
-    GITHUB_PROVIDER_NAME,
-    AuthorizationRequired,
-    GitHubAuthorizationRequiredPoller,
     capture_github_authorization_url,
+    get_github_provider_name,
+    get_github_scopes_list,
 )
+
+logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 
 
-@dataclass(slots=True)
-class GitHubToolError:
-    """Structured tool response when GitHub access is unavailable."""
+# ---------------------------------------------------------------------------
+# Auth-stream helpers
+# ---------------------------------------------------------------------------
 
-    ok: bool
-    message: str
-    authorization_url: str | None = None
-    provider_name: str | None = None
-    details: str | None = None
+
+async def _handle_auth_url(auth_url: str) -> None:
+    """Push the GitHub authorization URL to the frontend as an auth card."""
+    capture_github_authorization_url(auth_url)
+    logger.info("GitHub authorization required — auth URL: %s", auth_url)
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": "GitHub 功能需要您的授权。请点击该链接进行授权",
+                "auth_url": auth_url,
+                "auth_required": True,
+                "provider": get_github_provider_name(),
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable — GitHub auth URL not streamed: %s",
+            auth_url,
+        )
+
+
+def _push_auth_complete() -> None:
+    """Push an ``auth_complete`` event to the frontend via the stream writer."""
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": "GitHub 授权已完成 ✅",
+                "auth_complete": True,
+                "provider": get_github_provider_name(),
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable — GitHub auth_complete not streamed"
+        )
+
+
+def _auth_required_response() -> dict[str, Any]:
+    """Return a tool result indicating authorization is pending."""
+    return {
+        "auth_required": True,
+        "error": (
+            "GitHub authorization pending. Please follow the authorization link."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
@@ -52,6 +103,11 @@ class GitHubContentItem:
     download_url: str | None = None
     content: str | None = None
     encoding: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Normalizers
+# ---------------------------------------------------------------------------
 
 
 def _normalize_repo_item(item: dict[str, Any]) -> GitHubRepositoryItem:
@@ -93,6 +149,11 @@ def _content_item_to_dict(item: GitHubContentItem) -> dict[str, Any]:
     return asdict(item)
 
 
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+
 async def _raw_github_request(
     access_token: str,
     method: str,
@@ -115,43 +176,46 @@ async def _raw_github_request(
         return response.json()
 
 
+# ---------------------------------------------------------------------------
+# Decorated request helper (auth gate)
+# ---------------------------------------------------------------------------
+
+
 @require_access_token(
-    provider_name=GITHUB_PROVIDER_NAME,
+    provider_name=get_github_provider_name(),
     into="access_token",
-    scopes=list(DEFAULT_GITHUB_SCOPES),
-    on_auth_url=capture_github_authorization_url,
+    scopes=get_github_scopes_list(),
+    on_auth_url=_handle_auth_url,
     auth_flow="USER_FEDERATION",
-    force_authentication=False,
-    token_poller=GitHubAuthorizationRequiredPoller(),
 )
 async def _github_request(
     method: str,
     path: str,
     *,
     params: dict[str, Any] | None = None,
-    access_token: str,
+    access_token: str | None = None,
 ) -> Any:
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete()
     return await _raw_github_request(access_token, method, path, params=params)
 
 
-def _authorization_error(exc: AuthorizationRequired) -> dict[str, Any]:
-    return asdict(
-        GitHubToolError(
-            ok=False,
-            message=exc.message,
-            authorization_url=exc.authorization_url,
-            provider_name=exc.provider_name,
-        )
-    )
+# ---------------------------------------------------------------------------
+# Public tools
+# ---------------------------------------------------------------------------
 
 
 async def list_repositories() -> list[dict[str, Any]] | dict[str, Any]:
     """List repositories visible to the current end user."""
     try:
         data = await _github_request("GET", "/user/repos")
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         return [_repo_item_to_dict(_normalize_repo_item(item)) for item in data]
-    except AuthorizationRequired as exc:
-        return _authorization_error(exc)
+    except Exception as e:
+        logger.exception("list_repositories failed")
+        return {"ok": False, "error": f"Request failed: {e!s}"}
 
 
 async def list_repo_contents(
@@ -166,6 +230,8 @@ async def list_repo_contents(
         api_path = f"{api_path}/{encoded_path}"
     try:
         data = await _github_request("GET", api_path)
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         if isinstance(data, list):
             items = [
                 _content_item_to_dict(_normalize_content_item(item)) for item in data
@@ -179,8 +245,9 @@ async def list_repo_contents(
             "count": len(items),
             "items": items,
         }
-    except AuthorizationRequired as exc:
-        return _authorization_error(exc)
+    except Exception as e:
+        logger.exception("list_repo_contents failed")
+        return {"ok": False, "error": f"Request failed: {e!s}"}
 
 
 async def get_file_content(
@@ -200,18 +267,24 @@ async def get_file_content(
     )
     try:
         data = await _github_request("GET", api_path, params=params)
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         return _content_item_to_dict(_normalize_content_item(data))
-    except AuthorizationRequired as exc:
-        return _authorization_error(exc)
+    except Exception as e:
+        logger.exception("get_file_content failed")
+        return {"ok": False, "error": f"Request failed: {e!s}"}
 
 
 async def search_code(query: str) -> list[dict[str, Any]] | dict[str, Any]:
     """Search GitHub code with the delegated end-user token."""
     try:
         data = await _github_request("GET", "/search/code", params={"q": query})
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         return list(data.get("items", []))
-    except AuthorizationRequired as exc:
-        return _authorization_error(exc)
+    except Exception as e:
+        logger.exception("search_code failed")
+        return {"ok": False, "error": f"Request failed: {e!s}"}
 
 
 async def star_repository(
@@ -242,10 +315,19 @@ async def star_repository(
     encoded_owner = quote(owner, safe="")
     encoded_repo = quote(repo, safe="")
     try:
-        await _github_request("PUT", f"/user/starred/{encoded_owner}/{encoded_repo}")
+        data = await _github_request(
+            "PUT", f"/user/starred/{encoded_owner}/{encoded_repo}"
+        )
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         return {"starred": True, "repository": repository, "error": None}
-    except AuthorizationRequired as exc:
-        return _authorization_error(exc)
+    except Exception as e:
+        logger.exception("star_repository failed")
+        return {
+            "starred": False,
+            "repository": repository,
+            "error": f"Request failed: {e!s}",
+        }
 
 
 GITHUB_TOOLS = [

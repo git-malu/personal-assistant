@@ -19,6 +19,8 @@ Personal Assistant 是一个以 **Agent Identity 最佳实现 Demo** 为目标�
 
 ## 当前能力
 
+完整能力边界与验收口径见 [`overall_specifications.md`](personal-assistant-meta/specs/overall_specifications.md)，典型用户场景见 [`use-cases/`](personal-assistant-meta/specs/use-cases/)。
+
 | 能力 | 当前状态 | 说明 |
 |------|----------|------|
 | Web Chat | 已实现 | React + assistant-ui + SSE 流式对话，支持 Microsoft Entra ID 登录 |

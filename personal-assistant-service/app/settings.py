@@ -43,11 +43,28 @@ class Settings(BaseSettings):
     iam_users_region: str = "cn-southwest-2"
     iam_users_endpoint: AnyHttpUrl | None = None
 
+    github_provider_name: str = "github-provider"
+    github_scopes: str = "repo,read:user"
+
+    m365_calendar_provider_name: str = "m365-calendar-provider"
+    m365_calendar_scopes: str = "https://graph.microsoft.com/Calendars.Read"
+    oauth2_calendar_callback_url: AnyHttpUrl | None = (
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
+    )
+    oauth2_callback_bff_secret: str | None = None
+    oauth2_state_secret: str = "dev-only-calendar-oauth2-state-secret"
+    oauth2_pending_auth_ttl_seconds: int = Field(default=600, gt=0)
+    graph_base_url: AnyHttpUrl = "https://graph.microsoft.com/v1.0/me"
+    graph_request_timeout_seconds: float = Field(default=30.0, gt=0.0)
+    graph_timezone: str = "Asia/Shanghai"
+
     @field_validator(
         "llm_base_url",
         "postgres_dsn",
         "sqlite_db_path",
         "iam_users_endpoint",
+        "oauth2_calendar_callback_url",
+        "oauth2_callback_bff_secret",
         mode="before",
     )
     @classmethod
@@ -62,9 +79,15 @@ class Settings(BaseSettings):
         "llm_model",
         "llm_credential_provider",
         "gitee_provider_name",
+        "github_provider_name",
+        "github_scopes",
         "iam_users_provider_name",
         "iam_users_agency_session_name",
         "iam_users_region",
+        "m365_calendar_provider_name",
+        "m365_calendar_scopes",
+        "oauth2_state_secret",
+        "graph_timezone",
         mode="before",
     )
     @classmethod
@@ -94,6 +117,22 @@ class Settings(BaseSettings):
         if self.iam_users_endpoint:
             return str(self.iam_users_endpoint).rstrip("/")
         return f"https://iam.{self.iam_users_region}.myhuaweicloud.com"
+
+    @property
+    def github_scope_list(self) -> list[str]:
+        """Return configured GitHub OAuth2 scopes."""
+        return [
+            scope.strip() for scope in self.github_scopes.split(",") if scope.strip()
+        ]
+
+    @property
+    def m365_calendar_scope_list(self) -> list[str]:
+        """Return configured Microsoft Graph Calendar OAuth2 scopes."""
+        return [
+            scope.strip()
+            for scope in self.m365_calendar_scopes.split(",")
+            if scope.strip()
+        ]
 
 
 @lru_cache

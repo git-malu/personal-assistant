@@ -5,6 +5,8 @@ import httpx
 from agentarts.sdk import require_access_token
 from langgraph.config import get_stream_writer
 
+from app.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,12 +23,10 @@ async def handle_auth_url(auth_url: str) -> None:
         writer(
             {
                 "type": "system_message",
-                "system_message": (
-                    "邮件功能需要您的授权。请点击该链接进行授权"
-                ),
+                "system_message": ("邮件功能需要您的授权。请点击该链接进行授权"),
                 "auth_url": auth_url,
                 "auth_required": True,
-                "provider": "m365-provider-common",
+                "provider": "m365-email-provider",
             }
         )
     except RuntimeError:
@@ -56,12 +56,10 @@ def _push_auth_complete(provider: str) -> None:
             }
         )
     except RuntimeError:
-        logger.warning(
-            "get_stream_writer unavailable — auth_complete not streamed"
-        )
+        logger.warning("get_stream_writer unavailable — auth_complete not streamed")
 
 
-GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
+GRAPH_BASE_URL = str(get_settings().graph_base_url).rstrip("/")
 
 
 def _extract_graph_error(resp: httpx.Response) -> str:
@@ -99,8 +97,7 @@ def _auth_required_response() -> dict[str, Any]:
     return {
         "auth_required": True,
         "error": (
-            "Authorization pending. Please follow the authorization link "
-            "sent to you."
+            "Authorization pending. Please follow the authorization link sent to you."
         ),
     }
 
@@ -118,7 +115,12 @@ def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
         if status == 503:
             return {"error": "邮件服务暂时不可用，请稍后再试。"}
         if status == 401:
-            return {"error": "邮件功能未授权或当前账号类型不支持（访客/个人账号需使用 common 租户端点）。"}
+            return {
+                "error": (
+                    "邮件功能未授权或当前账号类型不支持"
+                    "（访客/个人账号需使用 common 租户端点）。"
+                )
+            }
         return {"error": f"邮件服务返回错误（{status}），请稍后再试。"}
     return {"error": f"操作失败: {tool_name}。如果问题持续，请联系支持。"}
 
@@ -142,8 +144,9 @@ def _get_client() -> httpx.AsyncClient:
 
 # ── 1. list_emails ──
 
+
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -171,7 +174,7 @@ async def list_emails(
     logger.debug("list_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         client = _get_client()
         resp = await client.get(
@@ -192,9 +195,7 @@ async def list_emails(
                 "id": m.get("id"),
                 "subject": m.get("subject"),
                 "from": (
-                    (m.get("from") or {})
-                    .get("emailAddress", {})
-                    .get("name", "Unknown")
+                    (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
                 ),
                 "receivedDateTime": m.get("receivedDateTime"),
                 "isRead": m.get("isRead"),
@@ -211,8 +212,9 @@ async def list_emails(
 
 # ── 2. get_email ──
 
+
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -238,7 +240,7 @@ async def get_email(
     logger.debug("get_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         client = _get_client()
         resp = await client.get(
@@ -262,12 +264,10 @@ async def get_email(
             "body": data.get("body", {}).get("content", ""),
             "from": (data.get("from") or {}).get("emailAddress", {}),
             "toRecipients": [
-                r.get("emailAddress", {})
-                for r in data.get("toRecipients", [])
+                r.get("emailAddress", {}) for r in data.get("toRecipients", [])
             ],
             "ccRecipients": [
-                r.get("emailAddress", {})
-                for r in data.get("ccRecipients", [])
+                r.get("emailAddress", {}) for r in data.get("ccRecipients", [])
             ],
             "receivedDateTime": data.get("receivedDateTime"),
             "attachments": [
@@ -277,7 +277,9 @@ async def get_email(
                     "contentType": a.get("contentType"),
                 }
                 for a in data.get("attachments", [])
-            ] if data.get("hasAttachments") else [],
+            ]
+            if data.get("hasAttachments")
+            else [],
         }
     except Exception as e:
         logger.exception("get_email failed")
@@ -286,8 +288,9 @@ async def get_email(
 
 # ── 3. search_emails ──
 
+
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -317,7 +320,7 @@ async def search_emails(
     logger.debug("search_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         escaped_query = query.replace('"', '\\"')
         client = _get_client()
@@ -337,9 +340,7 @@ async def search_emails(
                 "id": m.get("id"),
                 "subject": m.get("subject"),
                 "from": (
-                    (m.get("from") or {})
-                    .get("emailAddress", {})
-                    .get("name", "Unknown")
+                    (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
                 ),
                 "receivedDateTime": m.get("receivedDateTime"),
                 "isRead": m.get("isRead"),
@@ -355,8 +356,9 @@ async def search_emails(
 
 # ── 4. send_email (Guard protected) ──
 
+
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -387,7 +389,7 @@ async def send_email(
     logger.debug("send_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     if not to:
         return {
             "sent": False,
@@ -401,9 +403,7 @@ async def send_email(
                 "contentType": "Text",
                 "content": body,
             },
-            "toRecipients": [
-                {"emailAddress": {"address": addr}} for addr in to
-            ],
+            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
         }
         if cc:
             message["ccRecipients"] = [
@@ -447,8 +447,9 @@ async def send_email(
 
 # ── 5. reply_to_email ──
 
+
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -477,7 +478,7 @@ async def reply_to_email(
     logger.debug("reply_to_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():

@@ -395,7 +395,7 @@ stateDiagram-v2
 | 7 | `composer().reset()` reject | `finally { setOpen(false) }` 确保 Dialog 始终关闭 | CT-RS-08 |
 | 8 | 多 Tab 同时打开（⚠️ 已知限制） | Tab A 重置后 Tab B 的 React state 仍保留旧消息，但下次发送消息时 `getSessionId()` 会取到新 UUID（因 `localStorage` 已被清除）。**不会丢数据，但可能造成两 Tab 对话状态短暂不一致。** | 文档记录为 known limitation |
 
-> **已知限制**：`localStorage` 不支持跨 Tab 实时同步。如需跨 Tab 广播重置事件，可引入 `BroadcastChannel` API，但当前 Feature 范围不做此增强（成本/收益比不合理）。
+> **已知限制**：`localStorage` 不支持跨 Tab 实时同步。当前 Feature 范围不做额外的跨 Tab 同步增强（成本/收益比不合理）。
 
 ---
 

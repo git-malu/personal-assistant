@@ -1,4 +1,4 @@
 allowBuilds:
   esbuild: false
-  sharp: false
-  workerd: false
+  sharp: true
+  workerd: true

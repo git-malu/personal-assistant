@@ -7,7 +7,6 @@ import base64
 import pytest
 from httpx import Request, Response
 
-from app.identity import AuthorizationRequired
 from app.tools.github_tools import (
     GITHUB_API_BASE_URL,
     _raw_github_request,
@@ -173,18 +172,20 @@ async def test_raw_github_request_handles_put_no_content(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authorization_required_returns_structured_error(monkeypatch):
+async def test_auth_required_returns_structured_response(monkeypatch):
+    """When _github_request signals auth is pending, tools propagate it."""
+
     async def fake_request(method, path, *, params=None):
-        raise AuthorizationRequired(
-            provider_name="github-provider",
-            authorization_url="https://example.test/auth",
-            message="authorization required",
-        )
+        return {
+            "auth_required": True,
+            "error": (
+                "GitHub authorization pending. Please follow the authorization link."
+            ),
+        }
 
     monkeypatch.setattr("app.tools.github_tools._github_request", fake_request)
 
     result = await list_repositories()
     assert isinstance(result, dict)
-    assert result["ok"] is False
-    assert result["provider_name"] == "github-provider"
-    assert result["authorization_url"] == "https://example.test/auth"
+    assert result["auth_required"] is True
+    assert "authorization" in result["error"].lower()

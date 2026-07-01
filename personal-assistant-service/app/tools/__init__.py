@@ -76,4 +76,19 @@ def build_tools() -> list[Any]:
             exc_info=True,
         )
 
+    # ── Calendar tools (Feature 15) — always register ──
+    try:
+        from app.tools.calendar_tools import CALENDAR_TOOLS
+
+        tools.extend(CALENDAR_TOOLS)
+        logger.info("Calendar tools registered (%d tools).", len(CALENDAR_TOOLS))
+
+    except ImportError as e:
+        logger.warning(
+            "Calendar tools not available (import failed): %s. "
+            "Calendar functionality will be disabled for this session.",
+            e,
+            exc_info=True,
+        )
+
     return tools

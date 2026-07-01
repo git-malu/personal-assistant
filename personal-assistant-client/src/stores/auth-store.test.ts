@@ -5,6 +5,7 @@ describe("useAuthStore", () => {
   beforeEach(() => {
     // Reset store to initial state before each test
     useAuthStore.getState().clearToken();
+    useAuthStore.getState().setHydrated(false);
   });
 
   it("has idToken null initially", () => {
@@ -28,6 +29,16 @@ describe("useAuthStore", () => {
     expect(useAuthStore.getState().idToken).toBe("token-xyz");
     useAuthStore.getState().clearToken();
     expect(useAuthStore.getState().idToken).toBeNull();
+  });
+
+  it("clearToken keeps hydrated unchanged", () => {
+    useAuthStore.getState().setHydrated(true);
+    useAuthStore.getState().setIdToken("token-xyz");
+
+    useAuthStore.getState().clearToken();
+
+    expect(useAuthStore.getState().idToken).toBeNull();
+    expect(useAuthStore.getState().hydrated).toBe(true);
   });
 
   it("does NOT expose isAuthenticated (auth state belongs to MSAL)", () => {

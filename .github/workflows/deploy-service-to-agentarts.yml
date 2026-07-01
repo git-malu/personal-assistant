@@ -65,9 +65,8 @@ jobs:
             -u "cn-southwest-2@${{ secrets.HUAWEICLOUD_SDK_AK }}" \
             --password-stdin
 
-      - name: Build and push ARM64 image
-        env:
-          BUILDKIT_USE_OCI_MEDIA_TYPES: "0"  # SWR 基础版不支持 OCI 格式
+      - name: Compute image tags
+        id: image
         run: |
           # Dynamically extract application version from pyproject.toml
           APP_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('personal-assistant-service/pyproject.toml', 'rb'))['project']['version'])")
@@ -79,6 +78,20 @@ jobs:
           TAG_VERSION="$IMAGE_BASE:$APP_VERSION"
           TAG_SHA="$IMAGE_BASE:${APP_VERSION}-sha-$COMMIT_SHA"
 
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_base=$IMAGE_BASE" >> "$GITHUB_OUTPUT"
+          echo "tag_latest=$TAG_LATEST" >> "$GITHUB_OUTPUT"
+          echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ARM64 image
+        env:
+          BUILDKIT_USE_OCI_MEDIA_TYPES: "0"  # SWR 基础版不支持 OCI 格式
+          TAG_LATEST: ${{ steps.image.outputs.tag_latest }}
+          TAG_VERSION: ${{ steps.image.outputs.tag_version }}
+          TAG_SHA: ${{ steps.image.outputs.tag_sha }}
+        run: |
           docker build \
             --platform linux/arm64 \
             --provenance=false \
@@ -93,21 +106,21 @@ jobs:
           docker push $TAG_SHA
 
       - name: Verify image pushed
+        env:
+          TAG_LATEST: ${{ steps.image.outputs.tag_latest }}
+          TAG_VERSION: ${{ steps.image.outputs.tag_version }}
+          TAG_SHA: ${{ steps.image.outputs.tag_sha }}
         run: |
-          # Dynamically extract application version from pyproject.toml
-          APP_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('personal-assistant-service/pyproject.toml', 'rb'))['project']['version'])")
-          COMMIT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          
-          echo "🔍 Querying remote SWR registry for latest image manifest..."
+          echo "🔍 Querying remote SWR registry for immutable image manifest..."
           
           # Inspect remote manifest to confirm it exists and retrieve the image digest
-          MANIFEST_INFO=$(docker manifest inspect swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest)
+          MANIFEST_INFO=$(docker manifest inspect "$TAG_SHA")
           DIGEST=$(echo "$MANIFEST_INFO" | grep -m 1 "digest" | awk -F'"' '{print $4}')
           
           echo "✅ Remote SWR verification successful!"
-          echo "📦 Pushed Image (latest): swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest"
-          echo "📦 Pushed Image (version): swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:$APP_VERSION"
-          echo "📦 Unique Tag: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:${APP_VERSION}-sha-$COMMIT_SHA"
+          echo "📦 Pushed Image (latest): $TAG_LATEST"
+          echo "📦 Pushed Image (version): $TAG_VERSION"
+          echo "📦 Unique Tag: $TAG_SHA"
           echo "🆔 Remote Image Digest: $DIGEST"
 
       - name: Set up Python
@@ -123,20 +136,26 @@ jobs:
         env:
           HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
           HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          AGENTARTS_IMAGE_URL: ${{ steps.image.outputs.tag_sha }}
           LOG_LEVEL: ${{ vars.LOG_LEVEL }}
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
           LLM_CREDENTIAL_PROVIDER: ${{ vars.LLM_CREDENTIAL_PROVIDER }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          OAUTH2_CALENDAR_CALLBACK_URL: ${{ vars.OAUTH2_CALENDAR_CALLBACK_URL }}
         run: |
           cd personal-assistant-service
 
           for name in \
+            HUAWEICLOUD_SDK_AK \
+            HUAWEICLOUD_SDK_SK \
             LOG_LEVEL \
             LLM_PROVIDER \
             LLM_MODEL \
             LLM_CREDENTIAL_PROVIDER \
-            POSTGRES_DSN
+            POSTGRES_DSN \
+            OAUTH2_CALENDAR_CALLBACK_URL \
+            AGENTARTS_IMAGE_URL
           do
             test -n "$(printenv "$name")" || {
               echo "::error::$name GitHub variable or secret is required"
@@ -151,5 +170,6 @@ jobs:
           test -z "$(grep -o '\${[^}]*}' .agentarts_config.resolved.yaml || true)"
           grep -q '^default_agent: personal-assistant$' .agentarts_config.resolved.yaml
           grep -q '^  personal-assistant:$' .agentarts_config.resolved.yaml
+          grep -q "url: $AGENTARTS_IMAGE_URL" .agentarts_config.resolved.yaml
           mv .agentarts_config.resolved.yaml .agentarts_config.yaml
           agentarts launch

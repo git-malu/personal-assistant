@@ -1,5 +1,6 @@
 import { PublicClientApplication, type Configuration } from "@azure/msal-browser";
 import { getPublicConfig } from "@/config";
+import { useAuthStore } from "@/stores/auth-store";
 
 const publicConfig = getPublicConfig();
 const msalConfig: Configuration = {
@@ -7,9 +8,6 @@ const msalConfig: Configuration = {
     clientId: publicConfig.entraClientId,
     authority: `https://login.microsoftonline.com/${publicConfig.entraTenantId}`,
     redirectUri: typeof window !== "undefined" ? window.location.origin : "",
-  },
-  cache: {
-    cacheLocation: "sessionStorage", // Required by loginRedirect (redirect destroys memory)
   },
 };
 
@@ -31,6 +29,16 @@ export async function acquireIdTokenSilently(): Promise<string | null> {
   } catch (e) {
     console.warn("acquireIdTokenSilently failed:", e);
     return null;
+  }
+}
+
+export async function clearInboundAuthSession(): Promise<void> {
+  useAuthStore.getState().clearToken();
+  try {
+    msalInstance.setActiveAccount(null);
+    await msalInstance.clearCache();
+  } catch (e) {
+    console.warn("clearInboundAuthSession failed:", e);
   }
 }
 

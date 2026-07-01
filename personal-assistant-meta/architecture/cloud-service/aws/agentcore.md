@@ -9,7 +9,7 @@
 
 Amazon Bedrock AgentCore 是 AWS 推出的 **agentic AI 平台**，用于构建、部署和运营大规模生产级 Agent。核心设计理念：**将开源框架的灵活性与企业级安全、可靠性结合起来**，无需管理基础设施。
 
-> **注意**：AgentArts（华为云）很大程度上借鉴了 AgentCore 的架构设计，两者在概念模型上有高度的对应关系。阅读本文档时应与 [agentarts.md](../agentarts.md) 交叉对比。
+> **注意**：AgentArts（华为云）很大程度上借鉴了 AgentCore 的架构设计，两者在概念模型上有高度的对应关系。阅读本文档时应与 [agentarts.md](../huaweicloud/agentarts.md) 交叉对比。
 
 ### 核心能力一览
 

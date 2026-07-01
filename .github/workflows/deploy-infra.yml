@@ -55,6 +55,16 @@ jobs:
         with:
           tofu_version: "~> 1.9"
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: personal-assistant-infra/uv.lock
+
+      - name: Install infra helper dependencies
+        working-directory: personal-assistant-infra
+        run: uv sync --locked
+
       - name: Ensure state bucket exists
         run: |
           aws s3 mb s3://pa-terraform-state \

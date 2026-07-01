@@ -31,6 +31,11 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      '/invocations/auth/oauth2/callback/m365-calendar': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (proxyPath) => proxyPath.replace(/^\/invocations/, ''),
+      },
       '/invocations/playground': {
         target: 'http://localhost:8080',
         changeOrigin: true,

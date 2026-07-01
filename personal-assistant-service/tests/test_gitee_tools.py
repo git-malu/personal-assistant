@@ -6,9 +6,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.identity import AuthorizationRequired
 from app.tools import gitee_tools as gt
-from app.tools.gitee_tools import list_repositories
+
+
+@pytest.fixture(autouse=True)
+def unwrap_gitee_tools(monkeypatch):
+    """Replace decorated tool functions with their undecorated originals."""
+    raw = gt.list_repositories
+    while hasattr(raw, "__wrapped__"):
+        raw = raw.__wrapped__
+    monkeypatch.setattr(gt, "list_repositories", raw)
 
 
 @pytest.mark.asyncio
@@ -44,7 +51,7 @@ async def test_handle_auth_url_without_stream_context_is_graceful():
 
 @pytest.mark.asyncio
 async def test_list_repositories_returns_structure(monkeypatch):
-    async def fake_request(method, path, *, params=None):
+    async def fake_request(method, path, *, params=None, access_token=None):
         assert method == "GET"
         assert path == "/user/repos"
         assert params["visibility"] == "all"
@@ -64,7 +71,7 @@ async def test_list_repositories_returns_structure(monkeypatch):
 
     monkeypatch.setattr("app.tools.gitee_tools._gitee_request", fake_request)
 
-    result = await list_repositories()
+    result = await gt.list_repositories(access_token="fake")
     assert result["ok"] is True
     assert result["count"] == 1
     repo = result["repositories"][0]
@@ -75,42 +82,36 @@ async def test_list_repositories_returns_structure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_repositories_clamps_pagination(monkeypatch):
-    async def fake_request(method, path, *, params=None):
+    async def fake_request(method, path, *, params=None, access_token=None):
         assert params["page"] == 1
         assert params["per_page"] == 100
         return []
 
     monkeypatch.setattr("app.tools.gitee_tools._gitee_request", fake_request)
 
-    result = await list_repositories(page=0, per_page=200)
+    result = await gt.list_repositories(page=0, per_page=200, access_token="fake")
     assert result["ok"] is True
     assert result["count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_list_repositories_rejects_conflicting_filters(monkeypatch):
-    async def fake_request(method, path, *, params=None):
+    async def fake_request(method, path, *, params=None, access_token=None):
         raise AssertionError("validation should happen before Gitee request")
 
     monkeypatch.setattr("app.tools.gitee_tools._gitee_request", fake_request)
 
-    result = await list_repositories(visibility="private", repo_type="owner")
+    result = await gt.list_repositories(
+        visibility="private",
+        repo_type="owner",
+        access_token="fake",
+    )
     assert result["ok"] is False
     assert "repo_type cannot be combined" in result["message"]
 
 
 @pytest.mark.asyncio
-async def test_authorization_required_returns_structured_error(monkeypatch):
-    async def fake_request(method, path, *, params=None):
-        raise AuthorizationRequired(
-            provider_name="gitee-provider",
-            authorization_url="https://example.test/gitee-auth",
-            message="authorization required",
-        )
-
-    monkeypatch.setattr("app.tools.gitee_tools._gitee_request", fake_request)
-
-    result = await list_repositories()
-    assert result["ok"] is False
-    assert result["provider_name"] == "gitee-provider"
-    assert result["authorization_url"] == "https://example.test/gitee-auth"
+async def test_auth_required_response_when_no_token(monkeypatch):
+    result = await gt.list_repositories(access_token=None)
+    assert result["auth_required"] is True
+    assert "Authorization pending" in result["error"]

@@ -12,6 +12,7 @@ from app.agent_handler import (
     AgentHandler,
     get_agent_handler,
 )
+from app.settings import Settings
 
 
 def _fake_chunk(content: str):
@@ -289,6 +290,40 @@ class TestHandle:
         assert result == "response"
         mock_agent.ainvoke.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_handle_restarts_checkpointer_and_retries_idle_timeout(
+        self, mock_deps
+    ):
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+        recovered_message = MagicMock()
+        recovered_message.content = "recovered"
+        mock_agent.ainvoke = AsyncMock(
+            side_effect=[
+                RuntimeError("terminating connection due to idle-session timeout"),
+                {"messages": [recovered_message]},
+            ]
+        )
+
+        with patch.object(
+            handler, "_restart_checkpointer", new_callable=AsyncMock
+        ) as mock_restart:
+            result = await handler.handle(
+                message="继续",
+                user_id="user-1",
+                session_id="session-1",
+            )
+
+        assert result == "recovered"
+        assert mock_agent.ainvoke.await_count == 2
+        mock_restart.assert_awaited_once()
+
 
 class TestHandleStream:
     """Tests for AgentHandler.handle_stream() using stream_mode."""
@@ -369,6 +404,68 @@ class TestHandleStream:
         assert "error" in parsed
         assert "API connection failed" in parsed["error"]
         assert parsed["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_handle_stream_restarts_checkpointer_and_retries_before_output(
+        self, mock_deps
+    ):
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+        calls = 0
+
+        async def mock_astream(_input, stream_mode=None, config=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("the connection is closed")
+            yield ("messages", (_fake_chunk("Recovered"), {}))
+
+        mock_agent.astream = mock_astream
+
+        with patch.object(
+            handler, "_restart_checkpointer", new_callable=AsyncMock
+        ) as mock_restart:
+            events = [data async for data in handler.handle_stream(message="Hi")]
+
+        parsed = [json.loads(event[6:]) for event in events]
+        assert parsed[0]["token"] == "Recovered"
+        assert parsed[-1]["done"] is True
+        assert calls == 2
+        mock_restart.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_stream_does_not_retry_after_output(self, mock_deps):
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+
+        async def mock_astream(_input, stream_mode=None, config=None):
+            yield ("messages", (_fake_chunk("Partial"), {}))
+            raise RuntimeError("the connection is closed")
+
+        mock_agent.astream = mock_astream
+
+        with patch.object(
+            handler, "_restart_checkpointer", new_callable=AsyncMock
+        ) as mock_restart:
+            events = [data async for data in handler.handle_stream(message="Hi")]
+
+        parsed = [json.loads(event[6:]) for event in events]
+        assert parsed[0]["token"] == "Partial"
+        assert parsed[1]["error"] == "the connection is closed"
+        assert parsed[1]["done"] is True
+        mock_restart.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_handle_stream_skips_chunk_without_content_attr(self, mock_deps):
