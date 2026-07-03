@@ -256,9 +256,15 @@ async def test_calendar_public_tool_calls_authorized_boundary():
     async def fake_authorized(**kwargs):
         return {"ok": True, "kwargs": kwargs}
 
-    with patch(
-        "app.tools.calendar_tools._list_calendar_events_authorized",
-        side_effect=fake_authorized,
+    with (
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_workload_access_token",
+            return_value="jwt-mode-wat",
+        ),
+        patch(
+            "app.tools.calendar_tools._list_calendar_events_authorized",
+            side_effect=fake_authorized,
+        ),
     ):
         result = await ct.list_calendar_events(
             "2026-06-22T00:00:00",
@@ -268,6 +274,50 @@ async def test_calendar_public_tool_calls_authorized_boundary():
     assert result["ok"] is True
     assert result["kwargs"]["start_time"] == "2026-06-22T00:00:00"
     assert "access_token" not in result["kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_calendar_public_tool_without_wat_returns_local_login_error():
+    with (
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_workload_access_token",
+            return_value=None,
+        ),
+        patch(
+            "app.tools.calendar_tools.get_workload_access_token_source",
+            return_value="missing_authorization_user_token",
+        ),
+        patch("app.tools.calendar_tools._list_calendar_events_authorized") as boundary,
+    ):
+        result = await ct.list_calendar_events(
+            "2026-06-22T00:00:00",
+            "2026-06-23T00:00:00",
+        )
+
+    assert "本地日历授权需要先使用 Microsoft 登录" in result["error"]
+    boundary.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_calendar_public_tool_reports_local_wat_exchange_failure():
+    with (
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_workload_access_token",
+            return_value=None,
+        ),
+        patch(
+            "app.tools.calendar_tools.get_workload_access_token_source",
+            return_value="local_jwt_wat_failed",
+        ),
+        patch("app.tools.calendar_tools._list_calendar_events_authorized") as boundary,
+    ):
+        result = await ct.list_calendar_events(
+            "2026-06-22T00:00:00",
+            "2026-06-23T00:00:00",
+        )
+
+    assert "workload token" in result["error"]
+    boundary.assert_not_called()
 
 
 @pytest.mark.asyncio

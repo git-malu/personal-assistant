@@ -8,6 +8,7 @@ from agentarts.sdk import require_access_token
 from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from langgraph.config import get_stream_writer
 
+from app.auth import get_workload_access_token_source
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,27 @@ def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
             return {"error": "Microsoft Calendar 服务暂时不可用，请稍后再试。"}
         return {"error": f"日历服务返回错误（{status}），请稍后再试。"}
     return {"error": f"日历操作失败: {tool_name}。如果问题持续，请联系支持。"}
+
+
+def _missing_jwt_mode_wat_error() -> dict[str, Any] | None:
+    if AgentArtsRuntimeContext.get_workload_access_token():
+        return None
+
+    source = get_workload_access_token_source()
+    if source == "local_jwt_wat_failed":
+        return {
+            "error": (
+                "本地日历授权无法准备 AgentArts workload token。"
+                "请检查本地 AgentArts Identity 配置后重试。"
+            )
+        }
+
+    return {
+        "error": (
+            "本地日历授权需要先使用 Microsoft 登录。"
+            "请配置 Entra 登录并重新发起日历授权。"
+        )
+    }
 
 
 _client: httpx.AsyncClient | None = None
@@ -173,6 +195,8 @@ async def list_calendar_events(
     limit: int = 20,
 ) -> dict[str, Any]:
     """列出指定时间范围内的 Microsoft 365 日历事件。"""
+    if error := _missing_jwt_mode_wat_error():
+        return error
     return await _list_calendar_events_authorized(
         start_time=start_time,
         end_time=end_time,
@@ -248,6 +272,8 @@ async def get_calendar_event(
     calendar_id: str = "primary",
 ) -> dict[str, Any]:
     """获取单个 Microsoft 365 日历事件详情。"""
+    if error := _missing_jwt_mode_wat_error():
+        return error
     return await _get_calendar_event_authorized(
         event_id=event_id,
         calendar_id=calendar_id,
@@ -315,6 +341,8 @@ async def search_calendar_events(
     limit: int = 20,
 ) -> dict[str, Any]:
     """按关键词搜索 Microsoft 365 日历事件。"""
+    if error := _missing_jwt_mode_wat_error():
+        return error
     return await _search_calendar_events_authorized(
         query=query,
         start_time=start_time,

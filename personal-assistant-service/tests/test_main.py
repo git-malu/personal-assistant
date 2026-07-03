@@ -301,6 +301,34 @@ class TestHeaderHandling:
             assert response.status_code == 200
             mock_set.assert_called_once_with(None)
 
+    @pytest.mark.asyncio
+    async def test_authorization_user_token_exchanged_for_local_jwt_wat(
+        self, client, fake_handler
+    ):
+        """POST without Gateway WAT but with Authorization prepares JWT-mode WAT."""
+        with (
+            patch(
+                "app.auth.create_jwt_mode_workload_access_token",
+                return_value="local-jwt-wat",
+            ) as mock_exchange,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    USER_ID_HEADER: "test-user",
+                    SESSION_HEADER: "sess-test",
+                    "Authorization": "Bearer user-token",
+                },
+            )
+
+        assert response.status_code == 200
+        mock_exchange.assert_called_once_with("user-token")
+        mock_set.assert_called_once_with("local-jwt-wat")
+
 
 @pytest.mark.asyncio
 async def test_invocations_stream_false_returns_response(client, fake_handler):

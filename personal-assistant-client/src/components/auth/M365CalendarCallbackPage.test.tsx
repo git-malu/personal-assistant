@@ -1,16 +1,22 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { acquireIdTokenSilently } from "@/lib/auth";
 import {
   buildBackendCalendarCallbackUrl,
   getCalendarCallbackState,
 } from "./M365CalendarCallbackPage";
 import M365CalendarCallbackPage from "./M365CalendarCallbackPage";
 
+vi.mock("@/lib/auth", () => ({
+  acquireIdTokenSilently: vi.fn(),
+}));
+
 describe("M365CalendarCallbackPage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.mocked(acquireIdTokenSilently).mockReset();
     window.history.pushState({}, "", "/");
   });
 
@@ -34,7 +40,8 @@ describe("M365CalendarCallbackPage", () => {
     );
   });
 
-  it("uses the local fallback proxy without Authorization and shows result", async () => {
+  it("uses the local fallback proxy with Authorization and shows result", async () => {
+    vi.mocked(acquireIdTokenSilently).mockResolvedValue("callback-id-token");
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -68,10 +75,35 @@ describe("M365CalendarCallbackPage", () => {
     expect(url.toString()).toBe(
       "http://localhost:3000/invocations/auth/oauth2/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
     );
-    expect(init.headers).toEqual({ Accept: "application/json" });
+    expect(init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer callback-id-token",
+    });
+  });
+
+  it("does not call backend callback when local id token is missing", async () => {
+    vi.mocked(acquireIdTokenSilently).mockResolvedValue(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState(
+      {},
+      "",
+      "/auth/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
+    );
+
+    render(<M365CalendarCallbackPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("授权失败")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/本地日历授权需要先登录 Microsoft/),
+    ).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("broadcasts a failed state when the local fallback cannot complete", async () => {
+    vi.mocked(acquireIdTokenSilently).mockResolvedValue("callback-id-token");
     const fetchMock = vi.fn().mockRejectedValue(new Error("network error"));
     const postMessageMock = vi.fn();
     const closeMock = vi.fn();

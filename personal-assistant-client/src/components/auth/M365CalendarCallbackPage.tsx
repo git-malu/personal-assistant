@@ -6,9 +6,13 @@ import {
   openCalendarOAuthChannel,
   type CalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
+import { acquireIdTokenSilently } from "@/lib/auth";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type CallbackStatus = "pending" | "complete" | "failed";
+
+const LOCAL_CALLBACK_LOGIN_REQUIRED_MESSAGE =
+  "本地日历授权需要先登录 Microsoft。请回到聊天窗口重新登录后再发起授权。";
 
 export function buildBackendCalendarCallbackUrl(
   origin = window.location.origin,
@@ -57,9 +61,19 @@ export default function M365CalendarCallbackPage() {
     async function completeViaLocalProxyFallback() {
       const callbackState = getCalendarCallbackState();
       try {
+        const idToken = await acquireIdTokenSilently();
+        if (!idToken) {
+          throw new Error(LOCAL_CALLBACK_LOGIN_REQUIRED_MESSAGE);
+        }
+
         const response = await fetch(
           buildBackendCalendarCallbackUrl(window.location.origin, window.location.search),
-          { headers: { Accept: "application/json" } },
+          {
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${idToken}`,
+            },
+          },
         );
         if (!response.ok) {
           throw new Error(`OAuth2 callback failed: ${response.status}`);
@@ -81,9 +95,12 @@ export default function M365CalendarCallbackPage() {
         if (data.status === "complete") {
           window.setTimeout(() => window.close(), 1200);
         }
-      } catch {
+      } catch (e) {
         if (cancelled) return;
-        const errorMessage = params.get("error_description") || CALENDAR_OAUTH_FAILED_MESSAGE;
+        const errorMessage =
+          e instanceof Error && e.message === LOCAL_CALLBACK_LOGIN_REQUIRED_MESSAGE
+            ? e.message
+            : params.get("error_description") || CALENDAR_OAUTH_FAILED_MESSAGE;
         setStatus("failed");
         setMessage(errorMessage);
         broadcastCalendarOAuthStatus({

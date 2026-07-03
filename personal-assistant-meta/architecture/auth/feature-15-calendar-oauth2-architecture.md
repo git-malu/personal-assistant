@@ -68,7 +68,7 @@ sequenceDiagram
 |------|------|--------|
 | Web Chat 主窗口 | 展示 AuthCard；打开授权 URL；监听 callback result page 的 UI status；按 `oauth2_state` 更新匹配 AuthCard | 不调用 `complete_resource_token_auth`；不决定 OAuth2 session ownership |
 | Cloudflare Pages BFF | 承接 OAuth provider redirect；server-side 转发 callback query 到 Service；用 callback-only HttpOnly cookies 恢复 Gateway context headers；注入可选 BFF shared secret；返回 Service result HTML | 不把 callback 请求中的浏览器 Authorization/Cookie 原样透传给 upstream；不执行业务 ownership 判断；不调用 AgentArts Identity SDK |
-| React Callback Shell | 仅作为 Vite 本地开发 fallback；生产 callback path 由 Pages Function 优先处理 | 不获取 MSAL token；不参与 production complete 协议 |
+| React Callback Shell | 仅作为 Vite 本地开发 fallback；生产 callback path 由 Pages Function 优先处理；本地 fallback 需要从 MSAL cache 静默获取同一用户 id token 并转发给 Service-owned callback | 不获取或传输 WAT；不参与 production complete 协议 |
 | Personal Assistant Service | 生成 signed state；校验 callback state；调用 `complete_resource_token_auth`；用 PostgreSQL/本地 fallback 控制 replay / stale callback 语义 | 不把第三方 access token 写入 response 或 prompt |
 | PostgreSQL | production callback nonce active/completed 状态与过期时间 | 不保存 Microsoft access token |
 | AgentArts Gateway | 校验 Inbound JWT；注入可信 user/session/workload headers | 不执行 Calendar 业务逻辑 |
@@ -125,6 +125,32 @@ http://localhost:5173/auth/callback/m365-calendar
 -> http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar
 -> Vite proxy
 -> http://localhost:8080/auth/oauth2/callback/m365-calendar
+```
+
+本地完整 Calendar OAuth2 flow 仍必须使用 JWT identity mode。由于本地没有
+AgentArts Gateway 代取 WAT，Service 在 `/invocations` 收到真实
+`Authorization: Bearer <id_token>` 后，会用该 user token 换取 JWT-mode WAT 并写入
+`AgentArtsRuntimeContext`；Calendar Tool 在进入 `@require_access_token` 前确认已有
+JWT-mode WAT，避免 SDK fallback 到 user_id mode。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Local Web Chat
+    participant API as Service
+    participant SDK as AgentArts SDK
+    participant IdSvc as AgentArts Identity Service
+    participant CB as React Callback Shell
+
+    UI->>API: POST /invocations<br/>Authorization: Bearer id_token
+    API->>IdSvc: create_workload_access_token(workloadName, user_token=id_token)
+    IdSvc-->>API: JWT-mode WAT
+    API->>API: set_workload_access_token(JWT-mode WAT)
+    API->>SDK: Calendar @require_access_token
+    SDK->>IdSvc: create auth session with JWT-mode WAT
+    IdSvc-->>SDK: auth_url + session_uri
+    CB->>API: GET /invocations/auth/oauth2/callback/m365-calendar<br/>Authorization: Bearer same id_token
+    API->>IdSvc: complete_resource_token_auth(session_uri,<br/>UserIdentifier(user_token=id_token))
 ```
 
 `AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须指向 Pages BFF callback URL
@@ -211,7 +237,7 @@ sequenceDiagram
 | 字段 | 来源 | 使用场景 |
 |------|------|----------|
 | `user_id` | Gateway 注入的 `X-HW-AgentGateway-User-Id`，或本地 mock header | signed state 绑定、日志审计、本地 mock |
-| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | production Calendar BFF callback complete 主流程 |
+| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | production Calendar BFF callback complete 主流程；local Calendar full flow 的 WAT 获取和 callback complete |
 
 主流程中 Cloudflare BFF 承载 callback query、Gateway context transport
 和 server-to-server trust；Service 使用 signed state 中的 `user_id` / `session_id`
@@ -254,6 +280,9 @@ ClientRequestException - {
 - 主流程 backend callback 使用 signed state 中的 trusted `user_id` 做 state 绑定，
   但 `complete_resource_token_auth` 只传 `user_token`，确保与 AgentArts 创建
   Resource Token Auth session 时的真实 inbound identity 匹配。
+- local Calendar full flow 不使用 SDK user_id fallback。若本地缺少真实
+  `Authorization` user token，应提示开发者启用 Entra 登录并重新发起授权，而不是改用
+  `UserIdentifier(user_id=...)`。
 - 不要为了兼容不同环境而同时传 `user_id` 与 `user_token`；这会让 complete step 直接失败。
 
 ## 8. 安全边界
