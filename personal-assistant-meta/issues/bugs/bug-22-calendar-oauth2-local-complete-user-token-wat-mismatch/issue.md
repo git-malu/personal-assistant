@@ -360,7 +360,7 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 | 路径 | 关联点 |
 |------|--------|
 | `personal-assistant-service/app/main.py` | 当前 Service-owned callback 的 `complete_resource_token_auth` 调用 |
-| `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token`；需要支持 local JWT-mode WAT 准备 |
+| `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`ensure_jwt_mode_workload_access_token`；需要支持 local JWT-mode WAT 准备 |
 | `personal-assistant-service/app/agentarts_wat.py`（建议新增） | 封装 DP client、`workloadName` 解析和 `get_workload_access_token_for_jwt` 调用，供 Service route / Calendar boundary mock |
 | `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 production-like user_token path |
 | `personal-assistant-client/src/components/auth/M365CalendarCallbackPage.tsx` | 当前本地 React fallback 只带 `Accept`；需要恢复/获取并转发 inbound `Authorization` |

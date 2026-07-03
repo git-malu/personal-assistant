@@ -92,7 +92,7 @@ sequenceDiagram
 若第 4 点确认 callback complete 不依赖 RuntimeContext WAT，记录到测试或注释中；若依赖，
 callback 路径也调用同一 WAT helper。
 
-> 实现阶段修改 `extract_workload_access_token`、`calendar_oauth2_callback`、
+> 实现阶段修改 WAT 准备入口、`calendar_oauth2_callback`、
 > Calendar Tool boundary 等 symbol 前，按项目约定先运行 GitNexus impact analysis。
 
 ### 2. 新增 WAT Helper
@@ -120,8 +120,8 @@ def get_jwt_mode_workload_access_token(user_token: str) -> str:
 
 ### 3. 扩展 WAT 准备入口
 
-在 `app/auth.py` 中将现有 `extract_workload_access_token(request)` 保持向后兼容，并新增
-required / best-effort 语义：
+在 `app/auth.py` 中使用 `ensure_jwt_mode_workload_access_token(request, *, required)`
+作为唯一 WAT 准备入口，合并 Gateway WAT 提取与 local JWT-mode WAT 交换语义：
 
 ```python
 def ensure_jwt_mode_workload_access_token(
@@ -374,4 +374,3 @@ npm run build
 - [ ] 更新 feature-15 architecture local JWT-mode WAT 说明。
 - [ ] 增加或更新 E2E / contract test 说明。
 - [ ] 本地真实 Entra 登录 manual flow 验证通过。
-

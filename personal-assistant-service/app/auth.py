@@ -95,22 +95,6 @@ def extract_gateway_session_id(request: Request) -> str:
     return session_id
 
 
-def extract_workload_access_token(request: Request) -> None:
-    """提取并存入 AgentArts Gateway 注入的 Workload Access Token。
-
-    生产环境中，AgentArts Gateway 在转发请求时通过
-    ACCESS_TOKEN_HEADER 注入短期凭证。
-    提取后存入 AgentArtsRuntimeContext，使 @require_access_token
-    等装饰器可以直接使用，跳过本地认证 fallback。
-
-    若 header 不存在或为空（本地开发环境），显式设为 None，
-    确保 context 干净。SDK 的 _get_workload_access_token() 自动
-    fallback 到本地认证。
-    """
-    token = request.headers.get(ACCESS_TOKEN_HEADER, "").strip()
-    _set_workload_access_token(token or None, "gateway_wat" if token else "missing_wat")
-
-
 def ensure_jwt_mode_workload_access_token(
     request: Request,
     *,
