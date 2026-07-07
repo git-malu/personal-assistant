@@ -109,24 +109,47 @@ async def check_oauth2_authorization(
 
 注意：preflight 不应该在每次页面重渲染时反复调用，否则可能创建多个授权 session。建议只在用户确认数据源、OAuth callback 完成、或用户点击“重新检查授权”时触发，并把 `auth_url` / `session_uri` 绑定到当前 `report_plan`。
 
-### 3.3 第一阶段授权编排选择
+### 3.3 第一阶段授权编排方案评估
 
-第一阶段有两类可选流程：
+第一阶段要解决的问题不是“怎样调用 OAuth”，而是“在什么时候、用什么 UI、以什么粒度让用户完成授权”。如果这个决策不清楚，后续实现很容易变成生成过程中多个 tool 轮流弹授权，用户不知道本次报告到底用了哪些数据源。
 
-| 流程 | 做法 | 优点 | 风险 | 结论 |
+#### 3.3.1 流程方案
+
+| 方案 | 做法 | 优点 | 风险 | 适用场景 |
 |---|---|---|---|---|
-| Preflight 后授权 | 用户确认 `selected_sources` 后，Service 逐个 source 调用 `GetResourceOauth2Token` 做授权预检；已授权 source 标记 ready，未授权 source 返回 `auth_url` | 用户在生成前就知道哪些 source 可用；不会正式生成到一半才弹授权；适合聚合展示多个待授权 source | 多一次准备阶段调用；需要避免反复创建授权 session | 方案三推荐 |
-| 不做 preflight，直接请求授权 | 用户确认 `selected_sources` 后，系统直接触发授权请求或等业务 tool 调用时触发授权 | 实现更接近当前 tool 装饰器模式；前期代码少 | 容易在生成过程中才发现缺授权；多 source 授权顺序和 UI 状态不清晰；难以表达“全部 ready 后再生成” | 不推荐作为方案三主流程 |
+| A. Preflight 后授权 | 用户确认 `selected_sources` 后，Service 逐个 source 调用 `GetResourceOauth2Token` 做授权预检；已授权 source 标记 ready，未授权 source 返回 `auth_url` | 用户在生成前就知道哪些 source 可用；不会正式生成到一半才弹授权；适合聚合展示多个待授权 source | 多一次准备阶段调用；需要避免反复创建授权 session | 方案三主流程 |
+| B. 不做 preflight，确认数据源后直接请求授权 | 用户确认 `selected_sources` 后，系统直接为所有选中 source 创建授权入口，不先区分已有授权和缺失授权 | 流程表面简单；用户确认后马上进入授权动作 | 已授权 source 也可能被重复打扰；需要处理不必要的授权 session；难以表达哪些 source 已 ready | 少量 source 且授权状态不可查时的退路 |
+| C. 不做 preflight，等业务 tool 调用时触发授权 | 正式生成时调用 GitHub、Gitee、Calendar、Email collector；哪个 tool 缺 token，哪个 tool 的 `@require_access_token` 触发 AuthCard | 最接近当前工具模式；实现成本最低 | 授权问题发生在生成中途；多 source 授权顺序不可控；用户可能看到部分报告、缺口和授权入口混在一起 | 轻量原型或单 source tool |
 
-严格来说，OAuth2 token 获取本身一定会先判断 token 是否可用；区别在于这个判断是否被设计成显式的产品阶段。方案三应该把它显式化为 Authorization Preflight，而不是把它隐藏在正式采集过程中。
+分析结论：
 
-授权实现和 UI 也有三类可选方案：
+- A 最符合方案三的核心目标：正式生成前完成准备，生成阶段只处理已经确认并授权的数据源。
+- B 看起来省掉了 preflight，但实际上会把“状态判断”转移给用户：用户需要自己分辨哪些 source 已授权、哪些 source 需要重新授权。
+- C 可以保留为 collector 层兜底，但不应该作为第一阶段主流程，因为它会让“准备阶段”和“正式生成阶段”重新耦合。
 
-| 授权方式 | 做法 | 优点 | 风险 | 结论 |
+选择理由：
+
+方案三选择 **A. Preflight 后授权**。原因是工作报告是多源聚合任务，最重要的用户承诺是“我将基于这些已确认的数据源生成报告”。只有先做 preflight，系统才能在生成前明确回答三个问题：哪些 source 会被使用、哪些 source 还需要授权、用户是否愿意移除或跳过未授权 source。
+
+#### 3.3.2 授权实现与 UI 方案
+
+| 方案 | 做法 | 优点 | 风险 | 结论 |
 |---|---|---|---|---|
-| 多个业务 tool 各自单装饰器 | GitHub、Gitee、Calendar、Email collector 各自使用一个 `@require_access_token` | 和当前工具模式一致；source 边界清晰；适合作为正式生成阶段的防线 | 授权触发偏懒，可能在生成过程中才出现；多个 AuthCard 状态容易分散 | 保留为兜底，不作为准备阶段主编排 |
-| 一个大 tool 叠多个装饰器 | 在 `generate_work_report` 或类似大工具上堆多个 `@require_access_token` | 表面上能保证函数执行前拿到多个 token | 装饰器顺序、错误归因、partial ready、用户取消和多 provider UI 都会变复杂；也会把数据源选择和授权绑定死 | 不推荐 |
-| 一个聚合型准备 card | `prepare_work_report` 返回 `ready_sources` / `missing_sources`，前端用一个 `ReportPreparationCard` 展示所有 source 的状态和授权入口 | 用户看到一个准备面板；可逐项授权、移除 source、重新检查；和“全部 ready 后再生成”一致 | 需要前端新增聚合状态 UI | 方案三推荐 |
+| D. 多个业务 tool 各自单装饰器 | GitHub、Gitee、Calendar、Email collector 各自使用一个 `@require_access_token` | 和当前工具模式一致；source 边界清晰；适合作为正式生成阶段的安全防线 | 授权触发偏懒，可能在生成过程中才出现；多个 AuthCard 状态容易分散 | 保留为兜底，不作为准备阶段主编排 |
+| E. 一个大 tool 叠多个装饰器 | 在 `generate_work_report` 或类似大工具上堆多个 `@require_access_token` | 表面上能保证函数执行前拿到多个 token | 装饰器顺序、错误归因、partial ready、用户取消、多 provider UI 都会变复杂；也会把数据源选择和授权绑定死 | 不推荐 |
+| F. 一个聚合型准备 card | `prepare_work_report` 返回 `ready_sources` / `missing_sources`，前端用一个 `ReportPreparationCard` 展示所有 source 的状态和授权入口 | 用户看到一个准备面板；可逐项授权、移除 source、重新检查；和“全部 ready 后再生成”一致 | 需要前端新增聚合状态 UI | 方案三主 UI |
+
+分析结论：
+
+- D 是好的工具边界，但不是好的产品编排。它应该继续存在，因为 token 可能在 preflight 后过期或被用户撤销；但用户不应该主要通过多个分散 AuthCard 理解本次报告准备状态。
+- E 把多 source 授权塞进一个函数调用，看起来集中，实际会制造隐式复杂度。多个装饰器的执行顺序会影响用户看到的授权顺序，也难以表达“GitHub ready、Calendar missing、Email skipped”这种 partial state。
+- F 把授权状态当成准备阶段的业务状态，而不是 tool 调用副作用。它更适合报告生成这类多源任务，也更容易在 UI 中展示 source 列表、授权入口、重新检查和移除 source。
+
+选择理由：
+
+方案三选择 **F. 一个聚合型 `ReportPreparationCard`** 作为第一阶段 UI，同时保留 **D. 多个业务 tool 各自单装饰器** 作为正式生成阶段兜底。这样可以同时获得两个好处：用户体验上是一个清楚的准备面板，工程上仍然保留每个 source 的最小权限边界和 token 防线。
+
+不选择 **E. 一个大 tool 叠多个装饰器**，因为它会把多 source 授权、source 选择、错误恢复和业务采集合并到一个隐式调用链里。这个设计短期可能少写代码，但长期会让报告工具变成难测试、难解释、难扩展的中心化编排器。
 
 推荐组合：
 

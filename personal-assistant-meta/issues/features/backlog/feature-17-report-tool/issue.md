@@ -130,7 +130,7 @@ flowchart TD
   Gen --> Card["交付阶段<br/>ReportArtifactCard 下载报告"]
 ```
 
-方案三的关键差异是：报告生成前必须先完成数据源选择和授权准备。第一阶段推荐使用 Authorization Preflight + 一个聚合型 `ReportPreparationCard`：Service 先检查已选 source 的授权状态，前端在一个准备面板里展示 ready / missing source；正式生成阶段的各 source collector 仍保留单 source auth gate 作为兜底。不推荐在一个大 tool 上堆多个 `@require_access_token`。正式生成阶段不再依赖前端解析 Markdown marker，而是由 Service 返回结构化 `report_artifact`，前端用专用 artifact card 展示下载入口。详细设计见 [`plan3/artifact-workflow-design.md`](plan3/artifact-workflow-design.md)。
+方案三的关键差异是：报告生成前必须先完成数据源选择和授权准备。第一阶段评估了三类流程：A. Preflight 后授权、B. 不做 preflight 直接请求授权、C. 等业务 tool 调用时触发授权；也评估了三类授权实现/UI：D. 多个业务 tool 各自单装饰器、E. 一个大 tool 叠多个装饰器、F. 一个聚合型准备 card。推荐选择 **A + F + D 兜底**：Service 先检查已选 source 的授权状态，前端用一个 `ReportPreparationCard` 展示 ready / missing source；正式生成阶段的各 source collector 仍保留单 source auth gate 作为兜底。不推荐 E，因为一个大 tool 叠多个 `@require_access_token` 会让授权顺序、错误归因和 partial state 都变复杂。正式生成阶段不再依赖前端解析 Markdown marker，而是由 Service 返回结构化 `report_artifact`，前端用专用 artifact card 展示下载入口。详细设计见 [`plan3/artifact-workflow-design.md`](plan3/artifact-workflow-design.md)。
 
 ## 3. 方案对比与选择依据
 
