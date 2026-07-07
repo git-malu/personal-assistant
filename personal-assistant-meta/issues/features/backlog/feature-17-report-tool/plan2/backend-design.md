@@ -306,9 +306,23 @@ flowchart TD
 
 降级原则：
 
+- 某个 source 未授权会触发对应 provider 的授权流程，但不阻塞 renderer。
 - 某个 source 失败不阻塞 renderer。
 - 所有 source 都无数据时也返回完整报告，但概览和缺口章节必须说明。
 - Renderer 失败属于 Service 内部错误，应返回 `ok=false` 或 warning，并避免 Agent 自行编造。
+
+### 10.1 v1 授权体验决策
+
+方案二与方案一共享同一套 source collector 和 OAuth 授权链路。默认全源采集时，GitHub、Gitee、Calendar、Email 任一 source 未授权都会触发对应 provider 的 `auth_required` 事件。
+
+v1 不要求用户先完成所有 provider 成功授权后再生成报告：
+
+- 未授权成功的 source 在本轮采集中写入 warnings。
+- Service Markdown renderer 必须把 warnings 写入“数据来源与缺口”章节。
+- 已授权 source 仍参与本轮 `report_markdown` 渲染。
+- 如果多个 source 均未授权成功，报告正文必须列出所有未授权成功的 source。
+
+前端当前同一 assistant message 下只展示一张 AuthCard，因此 Service renderer 不能依赖 AuthCard 作为唯一缺口说明渠道。
 
 ## 11. 测试计划
 
@@ -319,5 +333,6 @@ Service tests：
 - explicit / inferred 措辞规则正确。
 - warnings 写入“数据来源与缺口”。
 - 空数据时仍生成完整报告。
+- 多个 source 未授权时，`report_markdown` 的“数据来源与缺口”列出所有被跳过 source。
 - 特殊字符、超长 subject、commit message 被安全截断。
 - Agent prompt 包含“原样输出 report_markdown”约束。

@@ -517,10 +517,33 @@ flowchart TD
 
 原则：
 
-- 单个 source 授权缺失不阻塞整体报告。
+- 单个 source 授权缺失会触发对应 provider 的授权流程，但不阻塞整体报告。
 - 单个 source API 失败不阻塞整体报告。
 - 未采集到活动时仍返回可用 outline，并在概览中说明。
 - 未知 `include_sources` 属于调用参数错误，直接返回 `ok=False`。
+
+### 10.1 v1 授权体验决策
+
+当前实现中，`generate_work_report` 默认按 `github`、`gitee`、`calendar`、`email` 采集 source。各 collector 在调用底层工具时会复用现有 `require_access_token` 授权流程：
+
+- GitHub 通过 `github_tools._github_request` 触发 GitHub provider 授权。
+- Gitee 通过 `_gitee_report_request` 触发 Gitee provider 授权。
+- Calendar 通过 `calendar_tools.list_calendar_events` 触发 Microsoft 365 Calendar provider 授权。
+- Email 通过 `email_tools.list_emails_in_time_range` 间接调用 `_m365_email_request`，触发 Microsoft 365 Email provider 授权。
+
+v1 产品决策是**不等待所有 source 授权成功完成后再生成报告**：
+
+- 未授权 source 会触发 `auth_required`。
+- 授权失败的source会跳过。
+- 所有授权失败的 source 都必须进入 `warnings`，并由 `report_outline.sections` 中的“数据来源与缺口”章节展示。
+
+这保证用户在首次使用时仍能获得部分报告，同时清楚知道哪些数据源因授权失败而没有进入本次报告。
+
+### 10.2 多 provider 授权入口限制
+
+默认全源采集时，多个 source 可能在同一轮 `generate_work_report` 中连续触发 `auth_required`。后端会逐个 collector 处理并累计 warnings，但前端当前 AuthCard store 只能在同一 assistant message 下展示一张授权卡。
+
+因此，Service 不应依赖 AuthCard 作为唯一缺口说明渠道。`warnings` 和“数据来源与缺口”章节是 v1 的完整授权缺口说明来源。
 
 ## 11. 隐私与安全
 
@@ -541,6 +564,7 @@ Service tests：
 - Calendar collector 的 `has_more` warning。
 - Email collector 的 sentitems / inbox、隐私字段、部分授权 warning。
 - `generate_work_report` 在全部授权、部分授权缺失、单 source 失败时均返回可用结构。
+- 多个 source 未授权时，`warnings` 包含每个被跳过 source，报告 outline 的“数据来源与缺口”能够完整展示这些缺口。
 - `report_outline.download` 包含格式、content type、文件名和 marker。
 - `build_tools()` 注册 `generate_work_report`。
 - `SYSTEM_PROMPT` 包含工作报告和 marker 输出约束。

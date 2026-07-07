@@ -173,8 +173,23 @@ flowchart TD
 
 - 报告正文是主要内容。
 - 下载卡片是报告 artifact 的专用操作区。
-- 下载卡片可以位于正文上方或下方，但同一产品内应保持一致。
+- 下载卡片应位于报告正文下方，用户先阅读完整报告，再执行保存操作。
 - 如果出现 AuthCard，AuthCard 应优先显示授权状态；报告下载卡片只在最终报告可用后显示。
+
+### 6.1 多数据源授权入口限制
+
+方案二虽然由 Service 直接渲染 `report_markdown`，但授权入口仍复用现有 AuthCard 链路。默认全源采集时，GitHub、Gitee、Calendar、Email 任一 source 未授权都会触发对应 provider 的 `auth_required` 事件。
+
+当前前端实现限制：
+
+- 同一 assistant message 下多个 provider 连续触发授权时，后一个 provider 会覆盖前一个 provider 的可见 AuthCard。
+
+v1 UX 决策：
+
+- 不要求同一 assistant message 下多个 AuthCard 并存。
+- 不等待用户完成所有 provider 授权成功后再显示报告。
+- `report_markdown` 的“数据来源与缺口”必须列出所有授权失败的source。
+- 多 provider 授权列表、授权入口聚合和授权后快捷重新生成作为后续增强。
 
 ## 7. 状态设计
 
@@ -194,7 +209,7 @@ stateDiagram-v2
 
 | 状态 | 说明 |
 |---|---|
-| Hidden | 未检测到合法 report artifact |
+| Hidden | 未检测到合法报告内容 |
 | Ready | 可下载 |
 | Saving | 正在调用保存流程 |
 | Saved | 保存成功，显示完成态 |
@@ -262,3 +277,4 @@ Client tests：
 - 用户取消保存时保持 Ready 状态。
 - 保存成功显示 Saved 状态。
 - 保存失败显示 Failed 状态并允许重试。
+- 多个 source 未授权时，即使当前只显示一个 AuthCard，报告正文也能展示所有未授权 source。

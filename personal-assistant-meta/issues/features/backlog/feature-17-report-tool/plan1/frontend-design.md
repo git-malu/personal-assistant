@@ -353,6 +353,22 @@ fallback 识别方式：
 - 卡片颜色、边框、圆角、按钮高度与 AuthCard 保持一致。
 - 成功态使用绿色，与授权完成态一致。
 
+#### 多数据源授权入口限制
+
+工作报告默认会尝试采集 GitHub、Gitee、Microsoft 365 Calendar、Microsoft 365 Email。任一 source 未授权时，后端底层 OAuth 工具会发出 `auth_required` 事件，前端通过 `AuthCard` 展示授权入口。
+
+当前前端实现需要注意：
+
+- 同一 assistant message 下连续出现多个 provider 授权请求时，后一个 provider 会覆盖前一个 provider 的可见 AuthCard。
+- Store 可以保留不同 messageId 的历史 AuthCard，但当前不支持同一 assistant message 下多 provider / 多卡片并存。
+
+v1 UX 决策：
+
+- v1 不要求在同一 assistant message 下展示多个 AuthCard。
+- 未授权的source 仍应触发授权入口，触发授权完成后，当前 UI 只展示最后一个授权U。
+- 报告正文的“数据来源与缺口”必须列出所有授权失败的 source，作为完整缺口说明。
+- 多 AuthCard 并存、授权入口聚合列表和“授权后重新生成”快捷按钮作为后续增强项。
+
 ### Action Bar
 
 现有 assistant action bar 的通用导出能力应保留。
@@ -391,6 +407,8 @@ fallback 识别方式：
 | 浏览器不支持 `showSaveFilePicker` | 使用 `<a download>` fallback |
 | 用户取消保存 | 不触发 fallback，不显示成功态 |
 | 保存成功 | 显示绿色完成态 |
+| source 授权失败 | 显示对应 AuthCard，报告“数据来源与缺口”列出该 source |
+| 用户完成某个 provider 授权后重新生成报告 | 新授权 source 参与下一轮采集，剩余未授权 source 继续提示 |
 
 ## 13. 测试计划
 
@@ -411,10 +429,12 @@ Component tests：
 - running 状态禁用按钮。
 - 点击按钮时用建议文件名保存当前报告内容。
 - 保存成功后切换到绿色完成态。
+- 多 provider 授权事件在同一 assistant message 下的当前限制被覆盖测试或文档化；v1 至少验证报告缺口说明不会依赖单张 AuthCard。
 
 ## 14. 后续优化
 
 - 增加保存失败的可见错误提示。
 - 扩展 fallback 标题识别，兼容更多中文标题写法。
 - fallback 文件名按报告标题推断 daily / weekly / monthly。
+- 支持同一 assistant message 下多个 AuthCard 并存，或将多个 provider 授权请求合并成一个授权列表。
 - 允许用户选择 Markdown 以外格式，但 v1 不引入 PDF / Word。
