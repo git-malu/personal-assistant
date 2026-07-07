@@ -109,7 +109,44 @@ async def check_oauth2_authorization(
 
 注意：preflight 不应该在每次页面重渲染时反复调用，否则可能创建多个授权 session。建议只在用户确认数据源、OAuth callback 完成、或用户点击“重新检查授权”时触发，并把 `auth_url` / `session_uri` 绑定到当前 `report_plan`。
 
-### 3.3 准备阶段工具
+### 3.3 第一阶段授权编排选择
+
+第一阶段有两类可选流程：
+
+| 流程 | 做法 | 优点 | 风险 | 结论 |
+|---|---|---|---|---|
+| Preflight 后授权 | 用户确认 `selected_sources` 后，Service 逐个 source 调用 `GetResourceOauth2Token` 做授权预检；已授权 source 标记 ready，未授权 source 返回 `auth_url` | 用户在生成前就知道哪些 source 可用；不会正式生成到一半才弹授权；适合聚合展示多个待授权 source | 多一次准备阶段调用；需要避免反复创建授权 session | 方案三推荐 |
+| 不做 preflight，直接请求授权 | 用户确认 `selected_sources` 后，系统直接触发授权请求或等业务 tool 调用时触发授权 | 实现更接近当前 tool 装饰器模式；前期代码少 | 容易在生成过程中才发现缺授权；多 source 授权顺序和 UI 状态不清晰；难以表达“全部 ready 后再生成” | 不推荐作为方案三主流程 |
+
+严格来说，OAuth2 token 获取本身一定会先判断 token 是否可用；区别在于这个判断是否被设计成显式的产品阶段。方案三应该把它显式化为 Authorization Preflight，而不是把它隐藏在正式采集过程中。
+
+授权实现和 UI 也有三类可选方案：
+
+| 授权方式 | 做法 | 优点 | 风险 | 结论 |
+|---|---|---|---|---|
+| 多个业务 tool 各自单装饰器 | GitHub、Gitee、Calendar、Email collector 各自使用一个 `@require_access_token` | 和当前工具模式一致；source 边界清晰；适合作为正式生成阶段的防线 | 授权触发偏懒，可能在生成过程中才出现；多个 AuthCard 状态容易分散 | 保留为兜底，不作为准备阶段主编排 |
+| 一个大 tool 叠多个装饰器 | 在 `generate_work_report` 或类似大工具上堆多个 `@require_access_token` | 表面上能保证函数执行前拿到多个 token | 装饰器顺序、错误归因、partial ready、用户取消和多 provider UI 都会变复杂；也会把数据源选择和授权绑定死 | 不推荐 |
+| 一个聚合型准备 card | `prepare_work_report` 返回 `ready_sources` / `missing_sources`，前端用一个 `ReportPreparationCard` 展示所有 source 的状态和授权入口 | 用户看到一个准备面板；可逐项授权、移除 source、重新检查；和“全部 ready 后再生成”一致 | 需要前端新增聚合状态 UI | 方案三推荐 |
+
+推荐组合：
+
+```mermaid
+flowchart TD
+  Confirm["用户确认 selected_sources"] --> Preflight["Authorization Preflight<br/>逐 source 检查 token 状态"]
+  Preflight --> PrepCard["ReportPreparationCard<br/>聚合展示 ready / missing"]
+  PrepCard --> Auth["用户逐项授权或移除 source"]
+  Auth --> Preflight
+  PrepCard --> Generate["全部 ready 后调用 generate_work_report"]
+  Generate --> Collectors["Collectors 保留单 source auth gate 作为兜底"]
+```
+
+也就是说，准备阶段的主编排不是多个 AuthCard，也不是一个叠满装饰器的大 tool，而是：
+
+- Service 用 `prepare_work_report` 做 source 选择和 preflight。
+- 前端用一个 `ReportPreparationCard` 聚合展示多个 source 的授权状态。
+- 正式生成阶段的 collector 仍可保留各自的 `@require_access_token`，防止 token 在准备完成后过期或被撤销。
+
+### 3.4 准备阶段工具
 
 ```python
 prepare_work_report(
@@ -152,13 +189,13 @@ prepare_work_report(
 }
 ```
 
-### 3.4 授权策略
+### 3.5 授权策略
 
 用户选择的数据源全部 ready 后才能进入正式生成。未授权 source 的默认处理不是自动跳过，而是进入授权准备状态。
 
 如果用户明确说“未授权的先跳过”，Agent 可以更新 `selected_sources` 后重新执行准备阶段。跳过必须是用户明确选择，而不是系统静默降级。
 
-### 3.5 准备阶段状态图
+### 3.6 准备阶段状态图
 
 ```mermaid
 stateDiagram-v2
