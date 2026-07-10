@@ -18,7 +18,7 @@
     "cleanup": {
       "template": "Run a full cleanup cycle across the personal-assistant mono-repo — doc sync, test sync, and GitNexus index refresh. Produce a cleanup report.",
       "description": "Daily cleanup and maintenance — scan docs, cull stale tests, refresh GitNexus index",
-      "agent": "personal-assistant-cleanup",
+      "agent": "pa-cleanup",
       "subtask": true
     }
   },

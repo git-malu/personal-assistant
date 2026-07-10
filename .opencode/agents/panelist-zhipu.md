@@ -4,7 +4,7 @@ description: >-
   technical discussions, code reviews, design plans, and issue scoping.
   Supports web search and URL fetching for external context.
 mode: subagent
-model: zhipuai/glm-5.1
+model: zhipuai/glm-5.2
 permission:
   webfetch: allow
   websearch: allow

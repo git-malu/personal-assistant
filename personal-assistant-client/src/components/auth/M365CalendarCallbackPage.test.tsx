@@ -39,7 +39,7 @@ describe("M365CalendarCallbackPage", () => {
       new Response(
         JSON.stringify({
           type: "m365-calendar-auth",
-          requestId: "signed-state",
+          request_id: "signed-state",
           provider: "m365-calendar-provider",
           status: "complete",
           message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
@@ -102,7 +102,7 @@ describe("M365CalendarCallbackPage", () => {
     expect(screen.getByText("本地授权失败")).toBeInTheDocument();
     expect(postMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestId: "signed-state",
+        request_id: "signed-state",
         state: "signed-state",
         status: "failed",
       }),

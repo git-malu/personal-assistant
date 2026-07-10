@@ -25,14 +25,8 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return;
-      const data = event.data as {
-        type?: string;
-        status?: string;
-        provider?: string;
-        message?: string;
-        state?: string | null;
-      };
-      if (data.type !== "m365-calendar-auth" || !data.provider) return;
+      if (!isCalendarOAuthResponse(event.data)) return;
+      const data = event.data;
       if (data.provider === CALENDAR_OAUTH_PROVIDER && !data.state) return;
       // Browser tabs are status observers only. The Service owns OAuth
       // completion, which avoids cross-tab races where another tab completes

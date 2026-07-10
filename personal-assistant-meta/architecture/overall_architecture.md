@@ -91,6 +91,7 @@ flowchart TB
 | [`auth/inbound-auth-lifecycle.md`](auth/inbound-auth-lifecycle.md) | Web Chat Inbound Auth lifecycle：MSAL、Zustand、ID Token、silent refresh、AuthGuard 与 Landing/Chat gate |
 | [`auth/feature-15-calendar-oauth2-architecture.md`](auth/feature-15-calendar-oauth2-architecture.md) | Feature 15 Calendar OAuth2 full flow：AuthCard、Service-owned callback、state-scoped UI status、`UserIdentifier` 参数约束 |
 | `backend_architecture.md` | FastAPI 路由设计、Agent 处理逻辑、LangGraph 编排、AgentArts SDK 集成、项目结构 |
+| [`devops/test/test-strategy.md`](devops/test/test-strategy.md) | 测试分层、目录归属、E2E 边界和 CI/CD 门禁策略 |
 
 ### 2.1 前后端关系
 
@@ -735,6 +736,7 @@ personal-assistant/
 | 文档 | 路径 |
 |------|------|
 | **Microsoft Entra ID (OIDC) 配置** | `architecture/devops/microsoft-entra-id-setup.md` |
+| **测试分层与 E2E 策略** | `architecture/devops/test/test-strategy.md` |
 | **前端架构** | `architecture/frontend_architecture.md` |
 | **后端架构** | `architecture/backend_architecture.md` |
 | **Cloudflare Pages 运维** | `architecture/cloud-service/cloudflare/pages.md` |

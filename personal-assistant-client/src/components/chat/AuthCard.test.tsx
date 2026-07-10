@@ -50,6 +50,7 @@ describe("AuthCard", () => {
           origin: window.location.origin,
           data: {
             type: "m365-calendar-auth",
+            request_id: "signed-state",
             status: "complete",
             provider: "m365-calendar-provider",
             message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
@@ -85,6 +86,7 @@ describe("AuthCard", () => {
           origin: window.location.origin,
           data: {
             type: "m365-calendar-auth",
+            request_id: "other-state",
             status: "complete",
             provider: "m365-calendar-provider",
             message: "另一个授权已完成",
@@ -118,6 +120,7 @@ describe("AuthCard", () => {
           origin: window.location.origin,
           data: {
             type: "m365-calendar-auth",
+            request_id: "",
             status: "failed",
             provider: "m365-calendar-provider",
             message: "缺少 state 的失败状态",

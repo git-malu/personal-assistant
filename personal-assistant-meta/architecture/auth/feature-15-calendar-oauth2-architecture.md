@@ -17,7 +17,10 @@ Calendar Tool 是本项目第一个覆盖 AgentArts OAuth2 full flow 的示范�
   OAuth2 complete 业务决策。
 - replay / duplicate callback 状态在 production 使用 PostgreSQL 持久化，避免多实例、
   重启或重复 redirect 导致重复 complete。
-- Microsoft Graph access token 只保存在 AgentArts Identity Token Vault，不暴露给浏览器、LLM 或日志。
+- AgentArts Identity 通过 OAuth2 flow 拿到的第三方 Microsoft Graph resource token
+  只保存在 AgentArts Identity Token Vault，不暴露给浏览器、LLM 或日志。
+  本地开发中浏览器发送给 Service 的 inbound Microsoft Entra ID token 只用于
+  Agent Identity JWT WAT exchange，不是 Calendar Resource Token。
 
 ## 2. 端到端流程
 
@@ -193,7 +196,7 @@ sequenceDiagram
 
 - Cookie 只是 Gateway context 的短时 transport bridge，不是登录态数据库，也不是
   replay store。
-- Cookie 不保存 Microsoft Graph access token；第三方 Resource Token 只在
+- Cookie 不保存 AgentArts Identity 换到的第三方 Microsoft Graph resource token；该 token 只在
   AgentArts Identity Token Vault 中保存。
 - CSRF / callback ownership 仍由 signed state 负责；重复提交和并发 callback 由
   PostgreSQL `oauth2_callback_states` 负责。
@@ -227,6 +230,24 @@ client.complete_resource_token_auth(
     user_identifier=UserIdentifier(user_token=user_token),
 )
 ```
+
+Resource Token Auth session 创建阶段和 callback complete 阶段必须使用同一种
+user identity binding。Calendar OAuth2 full flow 统一走 JWT identity：
+
+| 环境 | Runtime WAT 来源 | Callback Complete |
+|------|------------------|-------------------|
+| AgentArts Runtime / production | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 `create_workload_access_token(workloadName, user_token=userToken)` | `UserIdentifier(user_token=user_token)` |
+| Local dev / manual test | Service 使用 inbound Microsoft Entra ID token 调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=...)`；`settings.agent_identity_local_jwt_workload_name` 默认 `pa-local-jwt-workload`，必须指向 customer-owned `CUSTOM_JWT` Workload Identity，不能使用 service-created `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
+
+如果本地请求没有 Gateway WAT 且没有真实 inbound `Authorization` user token，
+Calendar Tool 必须在进入 AgentArts SDK `@require_access_token` 之前 fail-fast，
+避免 SDK local fallback 创建 user_id-mode WAT 后再用 `user_token` complete。
+
+已验证 `agent-personal-assistant` 可通过 list/get 与 Console 看见，但由于它是
+`created_by=SERVICE service.AgentNetwork` 的 service-created Workload Identity，本地主动
+mint WAT 会稳定返回 `404 AgentIdentityDirectoryService.1002 workload identity not found`。
+详细排障记录见
+[`cloud-service/huaweicloud/agent-identity.md`](../cloud-service/huaweicloud/agent-identity.md)。
 
 ## 7. 已知约束：`user_id` 与 `user_token` 互斥
 

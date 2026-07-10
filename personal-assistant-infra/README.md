@@ -71,6 +71,49 @@ uv run python scripts/configure_calendar_oauth_return_url.py \
 `--return-url` 可以重复传入；如果不传，脚本也会读取
 `OAUTH2_CALENDAR_CALLBACK_URL`。
 
+## 手动执行本地 JWT Workload helper
+
+本地 Calendar OAuth2 full flow 在没有 Gateway 注入 WAT 时，需要一个
+customer-owned `CUSTOM_JWT` Workload Identity 来主动 mint JWT-mode WAT。
+默认名称为 `pa-local-jwt-workload`，对应 Service 默认配置
+`AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。
+本地前端发送 Microsoft Entra ID token 作为 inbound `Authorization` token。
+因此该 workload 默认使用 Microsoft Entra v2 discovery URL，校验
+`allowed_audience=<VITE_ENTRA_CLIENT_ID>`，并省略 `allowed_clients`。
+Microsoft Entra ID token 通常没有 `appid` / `azp` / `client_id` claim，
+不要在默认本地配置里要求 client-id claim；显式空数组和省略字段在
+Agent Identity 后端行为不同，默认必须省略。
+
+查看当前可见 workload identities：
+
+```bash
+uv run python scripts/list_workload_identities.py \
+  --region cn-southwest-2
+```
+
+验证或创建本地 JWT workload。普通运行只读云端并展示 diff，只有加
+`--apply` 才会创建或更新：
+
+```bash
+uv run python scripts/ensure_local_jwt_workload_identity.py \
+  --region cn-southwest-2
+
+uv run python scripts/ensure_local_jwt_workload_identity.py \
+  --region cn-southwest-2 \
+  --apply
+```
+
+拿到本地前端使用的 Microsoft Entra ID token 后，可以 smoke-test JWT WAT exchange。
+脚本从环境变量读取 token，默认不打印 WAT：
+
+```bash
+export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID token>"
+uv run python scripts/smoke_jwt_workload_access_token.py \
+  --workload-identity pa-local-jwt-workload \
+  --region cn-southwest-2
+unset AGENT_IDENTITY_USER_TOKEN
+```
+
 ## 本地验证
 
 ```bash

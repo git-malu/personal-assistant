@@ -12,14 +12,14 @@ flowchart LR
     Browser["Browser"] --> Pages["Cloudflare Pages"]
 
     Pages -->|"GET /, /assets/*"| Assets["Vite build artifacts<br/>dist/"]
-    Pages -->|"POST /invocations"| ExactFn["functions/invocations.js<br/>exact route"]
-    Pages -->|"GET/POST /invocations/*"| DeepFn["functions/invocations/[[path]].js<br/>multipath route"]
+    Pages -->|"POST /invocations"| InvocationsFn["functions/invocations.js<br/>Web Chat proxy route"]
     Pages -->|"GET /auth/callback/m365-calendar"| CallbackFn["functions/auth/callback/m365-calendar.js<br/>OAuth BFF callback"]
 
-    ExactFn -->|"re-export"| Proxy["shared proxy implementation"]
-    DeepFn -->|"same proxy helper"| Proxy
+    InvocationsFn -->|"calls"| Proxy["functions/_shared/agentarts-proxy.js"]
     Proxy -->|"JWT + session header<br/>full Runtime path"| Gateway["AgentArts Gateway"]
     Proxy -.->|"Set-Cookie callback context<br/>HttpOnly, callback path"| Browser
+    CallbackFn -->|"builds full Runtime callback URL"| Proxy
+    CallbackFn -->|"reads callback context cookies"| Context["functions/_shared/callback-context.js"]
     CallbackFn -->|"callback query + Gateway context<br/>+ optional BFF secret"| OAuthCallback["Service OAuth callback"]
     Gateway -->|"SSE ReadableStream"| Proxy
     Proxy -->|"SSE ReadableStream"| Browser
@@ -28,8 +28,9 @@ flowchart LR
 
 Browser 只访问 Pages origin，因此不会产生 CORS preflight。Pages Function
 透明转发必要 headers、request body 和 SSE response body；JWT validation
-仍由 AgentArts Gateway 完成。Pages 的 route specificity 规则会让
-`/invocations` 优先命中精确文件，而 `/invocations/*` 由多段动态路由处理。
+仍由 AgentArts Gateway 完成。Pages 生产 Function route 只显式声明
+`POST /invocations` 和 `GET /auth/callback/m365-calendar`；`/invocations/*`
+不再由 Cloudflare Pages Function 代理。
 
 这层 Pages Function 是 Web Chat 的 lightweight BFF/proxy：适合承担同源路由、
 header allowlist、SSE pass-through 和 OAuth callback bridge；不在 Function
@@ -46,7 +47,6 @@ Cloudflare Pages 使用 file-based routing。对本项目来说，静态资源�
 |------|----------|------|
 | `/`, `/chat`, `/assets/*` | 静态文件 | 直接从 `dist/` 提供 |
 | `POST /invocations` | `functions/invocations.js` | 精确匹配的 API 入口 |
-| `/invocations/*` | `functions/invocations/[[path]].js` | 多路径段动态路由，处理子路径 |
 | `/auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | Calendar OAuth2 BFF callback，server-side 转发到 Service |
 
 如果没有匹配到 Function，Pages 会继续按静态资源规则尝试返回 asset。
@@ -56,21 +56,23 @@ Cloudflare Pages 使用 file-based routing。对本项目来说，静态资源�
 
 | 文件 | 职责 |
 |------|------|
-| `personal-assistant-client/functions/invocations.js` | `/invocations` 的精确入口，当前只导出 `onRequestPost`，作为根路径 shim |
-| `personal-assistant-client/functions/invocations/[[path]].js` | 共享的 proxy 实现，处理 `/invocations/*` 的 GET/POST，请求会按 suffix 透传到 AgentArts Runtime 子路径；当请求携带 Gateway context 时，下发短时 callback-only HttpOnly cookies |
+| `personal-assistant-client/functions/invocations.js` | `/invocations` 的精确入口，持有 `onRequestPost` 并调用 shared proxy helper |
+| `personal-assistant-client/functions/_shared/agentarts-proxy.js` | AgentArts upstream URL 构造、header allowlist、request body 与 SSE response pass-through；仅供 Pages Functions import，不是 public route |
+| `personal-assistant-client/functions/_shared/callback-context.js` | callback-only HttpOnly cookie 下发、读取、过期与 Gateway context header 恢复；仅供 Pages Functions import，不是 public route |
 | `personal-assistant-client/functions/auth/callback/m365-calendar.js` | Calendar OAuth2 BFF callback；不直接转发 callback 请求中的浏览器 Authorization/Cookie，只转发 callback query，并用 callback context cookies 恢复 Gateway context headers |
 
-`functions/invocations.js` 和 `functions/invocations/[[path]].js` 不是两套代理逻辑，
-而是“一个精确入口 + 一个通配入口”的组合。前者把根路径请求挂到同一套 proxy
-代码上，后者负责处理带 suffix 的场景，例如 OAuth callback 和 playground 子路径。
+`functions/invocations.js` 和 `functions/auth/callback/m365-calendar.js` 是两条显式
+production public route。两者复用 `_shared` 下的 helper，但不会把
+`/invocations/*` 暴露为默认 public API contract。
 
 ## Repository 配置
 
 | 文件 | 职责 |
 |------|------|
 | `personal-assistant-client/wrangler.toml` | Pages project name、build output 与 compatibility date |
-| `personal-assistant-client/functions/invocations.js` | `/invocations` exact-route shim |
-| `personal-assistant-client/functions/invocations/[[path]].js` | `/invocations/*` shared proxy implementation |
+| `personal-assistant-client/functions/invocations.js` | `/invocations` Web Chat proxy route |
+| `personal-assistant-client/functions/_shared/agentarts-proxy.js` | shared AgentArts proxy helper |
+| `personal-assistant-client/functions/_shared/callback-context.js` | shared OAuth callback context helper |
 | `personal-assistant-client/functions/auth/callback/m365-calendar.js` | `/auth/callback/m365-calendar` BFF callback |
 | `personal-assistant-client/src/lib/chat/chat-api-client.ts` | 固定请求 same-origin `/invocations` |
 | `.github/workflows/deploy-frontend-to-cloudflare.yml` | `main` branch 自动测试、构建、部署和 smoke test |
@@ -188,13 +190,19 @@ Required / recommended Pages runtime variables：
 - `AGENTARTS_INVOCATIONS_URL`：现有 `/invocations` proxy upstream。
 - `OAUTH2_CALLBACK_BFF_SECRET`：推荐配置，与 Service
   `OAUTH2_CALLBACK_BFF_SECRET` 相同。
-- `AGENTARTS_OAUTH_CALLBACK_URL`：可选 direct Service callback upstream；未配置时
-  BFF 复用 `AGENTARTS_INVOCATIONS_URL` 构造 Gateway full Runtime callback path。
 BFF 使用 `/invocations` 正常登录请求预先写入的 callback-only HttpOnly cookies
 恢复 Gateway 所需的 `Authorization`、`x-hw-agentarts-session-id` 和
 `X-HW-AgentGateway-User-Id`。Calendar complete 的 `Authorization` 必须是同一用户的
 inbound user token；不要用 service token 覆盖，否则 AgentArts Identity 可能返回
 `AgentIdentityTokenVault.1002` identity mismatch。
+
+Local direct callback override：
+
+- `AGENTARTS_OAUTH_CALLBACK_URL`：仅用于本地 full-flow 开发或显式 direct callback
+  bypass，例如 `npm run pages:dev:local` 绑定到
+  `http://localhost:8080/auth/oauth2/callback/m365-calendar`。线上默认不配置该变量；
+  未配置时 BFF 复用 `AGENTARTS_INVOCATIONS_URL` 构造 Gateway full Runtime callback
+  path。
 
 API Token 最小权限为目标 Account 的 `Cloudflare Pages: Edit`。
 

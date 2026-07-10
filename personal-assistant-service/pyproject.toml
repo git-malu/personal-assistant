@@ -36,6 +36,12 @@ target-version = "py312"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: service tests across modules, FastAPI app, or mocked external boundaries",
+    "contract: stable API, configuration, logging, or tool schema contracts",
+    "regression: service regression tests for fixed bugs",
+    "slow: tests that take longer than 5 seconds",
+]
 
 [dependency-groups]
 dev = [

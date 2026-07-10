@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "personal-assistant-service/**"
+      - "personal-assistant-client/**"
+      - "personal-assistant-e2e/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "personal-assistant-service/**"
+      - "personal-assistant-client/**"
+      - "personal-assistant-e2e/**"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    name: Service lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: personal-assistant-service/uv.lock
+
+      - name: Install dependencies
+        working-directory: personal-assistant-service
+        run: uv sync --locked
+
+      - name: Ruff check
+        working-directory: personal-assistant-service
+        run: uv run ruff check .
+
+      - name: Pytest
+        working-directory: personal-assistant-service
+        run: uv run pytest tests/
+
+  client:
+    name: Client tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: personal-assistant-client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: personal-assistant-client
+        run: npm ci
+
+      - name: Test
+        working-directory: personal-assistant-client
+        run: npm run test
+
+      - name: Build
+        working-directory: personal-assistant-client
+        run: npm run build
+
+  e2e-smoke:
+    name: E2E smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            personal-assistant-service/uv.lock
+            personal-assistant-e2e/uv.lock
+
+      - name: Install service dependencies
+        working-directory: personal-assistant-service
+        run: uv sync --locked
+
+      - name: Install E2E dependencies
+        working-directory: personal-assistant-e2e
+        run: uv sync --locked
+
+      - name: Ruff check
+        working-directory: personal-assistant-e2e
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        working-directory: personal-assistant-e2e
+        run: uv run ruff format --check .
+
+      - name: Smoke tests
+        working-directory: personal-assistant-e2e
+        run: uv run pytest -m smoke -q

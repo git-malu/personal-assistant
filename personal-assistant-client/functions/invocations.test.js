@@ -2,10 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { onRequestPost as onRequestPostRoot } from "./invocations.js";
 import {
-  onRequestGet as onRequestGetNested,
-  onRequestPost as onRequestPostNested,
-} from "./invocations/[[path]].js";
-import {
   buildCallbackUpstreamUrl,
   onRequestGet as onRequestGetCalendarCallback,
 } from "./auth/callback/m365-calendar.js";
@@ -121,84 +117,6 @@ describe("Cloudflare Pages invocations proxy", () => {
     expect(await response.json()).toEqual({
       message: "Frontend proxy is not configured",
     });
-  });
-
-  it("forwards nested invocations paths to matching runtime subpaths", async () => {
-    const upstreamBody = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode("ok"));
-        controller.close();
-      },
-    });
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response(upstreamBody, {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    globalThis.fetch = mockFetch;
-
-    const request = new Request(
-      "https://agentarts-personal-assistant.pages.dev/invocations/tools/example",
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-jwt",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ok: true,
-        }),
-      },
-    );
-
-    const response = await onRequestPostNested({ request, env });
-    const forwardedRequest = mockFetch.mock.calls[0][0];
-
-    expect(forwardedRequest.url).toBe(
-      "https://runtime.example.com/runtimes/personal-assistant/invocations/tools/example",
-    );
-    expect(forwardedRequest.headers.get("Authorization")).toBe(
-      "Bearer test-jwt",
-    );
-    expect(await forwardedRequest.json()).toEqual({
-      ok: true,
-    });
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("ok");
-  });
-
-  it("forwards authenticated OAuth callback GET requests to matching runtime subpaths", async () => {
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response("<html>done</html>", {
-        status: 200,
-        headers: { "Content-Type": "text/html" },
-      }),
-    );
-    globalThis.fetch = mockFetch;
-
-    const request = new Request(
-      "https://agentarts-personal-assistant.pages.dev/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
-      {
-        method: "GET",
-        headers: {
-          Authorization: "Bearer test-jwt",
-        },
-      },
-    );
-
-    const response = await onRequestGetNested({ request, env });
-    const forwardedRequest = mockFetch.mock.calls[0][0];
-
-    expect(forwardedRequest.url).toBe(
-      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
-    );
-    expect(forwardedRequest.method).toBe("GET");
-    expect(forwardedRequest.headers.get("Authorization")).toBe(
-      "Bearer test-jwt",
-    );
-    expect(response.headers.get("Content-Type")).toContain("text/html");
-    expect(await response.text()).toBe("<html>done</html>");
   });
 
   it("builds the BFF callback upstream URL from the public callback path", () => {
@@ -338,7 +256,7 @@ describe("Cloudflare Pages invocations proxy", () => {
       "pa_oauth2_callback_auth=; Max-Age=0",
     );
     expect(text).toContain("授权失败");
-    expect(text).toContain('"requestId":"signed-state"');
+    expect(text).toContain('"request_id":"signed-state"');
     expect(text).toContain('"status":"failed"');
     expect(text).toContain('BroadcastChannel("m365-calendar-auth")');
   });

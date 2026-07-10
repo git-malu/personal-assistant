@@ -119,9 +119,9 @@
                       "title": "Type",
                       "description": "Calendar OAuth2 callback envelope type."
                     },
-                    "requestId": {
+                    "request_id": {
                       "type": "string",
-                      "title": "Requestid",
+                      "title": "Request Id",
                       "description": "OAuth2 state used as the UI request id."
                     },
                     "provider": {
@@ -160,7 +160,7 @@
                   "type": "object",
                   "required": [
                     "type",
-                    "requestId",
+                    "request_id",
                     "provider",
                     "status",
                     "message"

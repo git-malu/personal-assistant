@@ -6,7 +6,7 @@
 
 ## 1. 本地开发模式
 
-Personal Assistant 的本地开发不需要任何本地服务 Mock。所有后端能力（Memory、Identity、MaaS、Sandbox、MCP Gateway）均为 AgentArts 云端 API，通过 `agentarts-sdk` 网络调用。本地只需启动 FastAPI 即可。
+Personal Assistant 的本地开发不需要任何本地服务 Mock。所有后端能力（Memory、Identity、MaaS、Sandbox、MCP Gateway）均为 AgentArts 云端 API，通过 `agentarts-sdk` 网络调用。普通 Service 开发只需启动 FastAPI；Calendar OAuth2 full flow 需要额外启动本地 Cloudflare Pages Functions，详见 [2.2 首次使用 OAuth2 Provider 的授权](#22-首次使用-oauth2-provider-的授权)。
 
 ### 1.1 依赖关系
 
@@ -104,17 +104,86 @@ USER_FEDERATION 模式需要用户完成一次 OAuth 授权：
 3. 用户在浏览器中完成授权
 4. 后续调用自动使用刷新后的 token
 
-Calendar OAuth2 production callback 由 Cloudflare Pages BFF 接住。本地 `npm run dev`
-没有 Pages Function，因此 callback URL 配成 Vite fallback shell 路径：
+Calendar OAuth2 callback 分为 production 与 local full-flow 两种运行形态：
+
+| 环境 | 前端运行时 | Callback URL | WAT 来源 |
+|------|------------|--------------|----------|
+| Production / Pages preview | Cloudflare Pages + Pages Functions | `https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar` | AgentArts Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token` |
+| Local full-flow | `wrangler pages dev` 本地运行 Pages Functions | `http://localhost:5173/auth/callback/m365-calendar` | Service 用 Microsoft Entra ID token 主动创建 JWT-mode WAT |
+
+本地 Calendar OAuth2 full flow 不使用 Vite-only React fallback。必须用 local
+Cloudflare Pages Functions 复用 production BFF 的 callback cookie relay：
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser localhost:5173
+    participant Pages as Local Pages Functions
+    participant Service as FastAPI localhost:8080
+    participant Identity as AgentArts Identity
+
+    Browser->>Pages: POST /invocations + Authorization id_token
+    Pages->>Service: Forward /invocations
+    Pages-->>Browser: Set HttpOnly callback context cookies
+    Service->>Identity: create_workload_access_token(pa-local-jwt-workload, user_token)
+    Identity-->>Service: JWT-mode WAT
+    Service-->>Browser: OAuth authorization URL
+    Browser->>Pages: GET /auth/callback/m365-calendar
+    Pages->>Pages: Read HttpOnly callback context cookies
+    Pages->>Service: Forward /auth/oauth2/callback/m365-calendar + Authorization/session/user headers
+    Service->>Identity: complete_resource_token_auth(user_token)
+```
+
+首次本地 full-flow 测试前，先确保存在 customer-owned `CUSTOM_JWT` Workload
+Identity。默认名称是 `pa-local-jwt-workload`，对应 Service 默认配置
+`AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。不要使用
+AgentArts Runtime service-created `agent-personal-assistant`；该 identity 可以由
+Gateway 使用，但本地 SDK 主动调用 `create_workload_access_token()` 会 404。
+
+```bash
+cd personal-assistant-infra
+uv run python scripts/ensure_local_jwt_workload_identity.py \
+  --region cn-southwest-2 \
+  --apply
+```
+
+该 helper 默认使用 Microsoft Entra v2 discovery URL，校验
+`allowed_audience=<VITE_ENTRA_CLIENT_ID>`，并省略 optional `allowed_clients` /
+`allowed_scopes` / `custom_claims`。不要把这些 optional list 显式配置为空数组；
+Agent Identity 后端不会把省略字段和空数组视为等价配置。
+
+Service `.env` 需要指向本地 Pages callback：
 
 ```bash
 OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar
+# 默认值已是 pa-local-jwt-workload；只有需要覆盖时才设置
+# AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 ```
 
-该 URL 会先进入本地 React fallback shell；shell 只把 callback query 发给
-`/invocations/auth/oauth2/callback/m365-calendar`，再由 Vite proxy 到 FastAPI
-`/auth/oauth2/callback/m365-calendar`。本地 fallback 不获取 MSAL token，也不执行业务
-completion 决策；生产仍以 Cloudflare Pages Function BFF 为准。
+启动 Service：
+
+```bash
+cd personal-assistant-service
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
+```
+
+启动本地 Pages runtime：
+
+```bash
+cd personal-assistant-client
+npm run pages:dev:local
+```
+
+`pages:dev:local` 会先构建 Vite，再用 Wrangler 在
+`http://localhost:5173` 启动静态站点与 Pages Functions，并注入以下本地绑定：
+
+```text
+/invocations -> http://localhost:8080/invocations
+/auth/callback/m365-calendar -> http://localhost:8080/auth/oauth2/callback/m365-calendar
+```
+
+Microsoft Entra redirect URI 与 `OAUTH2_CALENDAR_CALLBACK_URL` 都使用
+`http://localhost:5173`，不要混用 `127.0.0.1:5173`。`npm run dev` 仍可用于普通
+UI / chat 开发，但不作为 Calendar OAuth2 full-flow callback relay 验证路径。
 
 production / Pages preview 若启用 BFF callback secret，需要在 Pages 与 Service 同时配置：
 
@@ -122,10 +191,10 @@ production / Pages preview 若启用 BFF callback secret，需要在 Pages 与 S
 OAUTH2_CALLBACK_BFF_SECRET=<same-random-secret>
 ```
 
-纯 Vite local fallback 没有 server-side Pages Function 注入该 header，因此本地
+本地 `pages:dev:local` 默认没有注入该 header，因此本地
 `OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar`
-时不要在 Service `.env` 配置 `OAUTH2_CALLBACK_BFF_SECRET`；除非你用
-`wrangler pages dev` 或其它本地 BFF 同时注入同名 header。
+时不要在 Service `.env` 配置 `OAUTH2_CALLBACK_BFF_SECRET`；除非你同时给
+Wrangler local Pages Functions 注入同名 secret。
 
 production 配置 `POSTGRES_DSN` 后，Service 会把 OAuth2 callback nonce 的
 active/completed 状态写入 PostgreSQL；未配置时仅使用进程内 fallback，适合本地开发。

@@ -61,6 +61,35 @@ personal-assistant-meta/
 - 所有 diagram 必须使用 Mermaid，包括 Flowchart、Sequence Diagram、Class Diagram、State Diagram、ER Diagram、Gantt Chart、Pie Chart 等。
 - 禁止使用 ASCII art 或其他非 Mermaid 格式绘制架构图。
 - 文字说明是对 diagram 的补充，不应替代关键结构和流程图。
+- 每个 Mermaid code block 前必须标注图类型和用途，格式示例：
+  `图类型：**Sequence Diagram（时序图）**。用于说明请求在组件之间的调用顺序。`
+
+### Standard Architecture Diagram Types
+
+架构文档优先使用以下标准图类型。Sequence Diagram 和 Component Diagram 都是标准图；
+区别是前者回答“运行时按什么顺序发生”，后者回答“系统由哪些部分组成”。
+
+| 图类型 | Mermaid 推荐语法 | 适用问题 |
+|--------|------------------|----------|
+| System Context Diagram（系统上下文图） | `flowchart` | 谁使用系统，系统连接哪些外部服务、平台或边界 |
+| Container / Deployment Diagram（容器 / 部署图） | `flowchart` | 前端、BFF、Service、DB、Gateway、云资源如何部署和连通 |
+| Component Diagram（组件图） | `flowchart` | 一个服务或子系统内部有哪些模块、职责和依赖 |
+| Sequence Diagram（时序图） | `sequenceDiagram` | 一个请求、事件或异步流程按什么顺序调用哪些组件 |
+| State Diagram（状态机图） | `stateDiagram-v2` | Session、Conversation、Job、OAuth flow 等状态如何转换 |
+| ER Diagram（实体关系图） | `erDiagram` | 数据表、实体、主外键和 cardinality |
+| Class Diagram（类图） | `classDiagram` | 类、接口、DTO、domain object 的结构关系 |
+| Data Flow / Trust Boundary Diagram（数据流 / 信任边界图） | `flowchart` | 敏感数据、凭据、用户身份跨哪些边界流动 |
+| Use Case Diagram（用例图） | `flowchart` | 用户角色和产品能力范围；仅用于需求澄清，不替代架构图 |
+| Gantt Chart（计划图） | `gantt` | 阶段计划、依赖和实施顺序 |
+
+选择规则：
+
+- 讲静态结构：优先 System Context、Container、Deployment 或 Component Diagram。
+- 讲动态调用：优先 Sequence Diagram。
+- 讲生命周期：优先 State Diagram。
+- 讲数据库：优先 ER Diagram。
+- 讲安全边界或凭据流动：优先 Data Flow / Trust Boundary Diagram。
+- 讲用户能做什么：可用 Use Case Diagram，但不要用它表达服务内部架构。
 
 ## Language Policy
 

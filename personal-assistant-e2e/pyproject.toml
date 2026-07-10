@@ -28,5 +28,9 @@ testpaths = ["tests"]
 markers = [
     "feature: E2E tests for features",
     "regression: E2E regression tests for bugs",
+    "smoke: stable cross-boundary smoke tests suitable for PR gates",
+    "browser: Playwright or browser-runtime user path tests",
+    "full_stack: local Client/Pages Function plus Service integration tests",
+    "manual: real-auth or cloud tests that require explicit opt-in",
     "slow: Tests that take longer than 5 seconds (subprocess startup)",
 ]

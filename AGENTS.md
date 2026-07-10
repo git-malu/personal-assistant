@@ -7,9 +7,9 @@
 系统开发遵循 5 步流水线流程，详细流程见各目录下的 `AGENTS.md`：
 
 1. **Issue 创建**：在 `personal-assistant-meta/issues/` 下创建 issue，描述变更动机和预期结果。
-2. **Meta 阶段**：meta-manager 编排 meta-dev（并行分部撰写）、panel-chair（专家评审与合成），生成 Implementation Plan。
-3. **Implementation**：service-manager、client-manager、infra-manager 按影响范围并行或串行执行实现。
-4. **E2E 验证**：e2e-manager 执行端到端测试，验证 Service + Client 联调。
+2. **Meta 阶段**：`pa-meta-manager` 编排 `pa-meta-dev` 与 `panel-chair`，生成 Implementation Plan。
+3. **Implementation**：`pa-service-manager`、`pa-client-manager`、`pa-infra-manager` 按影响范围并行或串行执行实现。
+4. **E2E 验证**：`pa-e2e-manager` 执行端到端测试，验证 Service + Client 联调。
 5. **Merge**：所有检查通过后合并到 `main` 分支。
 
 ## Directory Guide

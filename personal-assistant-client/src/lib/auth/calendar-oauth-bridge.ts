@@ -8,7 +8,7 @@ export const CALENDAR_OAUTH_FAILED_MESSAGE = "日历授权完成失败，请重�
 
 export interface CalendarOAuthResponse {
   type: "m365-calendar-auth";
-  requestId: string;
+  request_id: string;
   provider: string;
   status: "complete" | "failed" | "pending";
   message: string;
@@ -46,7 +46,7 @@ export function isCalendarOAuthResponse(
   }
 
   return (
-    isString(value.requestId) &&
+    isString(value.request_id) &&
     isString(value.provider) &&
     (value.status === "complete" ||
       value.status === "failed" ||

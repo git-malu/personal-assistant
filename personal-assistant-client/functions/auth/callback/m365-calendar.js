@@ -1,9 +1,9 @@
 import {
   applyCallbackContextHeaders,
   applyExpiredCallbackContextCookies,
-  buildUpstreamUrl,
   getCallbackContextFromCookies,
-} from "../../invocations/[[path]].js";
+} from "../../_shared/callback-context.js";
+import { buildUpstreamUrl } from "../../_shared/agentarts-proxy.js";
 
 const CALLBACK_PUBLIC_PATH = "/auth/callback/m365-calendar";
 const CALLBACK_UPSTREAM_PREFIX = "auth/oauth2/callback/m365-calendar";
@@ -50,7 +50,7 @@ function bffFailurePage(requestUrl) {
     null;
   const payload = {
     type: "m365-calendar-auth",
-    requestId: state ?? "",
+    request_id: state ?? "",
     provider: "m365-calendar-provider",
     status: "failed",
     message: "日历授权服务暂时不可用，请返回聊天窗口后重新发起授权。",

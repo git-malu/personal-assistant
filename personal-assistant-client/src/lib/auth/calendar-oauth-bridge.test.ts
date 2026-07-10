@@ -11,7 +11,7 @@ describe("calendar OAuth status envelopes", () => {
       isCalendarOAuthResponse({
         type: "m365-calendar-auth",
         provider: CALENDAR_OAUTH_PROVIDER,
-        requestId: "signed-state",
+        request_id: "signed-state",
         status: "complete",
         message: "done",
         state: "signed-state",
@@ -24,7 +24,7 @@ describe("calendar OAuth status envelopes", () => {
       isCalendarOAuthResponse({
         type: "m365-calendar-auth",
         provider: CALENDAR_OAUTH_PROVIDER,
-        requestId: "signed-state",
+        request_id: "signed-state",
         status: "pending",
         message: "working",
         state: null,
@@ -48,7 +48,7 @@ describe("calendar OAuth status envelopes", () => {
       isCalendarOAuthResponse({
         type: "m365-calendar-auth",
         provider: CALENDAR_OAUTH_PROVIDER,
-        requestId: "signed-state",
+        request_id: "signed-state",
         status: "unknown",
         message: "done",
       }),

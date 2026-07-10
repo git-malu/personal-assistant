@@ -4,9 +4,9 @@ Provides shared fixtures for managing service lifecycle, HTTP clients,
 and environment configuration across E2E test scenarios.
 """
 
+import contextlib
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -17,12 +17,6 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 
-# Add service directory to sys.path so that `from app.main import app` works
-# when pytest is invoked from the e2e directory or project root.
-_SERVICE_SRC = str(SERVICE_DIR)
-if _SERVICE_SRC not in sys.path:
-    sys.path.insert(0, _SERVICE_SRC)
-
 
 def _get_uv_path() -> str:
     """Get the uv binary path from the service's virtual environment."""
@@ -32,62 +26,28 @@ def _get_uv_path() -> str:
     return "uv"
 
 
-@pytest.fixture(scope="session")
-def service_venv_python() -> str:
-    """Return path to the Python interpreter in the service's venv."""
-    python_path = SERVICE_DIR / ".venv" / "bin" / "python"
-    if python_path.exists():
-        return str(python_path)
-    return sys.executable
+def terminate_process_tree(process: subprocess.Popen, timeout: float = 10.0) -> None:
+    """Terminate a subprocess and its children."""
+    if process.poll() is not None:
+        return
 
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=timeout)
+        return
 
-# ── TestClient-based E2E fixtures ─────────────────────────────────────
-
-
-@pytest.fixture
-def clean_env(monkeypatch):
-    """Clear canonical LLM Settings to ensure a deterministic default state."""
-    for var in (
-        "LLM_PROVIDER",
-        "LLM_MODEL",
-        "LLM_BASE_URL",
-        "LLM_CREDENTIAL_PROVIDER",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    from app.settings import get_settings
-
-    get_settings.cache_clear()
-    return monkeypatch
-
-
-@pytest.fixture
-def e2e_client(clean_env):
-    """Create a FastAPI TestClient with mocked LLM.
-
-    This fixture:
-    1. Sets up required environment variables for the test scenario
-    2. Mocks init_chat_model to avoid real API calls
-    3. Returns a TestClient that exercises the full FastAPI stack
-    """
-    from unittest.mock import MagicMock, patch
-
-    # Default: mock init_chat_model to return a dummy model
-    # Individual tests can override env vars before creating the client
-    with (
-        patch(
-            "app.llm_config._get_api_key_from_identity",
-            return_value="e2e-identity-key",
-        ),
-        patch(
-            "app.llm_config.init_chat_model",
-            return_value=MagicMock(),
-        ) as mock_init,
-    ):
-        from app.main import app
-        from fastapi.testclient import TestClient
-
-        client = TestClient(app, raise_server_exceptions=False)
-        yield client, mock_init
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 # ── Subprocess-based service fixture (for true process-level E2E) ────
@@ -152,12 +112,7 @@ class ServiceProcess:
     def stop(self):
         """Stop the service subprocess."""
         if self.process and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
+            terminate_process_tree(self.process)
         self.process = None
 
     def get_stderr(self) -> str:

@@ -14,13 +14,18 @@ from agentarts.sdk.runtime.model import (
     USER_ID_HEADER,
 )
 from fastapi import HTTPException
+from huaweicloudsdkcore.exceptions.exceptions import SdkException
 from starlette.requests import Request
 
 from app.auth import (
+    ensure_jwt_workload_access_token,
     extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
+    prepare_jwt_workload_access_token,
+    require_jwt_workload_access_token,
 )
+from app.settings import Settings
 
 
 def _make_request(headers: dict[str, str] | None = None) -> Request:
@@ -129,59 +134,181 @@ class TestExtractGatewaySessionId:
         assert exc_info.value.status_code == 400
 
 
-class TestExtractWorkloadAccessToken:
-    """Tests for extract_workload_access_token() using SDK ACCESS_TOKEN_HEADER."""
+class TestEnsureJwtWorkloadAccessToken:
+    def test_gateway_wat_wins_without_local_exchange(self) -> None:
+        request = _make_request(
+            {
+                ACCESS_TOKEN_HEADER: " gateway-wat ",
+                "Authorization": "Bearer user-token",
+            }
+        )
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            result = ensure_jwt_workload_access_token(request, wat_required=True)
 
-    def test_stores_token_when_header_present(self) -> None:
-        """Header present with valid token →
-        set_workload_access_token called with token value."""
-        token_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test-token"
-        request = _make_request({ACCESS_TOKEN_HEADER: token_value})
-        with patch(
-            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
-        ) as mock_set:
-            from app.auth import extract_workload_access_token
-            extract_workload_access_token(request)
-            mock_set.assert_called_once_with(token_value)
+        assert result == "gateway-wat"
+        mock_set.assert_called_once_with("gateway-wat")
+        identity_client_cls.assert_not_called()
 
-    def test_sets_none_when_header_missing(self) -> None:
-        """No header → set_workload_access_token called with None."""
+    def test_local_authorization_token_exchanged_for_jwt_mode_wat(self) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            client = identity_client_cls.return_value
+            client.create_workload_access_token.return_value = "local-jwt-wat"
+            result = ensure_jwt_workload_access_token(request, wat_required=True)
+
+        assert result == "local-jwt-wat"
+        identity_client_cls.assert_called_once_with(region="cn-southwest-2")
+        client.create_workload_access_token.assert_called_once_with(
+            "pa-local-jwt-workload",
+            user_token="user-token",
+        )
+        mock_set.assert_called_once_with("local-jwt-wat")
+
+    def test_missing_authorization_token_fails_when_wat_required(self) -> None:
+        request = _make_request({"other-header": "value"})
+        with (
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            ensure_jwt_workload_access_token(request, wat_required=True)
+
+        assert exc_info.value.status_code == 401
+        assert "Authorization user token" in exc_info.value.detail
+        mock_set.assert_called_once_with(None)
+
+    def test_missing_authorization_token_is_best_effort_when_wat_not_required(
+        self,
+    ) -> None:
         request = _make_request({"other-header": "value"})
         with patch(
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
-            from app.auth import extract_workload_access_token
-            extract_workload_access_token(request)
-            mock_set.assert_called_once_with(None)
+            assert prepare_jwt_workload_access_token(request) is None
 
-    def test_sets_none_when_header_empty_string(self) -> None:
-        """Header present but empty string →
-        set_workload_access_token called with None."""
-        request = _make_request({ACCESS_TOKEN_HEADER: ""})
-        with patch(
-            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
-        ) as mock_set:
-            from app.auth import extract_workload_access_token
-            extract_workload_access_token(request)
-            mock_set.assert_called_once_with(None)
+        mock_set.assert_called_once_with(None)
 
-    def test_strips_whitespace_and_stores_token(self) -> None:
-        """Header with surrounding whitespace → stripped token stored."""
-        request = _make_request({ACCESS_TOKEN_HEADER: "  valid-token  "})
-        with patch(
-            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
-        ) as mock_set:
-            from app.auth import extract_workload_access_token
-            extract_workload_access_token(request)
-            mock_set.assert_called_once_with("valid-token")
+    def test_local_wat_exchange_failure_raises_when_wat_required(self) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
 
-    def test_sets_none_when_header_whitespace_only(self) -> None:
-        """Header with whitespace only →
-        set_workload_access_token called with None."""
-        request = _make_request({ACCESS_TOKEN_HEADER: "   "})
-        with patch(
-            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
-        ) as mock_set:
-            from app.auth import extract_workload_access_token
-            extract_workload_access_token(request)
-            mock_set.assert_called_once_with(None)
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+            pytest.raises(SdkException),
+        ):
+            client = identity_client_cls.return_value
+            client.create_workload_access_token.side_effect = SdkException(
+                "workload identity not found"
+            )
+            ensure_jwt_workload_access_token(request, wat_required=True)
+
+        mock_set.assert_called_once_with(None)
+        logger.error.assert_called_once()
+        assert "ensure_local_jwt_workload_identity.py" in str(logger.error.call_args)
+
+    def test_local_wat_exchange_failure_is_best_effort_when_wat_not_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            client = identity_client_cls.return_value
+            client.create_workload_access_token.side_effect = SdkException(
+                "invalid JWT client ID"
+            )
+            result = ensure_jwt_workload_access_token(request, wat_required=False)
+
+        assert result is None
+        mock_set.assert_called_once_with(None)
+        logger.warning.assert_called_once()
+        logger.error.assert_not_called()
+        assert "ensure_local_jwt_workload_identity.py" in str(logger.warning.call_args)
+
+    def test_identity_client_construction_failure_is_best_effort_when_wat_not_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient", side_effect=ValueError("missing creds")),
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            result = prepare_jwt_workload_access_token(request)
+
+        assert result is None
+        mock_set.assert_called_once_with(None)
+        logger.warning.assert_called_once()
+        logger.error.assert_not_called()
+        assert "missing creds" in str(logger.warning.call_args)
+
+    def test_identity_client_construction_failure_raises_when_wat_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient", side_effect=ValueError("missing creds")),
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+            pytest.raises(ValueError, match="missing creds"),
+        ):
+            require_jwt_workload_access_token(request)
+
+        mock_set.assert_called_once_with(None)
+        logger.error.assert_called_once()

@@ -6,9 +6,8 @@ description: >-
   findings into a single cohesive recommendation with Mermaid diagrams, and runs
   an iterative control loop to resolve disagreements and reach consensus.
 mode: all
-model: deepseek/deepseek-v4-pro
 options:
-  reasoningEffort: max
+  reasoningEffort: xhigh
 permission:
   task: allow
   edit: allow
@@ -25,7 +24,7 @@ You facilitate structured, high-quality technical discussions. For every discuss
 
 ```mermaid
 flowchart TD
-    subgraph TOP["Calling Manager / Orchestrator (e.g., personal-assistant-meta-manager)"]
+    subgraph TOP["Calling Manager / Orchestrator (e.g., pa-meta-manager)"]
         YOU["panel-chair<br/>(You: Moderator & Synthesizer)"]
     end
     subgraph PANELISTS["Expert Panelists (parallel ∥)"]
@@ -166,7 +165,7 @@ A successful synthesis requires not just high-level consensus on the direction, 
 
 **Termination**:
 - **Consensus Reached** (At any round) → Proceed to **Step ⑤**.
-- **Max Rounds Exhausted** (No consensus) → Escalate to your **calling Manager/Orchestrator** (e.g., `personal-assistant-meta-manager`) with the full disagreement log, your best-effort compromise, and a summary of the unresolved deadlock.
+- **Max Rounds Exhausted** (No consensus) → Escalate to your **calling Manager/Orchestrator** (e.g., `pa-meta-manager`) with the full disagreement log, your best-effort compromise, and a summary of the unresolved deadlock.
 
 #### Four-Question Gate Evaluation
 Evaluate the proposed solution or code against these four quality gates (synthesizing the panelists' assessments):

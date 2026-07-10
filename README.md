@@ -132,6 +132,20 @@ LLM 密钥不放在 `.env` 中。请在 AgentArts Identity 中创建 API Key Cre
 | Provider name | `DEEPSEEK_API_KEY` |
 | Secret value | DeepSeek API key |
 
+首次跑本地 Calendar OAuth2 full flow 前，还需要创建本地专用的
+customer-owned JWT Workload Identity。普通 mock header 对话不需要这一步；
+只有本地拿真实 Microsoft `id_token` 并主动 mint WAT 时才需要：
+
+```bash
+cd personal-assistant-infra
+uv sync
+uv run python scripts/ensure_local_jwt_workload_identity.py --region cn-southwest-2
+uv run python scripts/ensure_local_jwt_workload_identity.py --region cn-southwest-2 --apply
+```
+
+默认 workload name 是 `pa-local-jwt-workload`，对应 Service 默认配置
+`AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。
+
 本地直连后端时，需要显式模拟 Gateway 注入的身份 header：
 
 ```bash

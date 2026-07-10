@@ -78,6 +78,8 @@ npm run dev
 
 开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过
 Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
+这条路径适合普通聊天、本地 UI 开发和不涉及 Calendar OAuth2 callback relay
+的调试。
 
 确保后端服务已启动：
 
@@ -88,7 +90,34 @@ uv run uvicorn app.main:app --port 8080 --reload
 
 LLM API Key 通过 AgentArts Identity 的 `DEEPSEEK_API_KEY` Credential Provider 注入，不再通过前端或后端环境变量传递。
 
-### 4. 打开浏览器
+### 4. 本地 Calendar OAuth2 full flow
+
+Calendar OAuth2 full flow 需要跑 Pages Functions，因为
+`/auth/callback/m365-calendar` 依赖 Cloudflare Pages BFF 的 HttpOnly cookie relay
+把前一次 `/invocations` 的 `Authorization` / session / user headers 恢复给后端
+callback。普通 `npm run dev` 只启动 Vite，不运行 `functions/`，不能代表线上
+callback 路径。
+
+本地完整测试时，Service `.env` 需要指向 local Pages callback：
+
+```env
+OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar
+```
+
+然后启动本地 Pages runtime：
+
+```bash
+npm run pages:dev:local
+```
+
+该脚本会构建前端，并在 `http://localhost:5173` 启动 Wrangler Pages dev：
+
+```text
+/invocations -> http://localhost:8080/invocations
+/auth/callback/m365-calendar -> http://localhost:8080/auth/oauth2/callback/m365-calendar
+```
+
+### 5. 打开浏览器
 
 访问 `http://localhost:5173` 进入 Web Chat 对话界面。
 
@@ -116,6 +145,8 @@ npm run pages:dev
 ```
 
 该命令先构建 Vite，再通过 Wrangler 启动静态站点与 Pages Functions。
+如果要连接本地 FastAPI Service 跑 Calendar OAuth2 full flow，使用
+`npm run pages:dev:local`。
 
 ### Cloudflare Pages 部署
 
@@ -148,8 +179,11 @@ https://agentarts-personal-assistant.pages.dev
 npx wrangler whoami
 npx wrangler pages project list
 
-# 本地运行静态站点与 Pages Functions
+# 本地运行静态站点与 Pages Functions（默认使用 wrangler.toml vars）
 npm run pages:dev
+
+# 本地运行静态站点与 Pages Functions，并转发到 localhost:8080 Service
+npm run pages:dev:local
 
 # 手动部署 production
 npm run pages:deploy

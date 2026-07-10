@@ -1,265 +1,205 @@
-# Personal Assistant — API 路径与映射
+# Personal Assistant — API 路径映射与命名规则
 
-> 状态：Active | 更新时间：2026-06-27
+> 状态：Active | 更新时间：2026-07-09
 
-本文描述当前 Web Chat、Cloudflare Pages Function、AgentArts Gateway 与
-FastAPI 容器之间的 API path 及映射关系。当前生产对话 API 最终统一收敛到
-容器内的 `POST /invocations`。
+本文以**生产环境 API**为主，回答两个问题：
 
-## 1. 总体映射
+1. **Frontend path、Cloudflare Pages Function、AgentArts Gateway full Runtime
+   path、Backend container path 如何对应。**
+2. **未来新增 API 时，路径、method、namespace 和 schema 字段如何命名。**
 
-```mermaid
-flowchart LR
-    subgraph Browser["Browser / Web Chat"]
-        Client["chat-adapter.ts<br/>POST /invocations"]
-    end
+Local/Vite/Wrangler dev 的特殊路径不混入生产表格，统一放在
+[Local-only Exceptions](#4-local-only-exceptions)。
 
-    subgraph Cloudflare["Cloudflare Pages"]
-        Function["Pages Function<br/>functions/invocations.js<br/>POST /invocations"]
-    end
+## 1. Production 路径对应规则
 
-    subgraph AgentArts["AgentArts"]
-        Gateway["Gateway<br/>POST /runtimes/personal-assistant/invocations"]
-        Container["FastAPI container :8080<br/>POST /invocations"]
-    end
+生产 API 路径必须同时看四个位置：`Frontend path` 是浏览器或外部系统访问的
+public same-origin path；`Cloudflare Function route` 是 Cloudflare Pages
+file-based routing 命中的 Function；`Gateway full Runtime path` 是 AgentArts
+Gateway 对外暴露的完整 Runtime path；`Backend container path` 是 Gateway 去掉
+Runtime prefix 后进入 FastAPI container 的 path。
 
-    Client -->|"same-origin request"| Function
-    Function -->|"rewrite to full Runtime path"| Gateway
-    Gateway -->|"PREFIX_MATCH<br/>strip Runtime prefix"| Container
-    Container -->|"JSON or SSE stream"| Gateway
-    Gateway -->|"stream passthrough"| Function
-    Function -->|"stream passthrough"| Client
-```
-
-生产路径的逐层映射如下：
-
-| 层 | Client 可见 URL/path | 上游目标 | 说明 |
-|----|----------------------|----------|------|
-| Web Chat | `POST /invocations` | Cloudflare Pages Function | Client 使用固定的 same-origin path |
-| Cloudflare Pages Function | `POST /invocations` | `https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations` | Function 文件路径 `functions/invocations.js` 自动映射为 URL path |
-| AgentArts Gateway | `POST /runtimes/personal-assistant/invocations` | Runtime 容器 `:8080/invocations` | Gateway 使用完整 Runtime path 对外提供 ExecuteRuntime API |
-| FastAPI | `POST /invocations` | `AgentHandler` | `stream: true` 返回 SSE；否则返回 JSON |
-
-因此，以下三个 path 指向同一个对话能力，但分别属于不同网络边界：
-
-```text
-Browser:           /invocations
-AgentArts Gateway: /runtimes/personal-assistant/invocations
-FastAPI container: /invocations
-```
-
-## 2. Production Web Chat
-
-### 2.1 URL 构造
-
-`chat-api-client.ts` 固定使用 same-origin `POST /invocations`。
-
-Browser 与 Pages Function 使用相同 origin，因此该请求不会因为访问
-AgentArts Gateway 的跨域地址而产生 CORS preflight。
-
-### 2.2 Pages Function 映射
-
-Cloudflare Pages 按文件系统约定将：
-
-```text
-functions/invocations.js
-```
-
-映射为：
-
-```text
-POST /invocations
-```
-
-Function 不处理 Agent 业务，也不验证 JWT。它执行以下 Proxy 行为：
-
-1. 将请求固定转发到完整 AgentArts Runtime URL。
-2. 仅转发 allowlist 中的 request headers。
-3. 原样转发 request body。
-4. 以 `ReadableStream` 原样透传 JSON 或 SSE response body。
-5. 对 response 设置 `Cache-Control: no-store`。
-6. 上游网络调用失败时返回 HTTP `502`：
-   `{"message":"AgentArts Gateway is unavailable"}`。
-
-转发的 request headers 为：
-
-| Header | 来源 | 用途 |
-|--------|------|------|
-| `Accept` | Web Chat | 请求 `text/event-stream` |
-| `Authorization` | Microsoft Entra ID 登录结果 | 由 AgentArts Gateway 验证 JWT |
-| `Content-Type` | Web Chat | 当前为 `application/json` |
-| `x-hw-agentarts-session-id` | Browser `localStorage` 中的 UUID | 关联 Session 与 LangGraph checkpoint |
-| `X-HW-AgentGateway-User-Id` | Web Chat 从 JWT `sub` 或 `oid` claim 提取 | 向后端传递用户 ID |
-
-其他 headers（例如 `Cookie`）不会转发。
-
-### 2.3 Gateway 映射
-
-AgentArts Gateway 的外部 path 必须包含 Runtime prefix：
-
-```text
-/runtimes/personal-assistant/invocations
-```
-
-Gateway 当前使用 `PREFIX_MATCH`。结论：`/invocations` 是 Gateway policy
-前缀；带 suffix 时，Gateway 去掉 `/runtimes/{runtime_name}/invocations`，
-把 suffix 作为容器内 path。
-
-| Gateway 外部 path | FastAPI 容器内 path |
-|-------------------|---------------------|
-| `/runtimes/{runtime_name}/invocations` | `/invocations` |
-| `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
-| `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
-
-`/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
-
-Gateway 完成 JWT validation，并在转发到容器时注入或提供平台 headers，
-包括：
-
-- `X-HW-AgentGateway-User-Id`
-- `x-hw-agentarts-session-id`
-- `X-HW-AgentGateway-Workload-Access-Token`
-
-错误判别：
-
-- `No matching policy found`：没有命中 AgentArts Gateway policy。
-- `{"detail":"Not Found"}`：请求已进入容器，但 FastAPI 没有匹配到容器内 path。
-
-平台行为细节见
-[`cloud-service/huaweicloud/agentarts.md` §11.7](cloud-service/huaweicloud/agentarts.md#117-gateway-路由路径)。
-
-## 3. FastAPI API
-
-当前 `personal-assistant-service/app/main.py` 定义以下应用入口：
-
-| Method | 容器 path | 请求方 | Production Gateway 可达 | 说明 |
-|--------|-------------|--------|-------------------------|------|
-| `GET` | `/ping` | AgentArts 控制面、本地开发者 | 否 | Liveness health check，返回 `{"status":"ok"}` |
-| `POST` | `/invocations` | Web Chat、AgentArts SDK、其他 AgentArts Client | 是 | 统一对话入口，支持同步 JSON 和 SSE |
-| `GET` | `/auth/oauth2/callback/m365-calendar` | Cloudflare Pages BFF server-side callback forward | 是，通过 BFF direct upstream 或 Gateway full Runtime path | 完成 Calendar Resource Token Auth session binding，并返回 callback result |
-| `GET` | `/invocations/playground` | 开发者 | 是，通过 Gateway full Runtime path | Redirect 到 `/invocations/playground/` |
-| `GET` / WebSocket | `/invocations/playground/*` | Chainlit Browser Client | 是，通过 Gateway full Runtime path | Chainlit Playground 静态资源、HTTP API 与 WebSocket |
-
-### 3.1 Invocation request
-
-```json
-{
-  "message": "你好",
-  "stream": true
-}
-```
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `message` | `string` | 是 | 用户输入；空字符串返回 HTTP `400` |
-| `stream` | `boolean` | 否 | 默认 `false`；为 `true` 时使用 SSE |
-
-### 3.2 Response
-
-同步模式（`stream` 未传或为 `false`）：
-
-```json
-{
-  "response": "..."
-}
-```
-
-流式模式（`stream: true`）返回 `Content-Type: text/event-stream`。当前事件
-payload 包括：
-
-| 字段 | 说明 |
-|------|------|
-| `token` | LLM 流式文本片段 |
-| `system_message` | 不经过 LLM 的系统消息 |
-| `auth_url` / `auth_required` | OAuth 授权提示 |
-| `auth_complete` | OAuth 授权完成提示 |
-| `error` | 流处理错误 |
-| `done` | 流结束标记 |
-
-## 4. Local development 映射
-
-### 4.1 本地 FastAPI
-
-后端直接运行在 `http://localhost:8080`：
-
-```text
-GET  http://localhost:8080/ping
-POST http://localhost:8080/invocations
-GET  http://localhost:8080/invocations/playground
-```
-
-### 4.2 Vite + 本地 FastAPI
-
-本地 `npm run dev` 时，Web Chat 请求：
-
-```text
-http://localhost:5173/invocations
-```
-
-Vite Proxy 映射为：
-
-```text
-http://localhost:8080/invocations
-```
-
-并注入：
-
-```text
-X-HW-AgentGateway-User-Id: dev-user
-```
-
-完整映射为：
+图类型：**Flowchart（四层 API 映射图）**。用于说明请求从 Frontend 到
+Cloudflare Pages Functions、AgentArts Gateway、Backend container 的路径变化。
 
 ```mermaid
 flowchart LR
-    Browser["Browser<br/>POST :5173/invocations"] --> Vite["Vite Proxy"]
-    Vite -->|"same path + dev-user header"| FastAPI["FastAPI<br/>POST :8080/invocations"]
+    FE["Frontend / External Caller<br/>public path"] --> CF["Cloudflare Pages Function<br/>file-based route"]
+    CF --> GW["AgentArts Gateway<br/>/runtimes/personal-assistant/invocations..."]
+    GW --> BE["FastAPI container :8080<br/>container path"]
 ```
 
-Calendar OAuth2 production callback 由 Cloudflare Pages Function BFF 接住，
-server-side 转发到 Service callback API。Vite 本地开发没有 Pages Function，
-因此保留 React fallback shell 调 `/invocations` proxy：
+生产路径映射遵循下表。`{suffix}` 表示追加在 Gateway Runtime root 后面的路径片段，
+不带开头 `/`。新增 production public API 时，必须在这个形态下显式列出，不要靠
+Frontend `/invocations/{suffix}` 作为隐式 contract。
 
-```text
-http://localhost:5173/auth/callback/m365-calendar
--> React fallback shell
--> http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar
--> http://localhost:8080/auth/oauth2/callback/m365-calendar
-```
+| 规则 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
+|------|---------------|--------------------------|---------------------------|------------------------|
+| 对话根入口 | `/invocations` | `functions/invocations.js` | `/runtimes/personal-assistant/invocations` | `/invocations` |
+| 显式 BFF public route | 明确设计的 public path，例如 `/auth/callback/m365-calendar` | 对应的 Pages Function 文件，例如 `functions/auth/callback/m365-calendar.js` | `/runtimes/personal-assistant/invocations/{suffix}` | `/{suffix}` |
 
-## 5. Path 可达性矩阵
+关键约束：
 
-| 场景 | Browser 请求 path | 中间映射 | 最终 FastAPI path | 当前可用 |
-|------|-------------------|----------|-------------------|----------|
-| Cloudflare production | `/invocations` | Pages Function → Gateway full Runtime path | `/invocations` | 是 |
-| Wrangler Pages local preview | `/invocations` | Local Pages Function → production Gateway | `/invocations` | 是，需要有效 JWT |
-| Vite + local Backend | `/invocations` | Vite Proxy → `localhost:8080` | `/invocations` | 是 |
-| Vite + local Calendar OAuth fallback shell | `/auth/callback/m365-calendar` | React fallback shell → Vite `/invocations` proxy | `/auth/oauth2/callback/m365-calendar` | 是 |
-| Cloudflare Calendar OAuth BFF callback | `/auth/callback/m365-calendar` | Pages Function BFF → direct callback upstream 或 Gateway full Runtime path | `/auth/oauth2/callback/m365-calendar` | 是 |
-| Backend direct local | `/invocations` | 无 | `/invocations` | 是 |
-| Backend Playground local | `/invocations/playground` | 无 | `/invocations/playground` | 是 |
-| Gateway direct invocation | `/runtimes/personal-assistant/invocations` | Gateway | `/invocations` | 是，需要有效 JWT |
-| Gateway direct `/invocations` | `/invocations` | 无匹配 policy | — | 否 |
-| Gateway direct Playground | `/runtimes/personal-assistant/invocations/playground` | Gateway `PREFIX_MATCH` | `/invocations/playground` | 是，需要有效 JWT |
-| Cloudflare Pages Playground | `/invocations/playground` | 无对应 Pages Function | — | 否 |
-| Public `/ping` through Gateway | `/runtimes/personal-assistant/ping` | 无匹配 policy | — | 否 |
+- Frontend 不直接访问 AgentArts Gateway domain。
+- Gateway root `/runtimes/personal-assistant/invocations` 对应 Backend
+  `/invocations`。
+- Gateway suffix `/runtimes/personal-assistant/invocations/{suffix}` 对应 Backend
+  `/{suffix}`。
+- Frontend `/invocations/{suffix}` 不作为 production public route。新增 production
+  public API 时必须有独立 Pages Function 文件显式声明。
+- `AGENTARTS_OAUTH_CALLBACK_URL` 不属于 production path mapping；它是 local-only
+  direct upstream override。
 
-## 6. Source of truth 与已知不一致
+## 2. Future API 命名规则
 
-当前 path 映射以以下实现文件为准：
+本节是未来 route review 的默认规则。若外部平台强制 callback、webhook 或 OAuth2
+参数形态，可以例外，但必须在 Production API Instances 表和对应 issue/ADR 中说明原因。
+
+### 2.1 分层命名原则
+
+- `Frontend path` 是长期 public contract，应围绕产品能力和用户语义命名，不暴露
+  `runtime`、`gateway`、`function`、`proxy`、`container` 等实现细节。
+- `Backend container path` 是 Service contract，可以比 public path 更接近协议或实现，
+  但仍需语义稳定。public path 与 backend path 不一致时，必须在映射表中显式记录。
+- `/invocations` 是 AgentArts 对话根入口，只用于用户消息 invocation。不要把无关
+  production public API 挂到 `/invocations/*`；Gateway suffix 可以路由到 backend，
+  但 Cloudflare production public route 必须逐条显式声明。
+- 如果新能力只是 Agent 对话内的 tool 能力，不需要新增 HTTP route；继续通过
+  `POST /invocations` 进入 Agent loop。
+- 普通 first-party 业务数据 API 默认使用 `/api` 前缀，例如 `/api/tasks`、
+  `/api/calendar/events`，避免与 React SPA 页面路由冲突，并方便统一鉴权、日志、
+  缓存和 rate limit。
+- 平台固定入口和浏览器 redirect 型协议入口可以不加 `/api`，例如
+  `POST /invocations`、`GET /auth/callback/m365-calendar`，但必须在映射表中显式记录。
+
+### 2.2 路径格式
+
+- literal path segment 使用 lowercase English + kebab-case，例如
+  `/auth/callback/m365-calendar`、`/api/calendar/events`。
+- collection 使用复数名词；单个资源使用 `{resource_id}` 形式追加在 collection 后：
+  `GET /api/tasks`、`GET /api/tasks/{task_id}`。
+- path parameter 名称在文档和 FastAPI 中使用 Python snake_case，例如 `{task_id}`、
+  `{event_id}`；literal segment 不使用 snake_case。
+- 不使用 trailing slash、文件扩展名或 UI 页面名作为 API contract，例如不要使用
+  `/api/tasks/`、`/api/tasks.json`、`/calendar-callback-page`。
+- provider、协议和行业固定缩写保持常见 lowercase token，例如 `m365`、`oauth2`、
+  `sse`、`github`。
+- query string 用于 filter、pagination、sorting 或外部协议参数，不用于表达资源层级；
+  credential、token、secret 不放在 path 中。
+
+### 2.3 HTTP method 与 action
+
+| 操作意图 | 推荐形态 | 说明 |
+|----------|----------|------|
+| 读取 collection | `GET /api/tasks` | filter/pagination 放 query string |
+| 创建资源 | `POST /api/tasks` | body 描述要创建的资源 |
+| 读取单个资源 | `GET /api/tasks/{task_id}` | path parameter 表示资源 identity |
+| 部分更新 | `PATCH /api/tasks/{task_id}` | 默认优先于 `PUT` |
+| 删除资源 | `DELETE /api/tasks/{task_id}` | 删除语义必须幂等或明确记录非幂等行为 |
+| 非 CRUD command | `POST /api/tasks/{task_id}/complete` | 仅在状态更新无法自然表达时使用 terminal verb |
+| 长任务 | `POST /api/calendar/import-jobs` + `GET /api/calendar/import-jobs/{job_id}` | 避免 `/start-import` 这类动词路径 |
+
+Streaming/SSE 是 response transport，不单独决定路径命名。除现有
+`POST /invocations` 的 `stream` 字段外，新增 streaming API 应优先通过 `Accept`、
+`Content-Type` 或明确的 response media type 表达。
+
+### 2.4 Namespace 建议
+
+| Namespace | 用途 | 示例 |
+|-----------|------|------|
+| `/invocations` | 对话入口，仅保留 `POST /invocations` 主 contract | `POST /invocations` |
+| `/auth/...` | inbound login、OAuth2 callback、委托授权 BFF redirect route | `GET /auth/callback/m365-calendar` |
+| `/api/calendar/...` | 日历资源或日历相关 first-party API | `GET /api/calendar/events` |
+| `/api/mail/...` | 邮件资源或邮件相关 first-party API | `GET /api/mail/messages` |
+| `/api/notes/...` | 笔记资源 | `GET /api/notes` |
+| `/api/tasks/...` | 任务资源 | `GET /api/tasks` |
+| `/api/memory/...` | 用户可见 Memory 管理能力 | `GET /api/memory/items` |
+| `/api/admin/...` | 运维或管理 API；默认不作为 public route 暴露 | `POST /api/admin/reindex-jobs` |
+| `/internal/...` | service-to-service only；禁止通过 Cloudflare production public route 暴露 | `POST /internal/events` |
+
+新增 namespace 前先确认它是否代表长期产品能力，而不是某个 provider 或临时实现。
+例如 Microsoft Graph 是实现细节，public path 应优先叫 `/api/calendar/events` 或
+`/api/mail/messages`，而不是 `/api/microsoft-graph/events`。
+
+### 2.5 Schema 与字段命名
+
+- FastAPI/Pydantic model 使用 PascalCase，并按用途加 `Request`、`Response`、
+  `Event`、`Error` 后缀，例如 `InvocationRequest`、`OAuth2CallbackResponse`。
+- 新增 Personal Assistant first-party HTTP JSON 字段默认使用 Python `snake_case`，
+  例如 `conversation_id`、`client_message_id`、`runtime_status`、`next_cursor`。
+  这里的 HTTP JSON 指 FastAPI/OpenAPI 暴露的 request/response body；它是 Service
+  contract，不随 React component 或 TypeScript UI state 的命名习惯改变。
+- Personal Assistant 自己定义的跨边界 payload 字段统一使用 `snake_case`。这包括
+  HTTP JSON request/response、SSE JSON event，以及浏览器窗口、tab、popup 或组件之间
+  通过 `postMessage` / `BroadcastChannel` 传递的 envelope，例如 `request_id`。
+- Frontend 内部 domain object、component props 或 store state 可以使用 `camelCase`，
+  但转换应放在 API adapter 层完成。
+- 不引入全局 Pydantic `alias_generator` 作为默认行为。若某个新 contract 确实需要
+  偏离 `snake_case`，必须在对应 issue/ADR 中说明原因、调用方和兼容性影响。
+- 已存在 contract 保持兼容，例如 `POST /invocations` 的 `message`、`stream`、
+  `response` 不为了统一命名而重命名。
+- 外部协议或平台传入字段保持对方定义，例如 OAuth2/AgentArts callback query 中的
+  `session_uri`、`custom_state`。
+- Error response 默认使用 FastAPI `detail` contract；若某个 API 需要结构化错误，
+  使用稳定的 `code`、`message`、`details` 字段，并在 OpenAPI 中声明。
+
+### 2.6 新增 API Checklist
+
+新增 production public API 时必须完成：
+
+1. 在对应 issue/Implementation Plan 中说明新增 route 的动机、调用方、认证边界和测试计划。
+2. 按本节规则确定 `Frontend path`、`Cloudflare Function route`、
+   `Gateway full Runtime path`、`Backend container path`。
+3. 在 [Production API Instances](#3-production-api-instances) 表新增一行。
+4. 增加显式 Pages Function 文件；不要用 catch-all route 隐式公开新 API。
+5. 如果修改 FastAPI route 或 request/response schema，运行并提交 `openapi.json` diff：
+   `uv run python scripts/generate_openapi.py`。
+6. 更新受影响的 Service、Client、E2E 测试；涉及 Cloudflare routing 时用 Wrangler
+   preview 或等价方式验证 route 命中行为。
+
+## 3. Production API Instances
+
+| 能力 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
+|------|---------------|--------------------------|---------------------------|------------------------|
+| Web Chat invocation | `POST /invocations` | `functions/invocations.js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
+| Calendar OAuth callback | `GET /auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `GET /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `GET /auth/oauth2/callback/m365-calendar` |
+
+以下 backend paths 不是 production public API entrypoint：
+
+- `GET /ping`：AgentArts 控制面和本地开发 health check，不通过 public Gateway
+  policy 暴露。
+- `GET /invocations/playground`：Chainlit playground，本地/直连调试入口，不作为
+  Cloudflare production public entrypoint。
+
+## 4. Local-only Exceptions
+
+下表只记录本地开发或 Wrangler preview 的特例路径，不参与 production API 映射。
+Vite chat dev 使用 proxy 是为了让浏览器始终请求 `http://localhost:5173/invocations`
+这个同源 path，避免 FastAPI 为本地 `localhost:5173 -> localhost:8080` 跨端口请求
+额外开启 CORS。
+Calendar OAuth callback 的本地 full-flow 测试必须走 local Cloudflare Pages Functions
+（`npm run pages:dev:local`），不走 Vite dev proxy。
+
+| 场景 | Local frontend path | Local proxy / route | Gateway full Runtime path | Backend container path |
+|------|---------------------|---------------------|---------------------------|------------------------|
+| Local Vite chat dev | `POST http://localhost:5173/invocations` | Vite dev proxy | `N/A` | `POST http://localhost:8080/invocations` |
+| Local Pages full-flow callback | `GET http://localhost:5173/auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `AGENTARTS_OAUTH_CALLBACK_URL=http://localhost:8080/auth/oauth2/callback/m365-calendar` | `GET http://localhost:8080/auth/oauth2/callback/m365-calendar` |
+| Backend health check | `GET http://localhost:8080/ping` | direct backend | `N/A` | `GET /ping` |
+| Backend Chainlit playground | `GET http://localhost:8080/invocations/playground` | direct backend | `N/A` | `GET /invocations/playground` |
+
+## 5. Source Of Truth
 
 - Frontend URL 构造：`personal-assistant-client/src/lib/chat/chat-api-client.ts`
-- Vite Proxy：`personal-assistant-client/vite.config.ts`
-- Cloudflare Pages Function：`personal-assistant-client/functions/invocations.js`
+- Vite proxy：`personal-assistant-client/vite.config.ts`
+- Cloudflare Web Chat proxy route：`personal-assistant-client/functions/invocations.js`
+- Cloudflare AgentArts proxy helper：`personal-assistant-client/functions/_shared/agentarts-proxy.js`
+- Cloudflare callback context helper：`personal-assistant-client/functions/_shared/callback-context.js`
+- Cloudflare OAuth callback BFF：`personal-assistant-client/functions/auth/callback/m365-calendar.js`
 - FastAPI routes：`personal-assistant-service/app/main.py`
+- Cloudflare runtime var：`personal-assistant-client/wrangler.toml`
 
-`personal-assistant-service/openapi.json` 是由当前 FastAPI app 自动生成的
-versioned artifact。修改 FastAPI route 或 schema 后，必须在 Service 目录
-重新生成：
+修改 FastAPI route 或 schema 后，必须在 Service 目录重新生成 OpenAPI：
 
 ```bash
 uv run python scripts/generate_openapi.py
 ```
-
-当前流式调用已经合并到 `POST /invocations`，由 request body 的 `stream`
-字段控制；OpenAPI 中不存在独立的 `/invocations/stream`。

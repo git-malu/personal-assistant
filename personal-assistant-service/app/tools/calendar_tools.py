@@ -111,6 +111,21 @@ def _headers(access_token: str) -> dict[str, str]:
     }
 
 
+def _require_calendar_jwt_workload_context() -> None:
+    if AgentArtsRuntimeContext.get_workload_access_token():
+        return
+
+    logger.warning(
+        "Calendar OAuth2 blocked before SDK local fallback "
+        "source=missing_authorization_user_token identity_mode=jwt provider=%s",
+        CALENDAR_PROVIDER,
+    )
+    raise RuntimeError(
+        "Calendar OAuth2 local full flow requires an Authorization user token. "
+        "Enable local Entra login and retry."
+    )
+
+
 def _format_event(event: dict[str, Any]) -> dict[str, Any]:
     organizer = event.get("organizer", {}).get("emailAddress", {})
     location = event.get("location", {})
@@ -173,6 +188,7 @@ async def list_calendar_events(
     limit: int = 20,
 ) -> dict[str, Any]:
     """列出指定时间范围内的 Microsoft 365 日历事件。"""
+    _require_calendar_jwt_workload_context()
     return await _list_calendar_events_authorized(
         start_time=start_time,
         end_time=end_time,
@@ -248,6 +264,7 @@ async def get_calendar_event(
     calendar_id: str = "primary",
 ) -> dict[str, Any]:
     """获取单个 Microsoft 365 日历事件详情。"""
+    _require_calendar_jwt_workload_context()
     return await _get_calendar_event_authorized(
         event_id=event_id,
         calendar_id=calendar_id,
@@ -315,6 +332,7 @@ async def search_calendar_events(
     limit: int = 20,
 ) -> dict[str, Any]:
     """按关键词搜索 Microsoft 365 日历事件。"""
+    _require_calendar_jwt_workload_context()
     return await _search_calendar_events_authorized(
         query=query,
         start_time=start_time,

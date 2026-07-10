@@ -77,7 +77,25 @@ cp .env.example .env
 本地开发填写 `.env`；生产环境在 AgentArts Runtime / CI/CD 注入同名环境变量。
 `app/settings.py` 是内部读取实现，不是需要修改的配置文件。
 
-### 3. 配置 LLM 凭据
+### 3. 配置本地 JWT Workload Identity
+
+本地普通对话可以只用 mock header；如果要跑 Calendar OAuth2 full flow，并让
+Service 使用真实 Microsoft Entra `Authorization: Bearer <id_token>` 主动
+mint JWT-mode WAT，首次本地 setup 需要先创建 customer-owned
+`pa-local-jwt-workload`：
+
+```bash
+cd ../personal-assistant-infra
+uv sync
+uv run python scripts/ensure_local_jwt_workload_identity.py --region cn-southwest-2
+uv run python scripts/ensure_local_jwt_workload_identity.py --region cn-southwest-2 --apply
+```
+
+Service 默认读取
+`AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。不要把它改成
+service-created `agent-personal-assistant`，该 workload 只能被 Gateway 路径使用。
+
+### 4. 配置 LLM 凭据
 
 DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Identity 中创建 API key credential provider：
 
@@ -91,7 +109,7 @@ DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Ident
 模型、Provider 和可选 endpoint override 分别使用 `LLM_MODEL`、`LLM_PROVIDER` 和
 `LLM_BASE_URL`。旧的 `MODEL_*` 环境变量不再支持。
 
-### 4. 启动服务
+### 5. 启动服务
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload \
@@ -102,7 +120,7 @@ Production container 使用 `config/logging.prod.yaml`，将 Uvicorn lifecycle�
 application 和 HTTP completion events 统一输出为常规 stdout console logs。`LOG_LEVEL`
 同时控制全部 logger；request ID 会通过 `X-Request-ID` response header 返回。
 
-### 5. 打开浏览器
+### 6. 打开浏览器
 
 访问 `http://localhost:8080/invocations/playground` 进入 Chainlit 调试界面。API 端点见下方。
 

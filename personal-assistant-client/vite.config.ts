@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
+const serviceProxyTarget =
+  process.env.PA_SERVICE_PROXY_TARGET ?? 'http://localhost:8080'
+
 export default defineConfig({
   test: {
     environment: 'jsdom',
@@ -23,17 +26,17 @@ export default defineConfig({
   server: {
     proxy: {
       '/invocations/auth/oauth2/callback/m365-calendar': {
-        target: 'http://localhost:8080',
+        target: serviceProxyTarget,
         changeOrigin: true,
         rewrite: (proxyPath) => proxyPath.replace(/^\/invocations/, ''),
       },
       '/invocations/playground': {
-        target: 'http://localhost:8080',
+        target: serviceProxyTarget,
         changeOrigin: true,
         ws: true,
       },
       '/invocations': {
-        target: 'http://localhost:8080',
+        target: serviceProxyTarget,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {

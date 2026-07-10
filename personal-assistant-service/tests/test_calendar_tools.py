@@ -256,9 +256,15 @@ async def test_calendar_public_tool_calls_authorized_boundary():
     async def fake_authorized(**kwargs):
         return {"ok": True, "kwargs": kwargs}
 
-    with patch(
-        "app.tools.calendar_tools._list_calendar_events_authorized",
-        side_effect=fake_authorized,
+    with (
+        patch(
+            "app.tools.calendar_tools._list_calendar_events_authorized",
+            side_effect=fake_authorized,
+        ),
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_workload_access_token",
+            return_value="jwt-wat",
+        ),
     ):
         result = await ct.list_calendar_events(
             "2026-06-22T00:00:00",
@@ -268,6 +274,26 @@ async def test_calendar_public_tool_calls_authorized_boundary():
     assert result["ok"] is True
     assert result["kwargs"]["start_time"] == "2026-06-22T00:00:00"
     assert "access_token" not in result["kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_calendar_public_tool_fails_before_sdk_user_id_fallback():
+    with (
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_workload_access_token",
+            return_value=None,
+        ),
+        patch(
+            "app.tools.calendar_tools._list_calendar_events_authorized",
+        ) as authorized,
+        pytest.raises(RuntimeError, match="Authorization user token"),
+    ):
+        await ct.list_calendar_events(
+            "2026-06-22T00:00:00",
+            "2026-06-23T00:00:00",
+        )
+
+    authorized.assert_not_called()
 
 
 @pytest.mark.asyncio

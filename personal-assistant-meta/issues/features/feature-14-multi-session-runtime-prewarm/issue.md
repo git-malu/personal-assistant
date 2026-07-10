@@ -71,6 +71,10 @@ Runtime Session 的做法必须被拆分。
 
 ## 目标
 
+图类型：**Flowchart（系统上下文 / 架构概览图）**。用于说明用户、Web Chat、
+AgentArts Gateway、Runtime Session、Conversation Store 和 LangGraph Checkpoint
+之间的高层关系；不是严格 UML Component Diagram。
+
 ```mermaid
 flowchart LR
     User["用户"] -->|"登录/进入 Chat"| Prewarm["User Runtime Pre-warm"]
@@ -187,6 +191,9 @@ Sandbox Session 不是 Runtime Session，也不是 LangGraph `thread_id`。其�
 
 ## Cardinality 与生命周期
 
+图类型：**ER Diagram（实体关系图）**。用于说明 User、Conversation、
+Runtime Session、Sandbox Session 和 LangGraph Thread 之间的 cardinality。
+
 ```mermaid
 erDiagram
     USER ||--o{ CONVERSATION : owns
@@ -255,6 +262,9 @@ per-user Runtime Session pool；这不改变 Conversation 与 `thread_id` 的 1:
 
 ## 职责边界
 
+图类型：**Flowchart（职责边界 / 概念关系图）**。用于说明 Conversation、
+Runtime Session、LangGraph Thread、Sandbox Session 和 Memory 的职责拆分。
+
 ```mermaid
 flowchart TB
     Conversation["Conversation<br/>标题、列表、所有权、归档状态"]
@@ -297,6 +307,10 @@ Conversation Metadata Store + durable Checkpoint 恢复。
 
 采用 **Conversation-centered orchestration**：所有 durable state 和资源关联均以
 Conversation 为中心，Runtime/Sandbox 只是可替换 lease。
+
+图类型：**Flowchart（目标组件 / orchestration 概览图）**。用于说明
+Conversation API、PostgreSQL、Runtime lifecycle、Invocation Proxy、Agent 和
+Code Interpreter 之间的职责关系。
 
 ```mermaid
 flowchart LR
@@ -375,6 +389,9 @@ Conversation API 是跨设备、跨刷新一致的唯一事实源。
 页面刷新和 Conversation 切换必须走显式 history read path，而不是期待
 `AsyncPostgresSaver` 自动驱动 UI：
 
+图类型：**Sequence Diagram（时序图）**。用于说明页面刷新、Conversation 切换、
+历史消息加载和 Agent state resume 的调用顺序。
+
 ```mermaid
 sequenceDiagram
     participant UI as Web Chat
@@ -413,6 +430,9 @@ Hydration 规则：
 - 新发送消息与 history hydration 并发时必须按 `message_id` 去重并保持稳定顺序。
 
 ### Runtime Session 状态机
+
+图类型：**State Diagram（状态机图）**。用于说明 Runtime Session 从 pre-warm、
+ready、degraded、expired 到 stop/cleanup 的生命周期转换。
 
 ```mermaid
 stateDiagram-v2
@@ -523,6 +543,9 @@ Conversation 与 `thread_id` 保持稳定，也无法恢复旧的 graph state。
 
 ### 用户 Runtime 预热与创建 Conversation
 
+图类型：**Sequence Diagram（时序图）**。用于说明用户进入 Chat 后 Runtime
+pre-warm、lease 查询、fallback 和 New Chat 创建的调用顺序。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
@@ -558,6 +581,9 @@ sequenceDiagram
 ```
 
 ### 发送消息
+
+图类型：**Sequence Diagram（时序图）**。用于说明发送消息时 UI、BFF/Proxy、
+Conversation Store、AgentArts Runtime 和 FastAPI Agent 的调用顺序。
 
 ```mermaid
 sequenceDiagram

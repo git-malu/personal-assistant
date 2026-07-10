@@ -10,6 +10,7 @@ from app.settings import Settings, get_settings
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache(monkeypatch):
+    monkeypatch.delenv("AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME", raising=False)
     monkeypatch.delenv("OAUTH2_CALENDAR_CALLBACK_URL", raising=False)
     monkeypatch.delenv("OAUTH2_CALLBACK_BFF_SECRET", raising=False)
     get_settings.cache_clear()
@@ -28,6 +29,7 @@ def test_defaults(monkeypatch):
     assert settings.llm_agent_bundle_ttl_seconds == 300.0
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
+    assert settings.agent_identity_local_jwt_workload_name == "pa-local-jwt-workload"
     assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
         "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
     )
@@ -112,6 +114,19 @@ def test_calendar_callback_url_can_be_overridden(monkeypatch):
 
     assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
         "http://localhost:5173/auth/callback/m365-calendar"
+    )
+
+
+def test_local_jwt_workload_name_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME",
+        "custom-local-jwt-workload",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.agent_identity_local_jwt_workload_name == (
+        "custom-local-jwt-workload"
     )
 
 

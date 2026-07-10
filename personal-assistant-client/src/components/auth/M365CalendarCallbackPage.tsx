@@ -88,7 +88,7 @@ export default function M365CalendarCallbackPage() {
         setMessage(errorMessage);
         broadcastCalendarOAuthStatus({
           type: "m365-calendar-auth",
-          requestId: callbackState ?? "",
+          request_id: callbackState ?? "",
           provider: CALENDAR_OAUTH_PROVIDER,
           status: "failed",
           message: errorMessage,

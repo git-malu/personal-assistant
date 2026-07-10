@@ -1,6 +1,6 @@
 # DevOps — CI/CD 与基础设施即代码
 
-> 版本：v0.1 | 状态：Draft | 关联文档：`local-development.md`
+> 版本：v0.1 | 状态：Draft | 关联文档：`local-development.md`、`test/test-strategy.md`
 
 ---
 

@@ -99,10 +99,12 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
     calendar_settings,
 ):
     identity_client = MagicMock()
+    identity_client.create_workload_access_token.return_value = "callback-jwt-wat"
     store = FakeOAuth2CallbackStore()
     state = _state(calendar_settings, user_id="state-user")
 
     with (
+        patch("app.auth.IdentityClient", return_value=identity_client),
         patch("app.main.get_settings", return_value=calendar_settings),
         patch("app.main.IdentityClient", return_value=identity_client),
     ):
@@ -124,6 +126,10 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
     assert kwargs["session_uri"] == "urn:uuid:test"
     assert kwargs["user_identifier"].user_token == "callback-user-token"
     assert kwargs["user_identifier"].user_id is None
+    identity_client.create_workload_access_token.assert_called_once_with(
+        "pa-local-jwt-workload",
+        user_token="callback-user-token",
+    )
     assert len(store.begin_calls) == 1
     assert len(store.completed_calls) == 1
 
@@ -134,10 +140,12 @@ async def test_backend_callback_returns_json_for_local_fallback(
     calendar_settings,
 ):
     identity_client = MagicMock()
+    identity_client.create_workload_access_token.return_value = "callback-jwt-wat"
     store = FakeOAuth2CallbackStore()
     state = _state(calendar_settings, user_id="state-user")
 
     with (
+        patch("app.auth.IdentityClient", return_value=identity_client),
         patch("app.main.get_settings", return_value=calendar_settings),
         patch("app.main.IdentityClient", return_value=identity_client),
     ):
@@ -158,7 +166,7 @@ async def test_backend_callback_returns_json_for_local_fallback(
     assert response.headers["content-type"].startswith("application/json")
     assert response.json() == {
         "type": "m365-calendar-auth",
-        "requestId": state,
+        "request_id": state,
         "provider": "m365-calendar-provider",
         "status": "complete",
         "message": "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
@@ -306,6 +314,7 @@ async def test_backend_callback_reports_identity_permission_error(
     calendar_settings,
 ):
     identity_client = MagicMock()
+    identity_client.create_workload_access_token.return_value = "callback-jwt-wat"
     identity_client.complete_resource_token_auth.side_effect = (
         _IdentityPermissionError()
     )
@@ -313,6 +322,7 @@ async def test_backend_callback_reports_identity_permission_error(
     state = _state(calendar_settings, user_id="state-user")
 
     with (
+        patch("app.auth.IdentityClient", return_value=identity_client),
         patch("app.main.get_settings", return_value=calendar_settings),
         patch("app.main.IdentityClient", return_value=identity_client),
     ):

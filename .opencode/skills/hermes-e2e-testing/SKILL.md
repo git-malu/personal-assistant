@@ -150,7 +150,7 @@ Before sending the full E2E test prompt, verify Hermes is functional:
 hermes chat -q "Run: echo 'hermes is working' and report the result." --yolo --quiet --toolsets terminal
 ```
 
-If this fails (exit code ≠ 0 or no output), do not proceed with the full test — report the Hermes availability issue to personal-assistant-manager.
+If this fails (exit code ≠ 0 or no output), do not proceed with the full test — report the Hermes availability issue to pa-e2e-manager.
 
 ## 9. Timeout & Resource Limits
 

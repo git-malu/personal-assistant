@@ -3,7 +3,10 @@ import { chatAdapter, getSessionId, resetSessionId } from "./chat-adapter";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
-import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
+
+type RunMessage = ChatModelRunOptions["messages"][number];
+type UserMessage = Extract<RunMessage, { role: "user" }>;
+type UserMessagePart = UserMessage["content"][number];
 
 // Mock the auth module to control acquireIdTokenSilently behavior
 const { mockAcquireIdTokenSilently, mockClearInboundAuthSession } = vi.hoisted(
@@ -21,8 +24,8 @@ vi.mock("@/lib/auth", () => ({
  * Helper to create a minimal ThreadUserMessage for testing.
  * The adapter only reads role and the first text-type content part.
  */
-function makeUserMessage(query: string): ThreadMessage {
-  const textPart: ThreadUserMessagePart = { type: "text", text: query };
+function makeUserMessage(query: string): UserMessage {
+  const textPart: UserMessagePart = { type: "text", text: query };
   return {
     id: `msg-${Math.random().toString(36).slice(2)}`,
     createdAt: new Date(),
