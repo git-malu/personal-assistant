@@ -16,6 +16,7 @@ import pytest
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
+SERVICE_RUNNER = Path(__file__).resolve().parent / "scripts" / "run_service.py"
 
 
 def _get_uv_path() -> str:
@@ -71,8 +72,8 @@ class ServiceProcess:
             [
                 _get_uv_path(),
                 "run",
-                "uvicorn",
-                "app.main:app",
+                "python",
+                str(SERVICE_RUNNER),
                 "--host",
                 "127.0.0.1",
                 "--port",

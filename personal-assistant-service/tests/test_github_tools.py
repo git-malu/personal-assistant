@@ -33,6 +33,12 @@ def test_github_public_tool_signatures_exclude_access_token():
         assert "access_token" not in inspect.signature(func).parameters, name
 
 
+def test_github_oauth_tool_descriptions_exclude_mcp_routing():
+    for github_tool in gh.GITHUB_TOOLS:
+        assert "end-user OAuth" in github_tool.description
+        assert "GitHub MCP" in github_tool.description
+
+
 @pytest.mark.asyncio
 async def test_list_repositories_returns_structure(monkeypatch):
     async def fake_request(method, path, *, params=None):

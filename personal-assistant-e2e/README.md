@@ -36,4 +36,9 @@ uv run pytest -m full_stack
 uv run pytest -m manual
 ```
 
+Feature 14 的自动化覆盖包括：Playwright 多 Conversation UI；Wrangler Pages Functions、
+FastAPI 与隔离 PostgreSQL schema 的 multi-browser、ownership、Cookie、OAuth snapshot、
+concurrency、SSE 和 delete full-stack 路径。部署后的 Gateway G1 probe 见
+`tests/manual/README.md`。
+
 Service-only 的 `FastAPI TestClient`、`ASGITransport`、配置 contract、tool schema 等测试应放在 `personal-assistant-service/tests/`，不要放入本目录。

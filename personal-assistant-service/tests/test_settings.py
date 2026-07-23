@@ -13,6 +13,13 @@ def clear_settings_cache(monkeypatch):
     monkeypatch.delenv("AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME", raising=False)
     monkeypatch.delenv("OAUTH2_CALENDAR_CALLBACK_URL", raising=False)
     monkeypatch.delenv("OAUTH2_CALLBACK_BFF_SECRET", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_ENABLED", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_AUTH_MODE", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_STS_PROVIDER_NAME", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_STS_AGENCY_SESSION_NAME", raising=False)
+    monkeypatch.delenv("GITHUB_MCP_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIVITY_TOOLS_ENABLED", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -36,6 +43,18 @@ def test_defaults(monkeypatch):
     assert str(settings.graph_base_url).rstrip("/") == (
         "https://graph.microsoft.com/v1.0/me"
     )
+    assert settings.github_mcp_enabled is True
+    assert str(settings.github_mcp_gateway_url).rstrip("/") == (
+        "https://gateway-github-mcp-defaultgw-ha3wenzqga.cn-southwest-2."
+        "huaweicloud-agentarts.com/mcp"
+    )
+    assert settings.github_mcp_auth_mode == "iam"
+    assert settings.github_mcp_sts_provider_name == "github-mcp-gateway"
+    assert (
+        settings.github_mcp_sts_agency_session_name == "personal-assistant-github-mcp"
+    )
+    assert settings.github_mcp_timeout_seconds == 30.0
+    assert settings.github_activity_tools_enabled is True
 
 
 def test_environment_overrides_defaults(monkeypatch):
@@ -102,6 +121,27 @@ def test_graph_base_url_can_be_overridden(monkeypatch):
     assert str(settings.graph_base_url).rstrip("/") == (
         "https://graph.microsoft.com/v1.0/users/current"
     )
+
+
+def test_github_mcp_settings_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("GITHUB_MCP_ENABLED", "true")
+    monkeypatch.setenv("GITHUB_MCP_GATEWAY_URL", "https://example.com/mcp")
+    monkeypatch.setenv("GITHUB_MCP_STS_PROVIDER_NAME", "github-mcp-provider")
+    monkeypatch.setenv(
+        "GITHUB_MCP_STS_AGENCY_SESSION_NAME",
+        "github-mcp-session",
+    )
+    monkeypatch.setenv("GITHUB_MCP_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("GITHUB_ACTIVITY_TOOLS_ENABLED", "false")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.github_mcp_enabled is True
+    assert str(settings.github_mcp_gateway_url).rstrip("/") == "https://example.com/mcp"
+    assert settings.github_mcp_sts_provider_name == "github-mcp-provider"
+    assert settings.github_mcp_sts_agency_session_name == "github-mcp-session"
+    assert settings.github_mcp_timeout_seconds == 12.0
+    assert settings.github_activity_tools_enabled is False
 
 
 def test_calendar_callback_url_can_be_overridden(monkeypatch):

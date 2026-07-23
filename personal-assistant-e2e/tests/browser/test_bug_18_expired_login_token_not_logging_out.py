@@ -52,6 +52,11 @@ class ClientDevProcess:
         self.process = subprocess.Popen(
             command,
             cwd=str(CLIENT_DIR),
+            env={
+                **os.environ,
+                "VITE_ENTRA_CLIENT_ID": "00000000-0000-0000-0000-000000000001",
+                "VITE_ENTRA_TENANT_ID": "common",
+            },
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -197,12 +202,8 @@ def test_bug_18_expired_token_refresh_failure_signs_out_without_invocation(
 
             page.goto(vite_url, timeout=30000)
             page.wait_for_selector("text=Personal Assistant", timeout=15000)
-            page.wait_for_selector("textarea.aui-composer-input", timeout=15000)
-
-            composer = page.locator("textarea.aui-composer-input").first
-            composer.fill("token 已过期后继续聊天")
-            page.keyboard.press("Enter")
-
+            # The Conversation warm-up request performs proactive refresh and
+            # signs out before an Invocation can carry the expired token.
             page.wait_for_selector("text=您的 AI 助手", timeout=15000)
 
             assert invocation_requests == [], (

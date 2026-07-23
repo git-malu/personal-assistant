@@ -229,3 +229,7 @@ __marimo__/
 
 # E2E artifacts (screenshots, temp output)
 **/.files/
+
+# Claude Code local configuration
+/.claude/
+/CLAUDE.md

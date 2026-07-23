@@ -91,6 +91,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: personal-assistant-service/uv.lock
+
+      - name: Run database migrations
+        working-directory: personal-assistant-service
+        env:
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+        run: |
+          test -n "$POSTGRES_DSN" || {
+            echo "::error::POSTGRES_DSN GitHub secret is required"
+            exit 1
+          }
+          uv sync --locked
+          uv run alembic upgrade head
+
       - name: Install AgentArts SDK
         run: |
           pip install agentarts-sdk

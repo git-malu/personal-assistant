@@ -22,20 +22,32 @@ from fastapi.responses import (  # noqa: E402
     StreamingResponse,
 )
 from huaweicloudsdkagentidentity.v1.model import UserIdentifier  # noqa: E402
-from pydantic import (  # noqa: E402
-    BaseModel,
-    Field,
-    StrictBool,
-    ValidationError,
-)
+from pydantic import BaseModel, Field, ValidationError  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 from app.auth import (  # noqa: E402
+    extract_authenticated_user_id,
     extract_authorization_user_token,
     extract_gateway_session_id,
-    extract_gateway_user_id,
     prepare_jwt_workload_access_token,
     require_jwt_workload_access_token,
+)
+from app.conversations.locks import ConversationBusyError  # noqa: E402
+from app.conversations.models import ApiError  # noqa: E402
+from app.conversations.routes import router as conversations_router  # noqa: E402
+from app.database import Database  # noqa: E402
+from app.invocations.models import InvocationRequest, InvocationResponse  # noqa: E402
+from app.invocations.registry import (  # noqa: E402
+    InvocationKey,
+    InvocationRegistry,
+    ReservationResult,
+)
+from app.invocations.service import (  # noqa: E402
+    ArchivedConversationError,
+    DuplicateMessageError,
+    InvocationConversationNotFoundError,
+    InvocationService,
 )
 from app.logging_config import RequestLoggingMiddleware  # noqa: E402
 from app.oauth2_callback_store import OAuth2CallbackStore  # noqa: E402
@@ -49,26 +61,22 @@ from app.settings import get_settings  # noqa: E402
 OAUTH2_CALLBACK_BFF_SECRET_HEADER = "x-pa-oauth2-callback-secret"
 
 
-class InvocationRequest(BaseModel):
-    """Agent invocation request."""
-
-    message: str = Field(description="User message sent to the Agent.")
-    stream: StrictBool = Field(
-        default=False,
-        description="Return a Server-Sent Events stream instead of JSON.",
-    )
-
-
-class InvocationResponse(BaseModel):
-    """Successful non-streaming invocation response."""
-
-    response: str
-
-
 class ErrorResponse(BaseModel):
     """HTTP error response."""
 
     detail: str
+
+
+def _api_error_response(
+    *,
+    status_code: int,
+    code: str,
+    detail: str,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=ApiError(code=code, detail=detail).model_dump(),
+    )
 
 
 class OAuth2CallbackQuery(BaseModel):
@@ -127,13 +135,22 @@ def _parse_invocation_request(body: object) -> InvocationRequest:
         invocation = InvocationRequest.model_validate(body)
     except ValidationError as e:
         errors = e.errors()
-        if any(
-            error["loc"] == ("message",) and error["type"] == "missing"
-            for error in errors
-        ):
-            detail = "message is required"
+        missing_fields = [
+            field
+            for field in ("conversation_id", "client_message_id", "message")
+            if any(
+                error["loc"] == (field,) and error["type"] == "missing"
+                for error in errors
+            )
+        ]
+        if missing_fields:
+            detail = f"{missing_fields[0]} is required"
         elif any(error["loc"] == ("message",) for error in errors):
             detail = "message must be a string"
+        elif any(error["loc"] == ("conversation_id",) for error in errors):
+            detail = "conversation_id must be a UUID"
+        elif any(error["loc"] == ("client_message_id",) for error in errors):
+            detail = "client_message_id must be a UUID"
         elif any(error["loc"] == ("stream",) for error in errors):
             detail = "stream must be a boolean"
         else:
@@ -369,14 +386,18 @@ async def lifespan(app: FastAPI):
     handler = get_agent_handler()
     await handler.startup()
     app.state.agent_handler = handler
+    database = Database(settings.postgres_dsn)
     oauth2_callback_store = OAuth2CallbackStore(settings=settings)
-    await oauth2_callback_store.startup()
-    app.state.oauth2_callback_store = oauth2_callback_store
 
     try:
+        await database.startup()
+        app.state.database = database
+        await oauth2_callback_store.startup()
+        app.state.oauth2_callback_store = oauth2_callback_store
         yield
     finally:
         await oauth2_callback_store.shutdown()
+        await database.shutdown()
         await handler.shutdown()
 
 
@@ -385,7 +406,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.state.invocation_registry = InvocationRegistry()
 app.add_middleware(RequestLoggingMiddleware)
+app.include_router(conversations_router)
 
 
 @app.get("/ping")
@@ -424,6 +447,14 @@ async def ping():
             "model": ErrorResponse,
             "description": "The Accept header excludes the selected response type.",
         },
+        409: {
+            "model": ApiError,
+            "description": "The Conversation cannot accept this Invocation.",
+        },
+        500: {
+            "model": ApiError,
+            "description": "The Invocation failed after execution began.",
+        },
     },
     openapi_extra={
         "requestBody": {
@@ -444,30 +475,7 @@ async def invocations(request: Request):
         raise HTTPException(status_code=400, detail="invalid JSON body") from e
 
     invocation = _parse_invocation_request(body)
-    message = invocation.message
     stream = invocation.stream
-    user_id = extract_gateway_user_id(request)
-    session_id = extract_gateway_session_id(request)
-    # Local chat can continue when HuaweiCloud refuses to exchange the user JWT.
-    prepare_jwt_workload_access_token(request)
-    settings = get_settings()
-    oauth2_state = create_oauth2_state(
-        settings=settings,
-        user_id=user_id,
-        session_id=session_id,
-        provider=settings.m365_calendar_provider_name,
-    )
-    AgentArtsRuntimeContext.set_oauth2_custom_state(oauth2_state)
-    logger.info(
-        "OAuth2 authorization context prepared provider=%s user_id=%s "
-        "gateway_session_id=%s runtime_context_user_id=%s state_prefix=%s",
-        settings.m365_calendar_provider_name,
-        user_id,
-        session_id,
-        AgentArtsRuntimeContext.get_user_id(),
-        _redacted_prefix(oauth2_state),
-    )
-
     mode = "stream" if stream else "sync"
     response_media_type = "text/event-stream" if stream else "application/json"
     if not _accepts_media_type(request.headers.get("accept"), response_media_type):
@@ -476,35 +484,103 @@ async def invocations(request: Request):
             detail=f"Accept header must allow {response_media_type}",
         )
 
+    user_id = extract_authenticated_user_id(request)
+    extract_gateway_session_id(request)
+    # Local chat can continue when HuaweiCloud refuses to exchange the user JWT.
+    prepare_jwt_workload_access_token(request)
+    settings = get_settings()
+    oauth2_state = create_oauth2_state(
+        settings=settings,
+        user_id=user_id,
+        provider=settings.m365_calendar_provider_name,
+    )
+    AgentArtsRuntimeContext.set_oauth2_custom_state(oauth2_state)
+    logger.info(
+        "OAuth2 authorization context prepared provider=%s user_id=%s "
+        "runtime_context_user_id=%s state_prefix=%s",
+        settings.m365_calendar_provider_name,
+        user_id,
+        AgentArtsRuntimeContext.get_user_id(),
+        _redacted_prefix(oauth2_state),
+    )
+
+    database: Database | None = getattr(request.app.state, "database", None)
+    if database is None or not database.available:
+        raise HTTPException(status_code=503, detail="PostgreSQL is not configured")
     handler: AgentHandler = request.app.state.agent_handler
+    invocation_service = InvocationService(database)
+    registry: InvocationRegistry = request.app.state.invocation_registry
+    invocation_key = InvocationKey(
+        user_id=user_id,
+        conversation_id=invocation.conversation_id,
+        client_message_id=invocation.client_message_id,
+    )
+    reservation = registry.reserve(key=invocation_key)
+    if reservation is ReservationResult.CANCELLED:
+        return _api_error_response(
+            status_code=409,
+            code="invocation_cancelled",
+            detail="invocation was cancelled before execution began",
+        )
+    if reservation is ReservationResult.DUPLICATE:
+        return _api_error_response(
+            status_code=409,
+            code="duplicate_message",
+            detail="client_message_id already exists",
+        )
+
+    execution = None
+    try:
+        execution = await invocation_service.prepare(
+            request=invocation,
+            user_id=user_id,
+            handler=handler,
+        )
+    except InvocationConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="conversation not found") from error
+    except ConversationBusyError:
+        return _api_error_response(
+            status_code=409,
+            code="conversation_busy",
+            detail="conversation is busy",
+        )
+    except ArchivedConversationError:
+        return _api_error_response(
+            status_code=409,
+            code="conversation_archived",
+            detail="conversation is archived",
+        )
+    except DuplicateMessageError:
+        return _api_error_response(
+            status_code=409,
+            code="duplicate_message",
+            detail="client_message_id already exists",
+        )
+    finally:
+        if execution is None:
+            registry.discard(key=invocation_key)
+
     started_at = time.perf_counter()
     logger.info("Invocation started mode=%s", mode)
+    registry.register(key=invocation_key, execution=execution)
+
+    async def finalize_execution() -> None:
+        try:
+            await execution.close()
+        finally:
+            registry.unregister(key=invocation_key, execution=execution)
 
     if stream:
 
         async def event_generator():
-            status = "cancelled"
             try:
-                async for sse_data in handler.handle_stream(
-                    message=message,
-                    user_id=user_id,
-                    session_id=session_id,
-                ):
+                async for sse_data in execution.stream_sse():
                     yield sse_data
-                status = "success"
-            except Exception as e:
-                status = "error"
-                logger.error(
-                    "Invocation failed mode=stream duration_ms=%.2f: %s",
-                    (time.perf_counter() - started_at) * 1000,
-                    e,
-                    exc_info=True,
-                )
-                yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
             finally:
+                await finalize_execution()
                 logger.info(
                     "Invocation completed mode=stream status=%s duration_ms=%.2f",
-                    status,
+                    execution.status,
                     (time.perf_counter() - started_at) * 1000,
                 )
 
@@ -516,14 +592,11 @@ async def invocations(request: Request):
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+            background=BackgroundTask(finalize_execution),
         )
 
     try:
-        result = await handler.handle(
-            message=message,
-            user_id=user_id,
-            session_id=session_id,
-        )
+        result = await execution.run_sync()
     except Exception as e:
         logger.error(
             "Invocation failed mode=sync duration_ms=%.2f: %s",
@@ -531,13 +604,19 @@ async def invocations(request: Request):
             e,
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        return _api_error_response(
+            status_code=500,
+            code="invocation_failed",
+            detail="The assistant could not complete this request.",
+        )
+    finally:
+        registry.unregister(key=invocation_key, execution=execution)
 
     logger.info(
         "Invocation completed mode=sync status=success duration_ms=%.2f",
         (time.perf_counter() - started_at) * 1000,
     )
-    return JSONResponse(content=InvocationResponse(response=result).model_dump())
+    return JSONResponse(content=result.model_dump())
 
 
 @app.get(
@@ -593,10 +672,27 @@ async def calendar_oauth2_callback(request: Request):
         )
 
     try:
+        callback_user_id = extract_authenticated_user_id(request)
         state_claims = verify_oauth2_state(
             state,
             settings=settings,
+            expected_user_id=callback_user_id,
             expected_provider=provider,
+        )
+    except HTTPException as e:
+        logger.warning(
+            "Calendar OAuth2 callback identity rejected provider=%s "
+            "state_prefix=%s status_code=%s",
+            provider,
+            _redacted_prefix(state),
+            e.status_code,
+        )
+        return _oauth2_callback_response(
+            request,
+            status="failed",
+            provider=provider,
+            message="登录状态无效，请返回聊天窗口后重新发起日历授权。",
+            state=state,
         )
     except OAuth2StateError as e:
         logger.warning(
@@ -657,11 +753,10 @@ async def calendar_oauth2_callback(request: Request):
         logger.info(
             "Calling Identity complete_resource_token_auth from callback. "
             "provider=%s user_id=%s identity_strategy=user_token "
-            "session_uri_prefix=%s state_session_id=%s",
+            "session_uri_prefix=%s",
             provider,
             state_claims.user_id,
             _redacted_prefix(callback.session_uri),
-            state_claims.session_id,
         )
         client = IdentityClient(region=get_region())
         # The BFF only protects transport to the callback endpoint. Signed state

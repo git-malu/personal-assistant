@@ -1,225 +1,228 @@
-"""Service integration coverage extracted from mixed Web Chat E2E tests."""
+"""Web Chat behavior at the Feature 14 invocation boundary."""
 
+from __future__ import annotations
+
+import base64
 import json
-import sys
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from agentarts.sdk.runtime.model import SESSION_HEADER, USER_ID_HEADER
+from agentarts.sdk.runtime.model import ACCESS_TOKEN_HEADER, SESSION_HEADER
+from alembic import command
+from alembic.config import Config
 
-SERVICE_DIR = Path(__file__).resolve().parents[2]
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
+from app.conversations.store import ConversationRecord, ConversationStore
+from app.database import Database
+from app.invocations.models import AgentEventType, AgentStreamEvent
+from app.main import app
+from tests.conftest import PostgresTestSchema
 
-pytestmark = [pytest.mark.integration]
+SERVICE_ROOT = Path(__file__).resolve().parents[2]
+WEB_CHAT_USER_ID = "web-chat-user"
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 class FakeWebChatAgentHandler:
-    """Predictable Agent handler for Web Chat invocation route tests."""
+    """Emit structured Agent events while echoing Web Chat input."""
 
-    def __init__(self, tokens: list[str] | None = None):
-        self._tokens = tokens or ["Hello", " world", "!"]
-        self.handle_calls: list[tuple[str, str, str | None]] = []
-        self.stream_calls: list[tuple[str, str, str | None]] = []
-
-    async def handle(
-        self,
-        message: str,
-        user_id: str = "anonymous",
-        session_id: str | None = None,
-    ) -> str:
-        self.handle_calls.append((message, user_id, session_id))
-        return "".join(self._tokens)
+    def __init__(self) -> None:
+        self.stream_calls: list[tuple[str, str, str]] = []
 
     async def handle_stream(
         self,
         message: str,
-        user_id: str = "anonymous",
-        session_id: str | None = None,
-    ):
-        self.stream_calls.append((message, user_id, session_id))
-        for token in self._tokens:
-            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
-        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
+        user_id: str,
+        conversation_id: str,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        self.stream_calls.append((message, user_id, conversation_id))
+        yield AgentStreamEvent(
+            type=AgentEventType.CUSTOM,
+            data={"status": "working"},
+        )
+        yield AgentStreamEvent(type=AgentEventType.TOKEN, token="Assistant: ")
+        yield AgentStreamEvent(type=AgentEventType.TOKEN, token=message)
 
 
-@pytest.fixture
-def fake_handler():
-    return FakeWebChatAgentHandler()
+@dataclass
+class WebChatTestContext:
+    client: httpx.AsyncClient
+    handler: FakeWebChatAgentHandler
+    store: ConversationStore
 
 
-@pytest.fixture
-async def web_chat_client(fake_handler):
-    from app.main import app
+def _token(subject: str) -> str:
+    def encode(value: dict[str, str]) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
-    had_previous_handler = hasattr(app.state, "agent_handler")
-    previous_handler = getattr(app.state, "agent_handler", None)
-    app.state.agent_handler = fake_handler
-
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
-
-    if had_previous_handler:
-        app.state.agent_handler = previous_handler
-    elif hasattr(app.state, "agent_handler"):
-        delattr(app.state, "agent_handler")
+    return f"{encode({'alg': 'RS256'})}.{encode({'sub': subject})}.signature"
 
 
-def _headers(session_id: str = "web-chat-session") -> dict[str, str]:
+def _headers(subject: str = WEB_CHAT_USER_ID) -> dict[str, str]:
     return {
-        USER_ID_HEADER: "web-chat-user",
-        SESSION_HEADER: session_id,
+        "Authorization": f"Bearer {_token(subject)}",
+        ACCESS_TOKEN_HEADER: "gateway-workload-token",
+        SESSION_HEADER: "web-chat-runtime-session",
     }
 
 
-async def _post_stream(client: httpx.AsyncClient, message: str) -> httpx.Response:
-    return await client.post(
+@pytest.fixture
+async def web_chat_context(
+    postgres_schema: PostgresTestSchema,
+) -> AsyncIterator[WebChatTestContext]:
+    config = Config(str(SERVICE_ROOT / "alembic.ini"))
+    config.attributes["dsn"] = postgres_schema.dsn
+    config.attributes["schema"] = postgres_schema.name
+    command.upgrade(config, "head")
+
+    database = Database(
+        postgres_schema.dsn,
+        connection_kwargs={"options": f"-csearch_path={postgres_schema.name}"},
+    )
+    await database.startup()
+    handler = FakeWebChatAgentHandler()
+    previous_database = getattr(app.state, "database", None)
+    previous_handler = getattr(app.state, "agent_handler", None)
+    app.state.database = database
+    app.state.agent_handler = handler
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        try:
+            yield WebChatTestContext(
+                client=client,
+                handler=handler,
+                store=ConversationStore(database),
+            )
+        finally:
+            if previous_database is None:
+                delattr(app.state, "database")
+            else:
+                app.state.database = previous_database
+            if previous_handler is None:
+                delattr(app.state, "agent_handler")
+            else:
+                app.state.agent_handler = previous_handler
+            await database.shutdown()
+
+
+async def _post_stream(
+    context: WebChatTestContext,
+    conversation: ConversationRecord,
+    message: str,
+    *,
+    client_message_id: UUID,
+) -> httpx.Response:
+    return await context.client.post(
         "/invocations",
-        json={"message": message, "stream": True},
-        headers={
-            **_headers(),
-            "Accept": "text/event-stream",
+        json={
+            "conversation_id": str(conversation.id),
+            "client_message_id": str(client_message_id),
+            "message": message,
+            "stream": True,
         },
+        headers={**_headers(), "Accept": "text/event-stream"},
     )
 
 
-def _sse_events(body: str) -> list[dict]:
-    events = []
-    for line in body.splitlines():
-        if line.startswith("data: "):
-            events.append(json.loads(line[6:]))
-    return events
+def _sse_payloads(response: httpx.Response) -> list[dict[str, object]]:
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
 
 
-class TestWebChatInvocationStreaming:
-    """Service-owned SSE contract for Web Chat invocations."""
+@pytest.mark.asyncio
+async def test_web_chat_preserves_unicode_and_structured_agent_events(
+    web_chat_context: WebChatTestContext,
+):
+    context = web_chat_context
+    conversation = await context.store.create(
+        user_id=WEB_CHAT_USER_ID,
+        title="Unicode",
+    )
+    client_message_id = uuid4()
+    message = "你好，Web Chat！\nSpecial: +@#$% & = ?"
 
-    @pytest.mark.asyncio
-    async def test_sse_content_type_and_headers(self, web_chat_client):
-        resp = await _post_stream(web_chat_client, "Hello")
+    response = await _post_stream(
+        context,
+        conversation,
+        message,
+        client_message_id=client_message_id,
+    )
 
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
-        assert resp.headers.get("cache-control") == "no-cache"
-        assert resp.headers.get("connection") == "keep-alive"
-        assert resp.headers.get("x-accel-buffering") == "no"
+    assert response.status_code == 200
+    assert _sse_payloads(response) == [
+        {"status": "working"},
+        {"token": "Assistant: ", "done": False},
+        {"token": message, "done": False},
+        {"token": "", "done": True},
+    ]
+    assert context.handler.stream_calls == [
+        (message, WEB_CHAT_USER_ID, str(conversation.id))
+    ]
 
-    @pytest.mark.asyncio
-    async def test_sse_data_prefix_format(self, web_chat_client):
-        resp = await _post_stream(web_chat_client, "Hello")
-
-        assert resp.status_code == 200
-        lines = [line for line in resp.text.splitlines() if line.strip()]
-        assert lines
-        assert all(line.startswith("data: ") for line in lines)
-        assert all("token" in json.loads(line[6:]) for line in lines)
-
-    @pytest.mark.asyncio
-    async def test_sse_streams_multiple_events(self, web_chat_client, fake_handler):
-        resp = await _post_stream(web_chat_client, "Hello")
-
-        assert resp.status_code == 200
-        events = _sse_events(resp.text)
-        tokens = [event for event in events if not event.get("done")]
-        done_events = [event for event in events if event.get("done")]
-        assert len(tokens) >= 1
-        assert len(done_events) == 1
-        assert done_events[0]["done"] is True
-        assert fake_handler.stream_calls == [
-            ("Hello", "web-chat-user", "web-chat-session")
-        ]
-
-    @pytest.mark.asyncio
-    async def test_sse_with_chinese_text(self, web_chat_client):
-        resp = await _post_stream(web_chat_client, "你好世界")
-
-        assert resp.status_code == 200
-        assert _sse_events(resp.text)
-
-    @pytest.mark.asyncio
-    async def test_sse_with_special_characters(self, web_chat_client):
-        resp = await _post_stream(web_chat_client, "Hello!+@#$%")
-
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
+    owned_conversation = await context.store.get(
+        user_id=WEB_CHAT_USER_ID,
+        conversation_id=conversation.id,
+    )
+    assert owned_conversation is not None
+    assert owned_conversation.user_id == WEB_CHAT_USER_ID
+    persisted = await context.store.list_messages(
+        conversation_pk=owned_conversation.pk,
+        after_sequence=None,
+        limit=10,
+    )
+    assert [item.role for item in persisted] == ["user", "assistant"]
+    assert persisted[0].client_message_id == client_message_id
+    assert persisted[0].content.parts[0].text == message
+    assert persisted[1].content.parts[0].text == f"Assistant: {message}"
+    assert persisted[1].reply_to_message_id == persisted[0].id
 
 
-class TestWebChatMultiTurnConversation:
-    """Sequential request behavior belongs to the Service invocation contract."""
+@pytest.mark.asyncio
+async def test_web_chat_multi_turn_messages_persist_in_order(
+    web_chat_context: WebChatTestContext,
+):
+    context = web_chat_context
+    conversation = await context.store.create(
+        user_id=WEB_CHAT_USER_ID,
+        title="Multi-turn",
+    )
+    messages = ["Hello", "How are you?", "What time is it?"]
+    client_message_ids = [uuid4() for _ in messages]
 
-    @pytest.mark.asyncio
-    async def test_multiple_messages_return_valid_sse(
-        self, web_chat_client, fake_handler
+    for message, client_message_id in zip(messages, client_message_ids, strict=True):
+        response = await _post_stream(
+            context,
+            conversation,
+            message,
+            client_message_id=client_message_id,
+        )
+        assert response.status_code == 200
+        assert _sse_payloads(response)[-1] == {"token": "", "done": True}
+
+    assert context.handler.stream_calls == [
+        (message, WEB_CHAT_USER_ID, str(conversation.id)) for message in messages
+    ]
+    persisted = await context.store.list_messages(
+        conversation_pk=conversation.pk,
+        after_sequence=None,
+        limit=10,
+    )
+    assert [item.role for item in persisted] == ["user", "assistant"] * len(messages)
+    for index, (message, client_message_id) in enumerate(
+        zip(messages, client_message_ids, strict=True)
     ):
-        messages = ["Hello", "How are you?", "What time is it?"]
-
-        for message in messages:
-            resp = await _post_stream(web_chat_client, message)
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers.get("content-type", "")
-            assert len(_sse_events(resp.text)) >= 2
-
-        assert [call[0] for call in fake_handler.stream_calls] == messages
-
-    @pytest.mark.asyncio
-    async def test_rapid_successive_requests_no_crash(self, web_chat_client):
-        for i in range(10):
-            resp = await _post_stream(web_chat_client, f"msg{i}")
-            assert resp.status_code == 200
-
-
-class TestWebChatInvocationValidation:
-    """Validation behavior for invalid Web Chat invocation payloads."""
-
-    @pytest.mark.asyncio
-    async def test_empty_message_returns_400(self, web_chat_client, fake_handler):
-        resp = await web_chat_client.post(
-            "/invocations",
-            json={"message": "", "stream": True},
-            headers=_headers(),
-        )
-
-        assert resp.status_code == 400
-        assert resp.json()["detail"] == "message is required"
-        assert fake_handler.stream_calls == []
-
-    @pytest.mark.asyncio
-    async def test_missing_message_returns_400(self, web_chat_client, fake_handler):
-        resp = await web_chat_client.post(
-            "/invocations",
-            json={"stream": True},
-            headers=_headers(),
-        )
-
-        assert resp.status_code == 400
-        assert resp.json()["detail"] == "message is required"
-        assert fake_handler.stream_calls == []
-
-    @pytest.mark.asyncio
-    async def test_whitespace_only_message_returns_400(
-        self, web_chat_client, fake_handler
-    ):
-        resp = await web_chat_client.post(
-            "/invocations",
-            json={"message": "  ", "stream": True},
-            headers=_headers(),
-        )
-
-        assert resp.status_code == 400
-        assert resp.json()["detail"] == "message is required"
-        assert fake_handler.stream_calls == []
-
-    @pytest.mark.asyncio
-    async def test_service_does_not_crash_after_invalid_request(self, web_chat_client):
-        bad_resp = await web_chat_client.post(
-            "/invocations",
-            json={"message": "", "stream": True},
-            headers=_headers(),
-        )
-        good_resp = await _post_stream(web_chat_client, "valid")
-
-        assert bad_resp.status_code == 400
-        assert good_resp.status_code == 200
-        assert _sse_events(good_resp.text)
+        user_message = persisted[index * 2]
+        assistant_message = persisted[index * 2 + 1]
+        assert user_message.client_message_id == client_message_id
+        assert user_message.content.parts[0].text == message
+        assert assistant_message.content.parts[0].text == f"Assistant: {message}"
+        assert assistant_message.reply_to_message_id == user_message.id

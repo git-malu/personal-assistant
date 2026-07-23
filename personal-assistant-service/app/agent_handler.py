@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -7,7 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from deepagents import create_deep_agent
+from psycopg import OperationalError
 
+from app.invocations.models import AgentEventType, AgentStreamEvent
 from app.llm_config import get_model
 from app.settings import Settings, get_settings
 from app.tools import build_tools
@@ -49,8 +50,9 @@ SYSTEM_PROMPT = """\
 
 ## 核心能力
 
-### GitHub 工具 ✅
-你可以帮用户处理 GitHub 仓库内容，包括：
+### GitHub 用户 OAuth 仓库工具 ✅
+这组工具使用当前 Web Chat 用户的 GitHub OAuth 授权，只用于仓库目录、文件、代码搜索
+和加星：
 - **github_list_repositories**: 列出当前用户可访问的仓库
 - **github_list_repo_contents**: 查看仓库目录或文件列表
 - **github_get_file_content**: 获取仓库文件内容
@@ -58,12 +60,43 @@ SYSTEM_PROMPT = """\
 - **github_star_repository**: 给指定 GitHub 仓库点赞/加星（敏感操作 —
   必须先向用户展示预览并获得 explicit 确认）
 
-当用户询问 GitHub 仓库、代码、文件、搜索内容或点赞/加星时，优先使用 GitHub 工具。
+仅当用户请求仓库目录、文件内容、代码搜索或加星，并且没有指定 GitHub MCP、平台账号
+或工程活动时间范围时，才使用这组用户 OAuth 工具。
+如果请求明确包含“GitHub MCP”“MCP 能力”“平台 GitHub”“工程活动”，或要求按时间范围
+查询 commit、PR、issue、review、comment，禁止调用上述用户 OAuth GitHub 工具；即使 MCP
+返回 warning，也不要自动回退到 OAuth 工具。
 如果工具返回授权链接，请先把链接发给用户并说明需要完成授权。
 当用户想给仓库点赞/加星时，先调用 github_star_repository(confirm=False)
 获取预览展示给用户，用户确认后必须调用
 github_star_repository(confirm=True, owner=..., repo=...)
 才会实际点赞。
+
+### GitHub MCP 活动数据源✅
+如果工具列表中存在以下 GitHub MCP 工具，你可以帮用户查看平台 GitHub
+account 经 AgentArts MCP Gateway 读取到的工程活动：
+- **github_search_activity**: 按时间范围查询 commits、PR、issues、
+  reviews/comments 等活动
+- **github_get_activity_detail**: 查看单个 commit、PR、issue、review 或 comment
+  活动详情；review/comment 需要传入搜索结果中的 parent_external_id
+
+这些工具只读，不代表当前 Web Chat 用户的 GitHub OAuth 授权；不要声称它们读取的是
+用户个人 GitHub 账号。不要要求用户提供 PAT、WAT、STS、AK/SK、签名 header 或 token。
+GitHub MCP 请求只允许调用 github_search_activity 和 github_get_activity_detail；
+这两个工具使用平台凭据，不需要用户完成 GitHub OAuth 授权，也不得改用
+github_list_repositories、
+github_list_repo_contents、github_get_file_content、github_search_code 或
+github_star_repository。
+所有返回结果中的 identity_scope="platform" 均表示数据来自平台账号。
+结果可以包含该平台身份有权查看的其他作者活动；查询 PR 审阅讨论时同时包含
+comment 和 review，conversation comment 使用 comment，review submission 使用 review。
+当用户询问 feature-17、GitHub MCP、Report activity、仓库活动、最近提交、PR 或 issue
+动态时，优先使用 github_search_activity。
+仓库 URL 先规范化为 owner/repo；日期范围转换为带时区的 ISO 8601 起止时间。
+当用户要求“一条一条”“逐条”或“依次”测试 MCP 能力时，必须串行调用，不要并行：
+Agent-facing MCP 能力只包含两个，先调用一次 github_search_activity（可在一次请求中包含
+五种 event type），再从实际搜索结果中选择一条事件调用一次
+github_get_activity_detail。除非用户明确要求继续分页，否则只测试当前页；不得虚构第三项
+能力，也不得声称要并行运行三个 OAuth 读操作。
 
 ### Gitee（码云）工具 ✅
 你可以帮用户处理 Gitee 代码仓库，包括：
@@ -259,49 +292,75 @@ class AgentHandler:
 
     @staticmethod
     def _is_recoverable_checkpointer_error(error: Exception) -> bool:
+        if not isinstance(error, OperationalError):
+            return False
         message = str(error).lower()
         return any(
             marker in message for marker in _RECOVERABLE_CHECKPOINTER_ERROR_MARKERS
         )
 
-    async def _restart_checkpointer(self) -> None:
-        """Reopen persistent Checkpointer resources after stale DB connections."""
+    async def _restart_checkpointer(self, stale_checkpointer: Any) -> None:
+        """Reopen persistent Checkpointer resources after a stale connection."""
         if not self._uses_persistent_checkpointer():
             return
 
-        logger.warning("Restarting persistent Checkpointer after stale connection")
-        await self.shutdown()
+        # A concurrent request may have already replaced the failed connection.
+        # Serialize the identity check and restart with Agent Bundle publication.
+        async with self._bundle_lock:
+            if self.checkpointer is not stale_checkpointer:
+                return
+
+            logger.warning("Restarting persistent Checkpointer after stale connection")
+            await self.shutdown()
+            await self.startup()
+
+    async def _ensure_checkpointer_ready(self, config: dict) -> None:
+        """Recover a stale PostgreSQL connection before Agent execution starts."""
         await self.startup()
-        await self.invalidate_agent_bundle()
+        if not self.settings.postgres_dsn:
+            return
 
-    @staticmethod
-    def _build_config(user_id: str, session_id: str | None = None) -> dict:
-        """构造 LangGraph config，thread_id = {user_id}:{session_id}。
+        stale_checkpointer = self.checkpointer
+        if stale_checkpointer is None:
+            raise RuntimeError("Checkpointer is not initialized")
 
-        user-scoped thread_id 从源头防止跨用户 session 泄露。
-        """
-        sid = session_id or "default"
-        return {"configurable": {"thread_id": f"{user_id}:{sid}"}}
-
-    async def handle(
-        self, message: str, user_id: str = "anonymous", session_id: str | None = None
-    ) -> str:
-        """Invoke the agent synchronously and return the final response."""
-        config = self._build_config(user_id, session_id)
         try:
-            result = await self._ainvoke_once(message, config)
-        except Exception as e:
-            if not (
-                self._uses_persistent_checkpointer()
-                and self._is_recoverable_checkpointer_error(e)
-            ):
+            await stale_checkpointer.aget_tuple(config)
+        except Exception as error:
+            if not self._is_recoverable_checkpointer_error(error):
                 raise
+
             logger.warning(
-                "Recoverable Checkpointer error during sync invocation; retrying once",
+                "Recoverable Checkpointer error during preflight; retrying once",
                 exc_info=True,
             )
-            await self._restart_checkpointer()
-            result = await self._ainvoke_once(message, config)
+            await self._restart_checkpointer(stale_checkpointer)
+
+            checkpointer = self.checkpointer
+            if checkpointer is None:
+                raise RuntimeError("Checkpointer is not initialized") from error
+            await checkpointer.aget_tuple(config)
+
+    @staticmethod
+    def _build_config(user_id: str, conversation_id: str) -> dict:
+        """构造 LangGraph config，thread_id = {user_id}:{conversation_id}。
+
+        user-scoped thread_id 从源头防止跨用户 Conversation 泄露。
+        """
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        return {"configurable": {"thread_id": f"{user_id}:{conversation_id}"}}
+
+    async def handle(
+        self,
+        message: str,
+        user_id: str,
+        conversation_id: str,
+    ) -> str:
+        """Invoke the agent synchronously and return the final response."""
+        config = self._build_config(user_id, conversation_id)
+        await self._ensure_checkpointer_ready(config)
+        result = await self._ainvoke_once(message, config)
 
         messages = result.get("messages", [])
         if not messages:
@@ -318,47 +377,20 @@ class AgentHandler:
     async def handle_stream(
         self,
         message: str,
-        user_id: str = "anonymous",
-        session_id: str | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream tokens and custom events via LangGraph stream_mode."""
-        config = self._build_config(user_id, session_id)
-        emitted = False
-
-        try:
-            try:
-                async for sse in self._stream_once(message, config):
-                    emitted = True
-                    yield sse
-            except Exception as e:
-                if (
-                    emitted
-                    or not self._uses_persistent_checkpointer()
-                    or not self._is_recoverable_checkpointer_error(e)
-                ):
-                    raise
-                logger.warning(
-                    "Recoverable Checkpointer error before stream output; "
-                    "retrying once",
-                    exc_info=True,
-                )
-                await self._restart_checkpointer()
-                async for sse in self._stream_once(message, config):
-                    yield sse
-
-            # ── 3. Signal completion ──
-            yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
-
-        except GeneratorExit:
-            raise
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+        user_id: str,
+        conversation_id: str,
+    ) -> AsyncGenerator[AgentStreamEvent, None]:
+        """Yield structured, non-terminal Agent events."""
+        config = self._build_config(user_id, conversation_id)
+        await self._ensure_checkpointer_ready(config)
+        async for event in self._stream_once(message, config):
+            yield event
 
     async def _stream_once(
         self,
         message: str,
         config: dict,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[AgentStreamEvent, None]:
         agent = await self.get_agent()
         async for chunk in agent.astream(
             {"messages": [{"role": "user", "content": message}]},
@@ -372,12 +404,15 @@ class AgentHandler:
                 if isinstance(data, dict) and (
                     data.get("auth_required") or data.get("auth_complete")
                 ):
-                    yield (
-                        f"event: auth_card\n"
-                        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    yield AgentStreamEvent(
+                        type=AgentEventType.AUTH_CARD,
+                        data=data,
                     )
                 else:
-                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    yield AgentStreamEvent(
+                        type=AgentEventType.CUSTOM,
+                        data=data,
+                    )
 
             # ── 2. Token streaming (LLM output only, skip tool results) ──
             elif mode == "messages":
@@ -386,8 +421,8 @@ class AgentHandler:
                 if getattr(token_chunk, "type", None) == "tool":
                     continue
                 token = getattr(token_chunk, "content", "") or ""
-                if token:
-                    payload = json.dumps(
-                        {"token": token, "done": False}, ensure_ascii=False
+                if isinstance(token, str) and token:
+                    yield AgentStreamEvent(
+                        type=AgentEventType.TOKEN,
+                        token=token,
                     )
-                    yield f"data: {payload}\n\n"

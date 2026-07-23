@@ -32,36 +32,8 @@ class OAuth2CallbackStore:
         self._postgres_dsn = settings.postgres_dsn
 
     async def startup(self) -> None:
-        """Create the PostgreSQL table used for callback idempotency."""
-        if not self._postgres_dsn:
-            return
-
-        async with await psycopg.AsyncConnection.connect(
-            self._postgres_dsn,
-            autocommit=True,
-        ) as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS oauth2_callback_states (
-                    nonce TEXT PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    status TEXT NOT NULL
-                        CHECK (status IN ('active', 'completed')),
-                    expires_at TIMESTAMPTZ NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    completed_at TIMESTAMPTZ
-                )
-                """
-            )
-            await conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_oauth2_callback_states_expires_at
-                ON oauth2_callback_states (expires_at)
-                """
-            )
+        """Keep lifecycle symmetry; Alembic owns application schema setup."""
+        return None
 
     async def shutdown(self) -> None:
         """Keep lifecycle symmetry with other app resources."""
@@ -90,11 +62,10 @@ class OAuth2CallbackStore:
                     nonce,
                     provider,
                     user_id,
-                    session_id,
                     status,
                     expires_at
                 )
-                VALUES (%s, %s, %s, %s, 'active', to_timestamp(%s))
+                VALUES (%s, %s, %s, 'active', to_timestamp(%s))
                 ON CONFLICT (nonce) DO NOTHING
                 RETURNING status
                 """,
@@ -102,7 +73,6 @@ class OAuth2CallbackStore:
                     claims.nonce,
                     claims.provider,
                     claims.user_id,
-                    claims.session_id,
                     claims.exp,
                 ),
             )

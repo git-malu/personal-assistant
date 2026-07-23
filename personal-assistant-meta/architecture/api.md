@@ -1,6 +1,6 @@
 # Personal Assistant — API 路径映射与命名规则
 
-> 状态：Active | 更新时间：2026-07-09
+> 状态：Active | 更新时间：2026-07-15
 
 本文以**生产环境 API**为主，回答两个问题：
 
@@ -107,7 +107,8 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 
 | Namespace | 用途 | 示例 |
 |-----------|------|------|
-| `/invocations` | 对话入口，仅保留 `POST /invocations` 主 contract | `POST /invocations` |
+| `/invocations` | AgentArts Runtime 对话执行入口 | `POST /invocations` |
+| `/api/conversations/...` | Conversation、Message history 与 Conversation-scoped commands | `GET /api/conversations/{conversation_id}/messages`、`POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` |
 | `/auth/...` | inbound login、OAuth2 callback、委托授权 BFF redirect route | `GET /auth/callback/m365-calendar` |
 | `/api/calendar/...` | 日历资源或日历相关 first-party API | `GET /api/calendar/events` |
 | `/api/mail/...` | 邮件资源或邮件相关 first-party API | `GET /api/mail/messages` |
@@ -126,7 +127,7 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 - FastAPI/Pydantic model 使用 PascalCase，并按用途加 `Request`、`Response`、
   `Event`、`Error` 后缀，例如 `InvocationRequest`、`OAuth2CallbackResponse`。
 - 新增 Personal Assistant first-party HTTP JSON 字段默认使用 Python `snake_case`，
-  例如 `conversation_id`、`client_message_id`、`runtime_status`、`next_cursor`。
+  例如 `conversation_id`、`client_message_id`、`next_cursor`。
   这里的 HTTP JSON 指 FastAPI/OpenAPI 暴露的 request/response body；它是 Service
   contract，不随 React component 或 TypeScript UI state 的命名习惯改变。
 - Personal Assistant 自己定义的跨边界 payload 字段统一使用 `snake_case`。这包括
@@ -140,8 +141,11 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
   `response` 不为了统一命名而重命名。
 - 外部协议或平台传入字段保持对方定义，例如 OAuth2/AgentArts callback query 中的
   `session_uri`、`custom_state`。
-- Error response 默认使用 FastAPI `detail` contract；若某个 API 需要结构化错误，
-  使用稳定的 `code`、`message`、`details` 字段，并在 OpenAPI 中声明。
+- Error response 默认使用 FastAPI `detail` contract；需要机器分支的冲突使用
+  `{"code":"...","detail":"..."}` 并在 OpenAPI 声明。Feature 14 的稳定 code 为
+  `conversation_busy`、`conversation_archived`、`duplicate_message`、
+  `invocation_cancelled` 和 `invocation_failed`。`invocation_cancelled` 仅用于 cancellation
+  command 抢先到达后，原 `POST /invocations` 迟到的竞态路径。
 
 ### 2.6 新增 API Checklist
 
@@ -162,7 +166,29 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 | 能力 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
 |------|---------------|--------------------------|---------------------------|------------------------|
 | Web Chat invocation | `POST /invocations` | `functions/invocations.js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
+| Invocation cancellation | `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | `functions/api/conversations/[conversation_id]/invocations/[client_message_id]/cancel.js` | `POST /runtimes/personal-assistant/invocations/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | same public path |
+| Conversation list/create | `GET/POST /api/conversations` | `functions/api/conversations.js` | `GET/POST /runtimes/personal-assistant/invocations/api/conversations` | `GET/POST /api/conversations` |
+| Conversation get/update/delete | `GET/PATCH/DELETE /api/conversations/{conversation_id}` | `functions/api/conversations/[conversation_id].js` | same suffix under Runtime invocation root | same public path |
+| Conversation messages | `GET /api/conversations/{conversation_id}/messages` | `functions/api/conversations/[conversation_id]/messages.js` | same suffix under Runtime invocation root | same public path |
 | Calendar OAuth callback | `GET /auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `GET /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `GET /auth/oauth2/callback/m365-calendar` |
+| Logout Cookie cleanup | `POST /auth/logout` | `functions/auth/logout.js` | `N/A` | `N/A` |
+
+Conversation rows describe the implemented BFF/Service target paths. Their deployed Gateway
+GET/POST/PATCH/DELETE routing and resolver Session header pass-through remain G1 pending；旧 probe
+只证明 suffix rewrite 基础能力，不能替代 Feature 14 method/header probe。
+
+`POST /invocations` request body：
+
+```json
+{
+  "conversation_id": "6ee32f02-4c87-4c16-bcc8-cc69277ee42f",
+  "client_message_id": "d18b81bc-b6ba-4c9f-91fd-b773a7815eb9",
+  "message": "帮我看看明天的日程",
+  "stream": true
+}
+```
+
+API 不返回 `runtime_session_id`、`runtime_status` 或 lease 状态。
 
 以下 backend paths 不是 production public API entrypoint：
 
@@ -183,6 +209,8 @@ Calendar OAuth callback 的本地 full-flow 测试必须走 local Cloudflare Pag
 | 场景 | Local frontend path | Local proxy / route | Gateway full Runtime path | Backend container path |
 |------|---------------------|---------------------|---------------------------|------------------------|
 | Local Vite chat dev | `POST http://localhost:5173/invocations` | Vite dev proxy | `N/A` | `POST http://localhost:8080/invocations` |
+| Local Vite Conversation dev | `GET/POST/PATCH/DELETE http://localhost:5173/api/conversations...` | Vite dev proxy | `N/A` | `http://localhost:8080/api/conversations...` |
+| Local Pages full flow | `/invocations`、`/api/conversations...`、`/auth/logout` | Wrangler Pages Functions，`PA_ENV=local` | `N/A` | `http://localhost:8080` 对应 path |
 | Local Pages full-flow callback | `GET http://localhost:5173/auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `AGENTARTS_OAUTH_CALLBACK_URL=http://localhost:8080/auth/oauth2/callback/m365-calendar` | `GET http://localhost:8080/auth/oauth2/callback/m365-calendar` |
 | Backend health check | `GET http://localhost:8080/ping` | direct backend | `N/A` | `GET /ping` |
 | Backend Chainlit playground | `GET http://localhost:8080/invocations/playground` | direct backend | `N/A` | `GET /invocations/playground` |
@@ -193,9 +221,14 @@ Calendar OAuth callback 的本地 full-flow 测试必须走 local Cloudflare Pag
 - Vite proxy：`personal-assistant-client/vite.config.ts`
 - Cloudflare Web Chat proxy route：`personal-assistant-client/functions/invocations.js`
 - Cloudflare AgentArts proxy helper：`personal-assistant-client/functions/_shared/agentarts-proxy.js`
+- Cloudflare Runtime Cookie resolver：`personal-assistant-client/functions/_shared/runtime-session.js`
 - Cloudflare callback context helper：`personal-assistant-client/functions/_shared/callback-context.js`
 - Cloudflare OAuth callback BFF：`personal-assistant-client/functions/auth/callback/m365-calendar.js`
-- FastAPI routes：`personal-assistant-service/app/main.py`
+- Cloudflare Conversation routes：`personal-assistant-client/functions/api/conversations*.js`
+- Cloudflare logout：`personal-assistant-client/functions/auth/logout.js`
+- Client Conversation adapter：`personal-assistant-client/src/lib/conversations/api.ts`
+- FastAPI Invocation route：`personal-assistant-service/app/main.py`
+- FastAPI Conversation routes：`personal-assistant-service/app/conversations/routes.py`
 - Cloudflare runtime var：`personal-assistant-client/wrangler.toml`
 
 修改 FastAPI route 或 schema 后，必须在 Service 目录重新生成 OpenAPI：

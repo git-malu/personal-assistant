@@ -18,7 +18,7 @@ function buildCallbackContextCookie(name, value) {
   ].join("; ");
 }
 
-function buildCallbackContextCookies(request) {
+function buildCallbackContextCookies(request, runtimeSessionId) {
   const cookies = [
     buildCallbackContextCookie(
       CALLBACK_AUTH_COOKIE,
@@ -26,11 +26,7 @@ function buildCallbackContextCookies(request) {
     ),
     buildCallbackContextCookie(
       CALLBACK_SESSION_COOKIE,
-      request.headers.get("x-hw-agentarts-session-id"),
-    ),
-    buildCallbackContextCookie(
-      CALLBACK_USER_COOKIE,
-      request.headers.get("X-HW-AgentGateway-User-Id"),
+      runtimeSessionId,
     ),
   ];
   return cookies.filter(Boolean);
@@ -55,8 +51,12 @@ export function buildExpiredCallbackContextCookies() {
   ];
 }
 
-export function applyCallbackContextCookies(headers, request) {
-  const cookies = buildCallbackContextCookies(request);
+export function applyCallbackContextCookies(
+  headers,
+  request,
+  runtimeSessionId,
+) {
+  const cookies = buildCallbackContextCookies(request, runtimeSessionId);
   if (!cookies.length) return;
 
   for (const cookie of cookies) {
@@ -80,13 +80,16 @@ export function getCallbackContextFromCookies(request) {
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rawValue] = part.trim().split("=");
     if (!rawKey) continue;
-    cookies[rawKey] = decodeURIComponent(rawValue.join("="));
+    try {
+      cookies[rawKey] = decodeURIComponent(rawValue.join("="));
+    } catch {
+      // Ignore malformed or unrelated browser cookies without breaking OAuth.
+    }
   }
 
   return {
     authorization: cookies[CALLBACK_AUTH_COOKIE],
     sessionId: cookies[CALLBACK_SESSION_COOKIE],
-    userId: cookies[CALLBACK_USER_COOKIE],
   };
 }
 
@@ -97,8 +100,5 @@ export function applyCallbackContextHeaders(headers, request) {
   }
   if (context.sessionId) {
     headers.set("x-hw-agentarts-session-id", context.sessionId);
-  }
-  if (context.userId) {
-    headers.set("X-HW-AgentGateway-User-Id", context.userId);
   }
 }

@@ -8,6 +8,9 @@ import inspect
 import sys
 from unittest.mock import patch
 
+import pytest
+
+from app.settings import Settings
 from app.tools import build_tools
 
 
@@ -66,6 +69,47 @@ class TestBuildTools:
             assert name in result_names, (
                 f"Expected {name} in build_tools() result, got {result_names}"
             )
+
+    @pytest.mark.parametrize(
+        ("source_enabled", "facade_enabled", "registered"),
+        [
+            (False, False, False),
+            (False, True, False),
+            (True, False, False),
+            (True, True, True),
+        ],
+    )
+    def test_build_tools_github_activity_requires_both_switches(
+        self,
+        source_enabled: bool,
+        facade_enabled: bool,
+        registered: bool,
+    ) -> None:
+        settings = Settings(
+            _env_file=None,
+            github_mcp_enabled=source_enabled,
+            github_activity_tools_enabled=facade_enabled,
+        )
+
+        with patch("app.tools.get_settings", return_value=settings):
+            result = build_tools()
+
+        result_names = {_tool_name(t) for t in result}
+        agent_tool_names = {
+            "github_search_activity",
+            "github_get_activity_detail",
+        }
+        internal_source_names = {
+            "github_mcp_resolve_identity",
+            "github_mcp_list_repositories",
+            "github_mcp_search_activity",
+            "github_mcp_get_detail",
+        }
+        if registered:
+            assert agent_tool_names.issubset(result_names)
+        else:
+            assert agent_tool_names.isdisjoint(result_names)
+        assert internal_source_names.isdisjoint(result_names)
 
     def test_build_tools_includes_gitee_tools(self) -> None:
         """UT-TI-06: build_tools() includes Gitee tools."""
@@ -126,6 +170,29 @@ class TestBuildTools:
         assert not missing, f"Missing expected OAuth2 tools: {sorted(missing)}"
 
         for name in oauth2_tool_names:
+            params = set(_tool_param_names(registered[name]))
+            assert params.isdisjoint(credential_params), (
+                f"{name} exposes credential params: "
+                f"{sorted(params & credential_params)}"
+            )
+
+    def test_build_tools_github_activity_schemas_exclude_credentials(self) -> None:
+        """Feature 17 Agent tools do not expose credential parameters."""
+        credential_params = {"access_token", "api_key", "authorization", "sts"}
+        settings = Settings(
+            _env_file=None,
+            github_mcp_enabled=True,
+            github_activity_tools_enabled=True,
+        )
+
+        with patch("app.tools.get_settings", return_value=settings):
+            tools = build_tools()
+
+        registered = {_tool_name(t): t for t in tools}
+        for name in {
+            "github_search_activity",
+            "github_get_activity_detail",
+        }:
             params = set(_tool_param_names(registered[name]))
             assert params.isdisjoint(credential_params), (
                 f"{name} exposes credential params: "

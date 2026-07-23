@@ -11,8 +11,6 @@ from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from typing import Any
 
-from agentarts.sdk.runtime.model import SESSION_HEADER
-
 from app.settings import get_settings
 
 SERVICE_NAME = "personal-assistant"
@@ -21,7 +19,6 @@ REQUEST_ID_HEADER = b"x-request-id"
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 _request_id: ContextVar[str | None] = ContextVar("log_request_id", default=None)
-_session_id: ContextVar[str | None] = ContextVar("log_session_id", default=None)
 
 try:
     from opentelemetry import trace
@@ -55,11 +52,10 @@ class RuntimeLevelFilter(logging.Filter):
 
 
 class ContextFilter(logging.Filter):
-    """Attach request, session, and OpenTelemetry correlation fields."""
+    """Attach request and OpenTelemetry correlation fields."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = _request_id.get()
-        record.session_id = _session_id.get()
         record.trace_id, record.span_id = _trace_context()
         return True
 
@@ -82,7 +78,6 @@ class JsonFormatter(logging.Formatter):
     _OPTIONAL_FIELDS = {
         "event.name": "event_name",
         "request.id": "request_id",
-        "session.id": "session_id",
         "trace_id": "trace_id",
         "span_id": "span_id",
         "http.request.method": "http_method",
@@ -158,9 +153,7 @@ class RequestLoggingMiddleware:
             return
 
         request_id = _request_identifier(scope)
-        session_id = _header_value(scope, SESSION_HEADER.lower().encode("latin-1"))
         request_token: Token[str | None] = _request_id.set(request_id)
-        session_token: Token[str | None] = _session_id.set(session_id)
         started_at = time.perf_counter()
         status_code = 500
         completed = False
@@ -189,7 +182,6 @@ class RequestLoggingMiddleware:
                 status = "success" if status_code < 400 else "error"
                 self._log_completion(scope, status_code, started_at, status)
         finally:
-            _session_id.reset(session_token)
             _request_id.reset(request_token)
 
     def _log_completion(

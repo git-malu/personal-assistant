@@ -1,44 +1,54 @@
 import { acquireIdTokenSilently, clearInboundAuthSession } from "@/lib/auth";
 import { useAuthStore } from "@/stores/auth-store";
-import { extractUserIdFromToken, isTokenExpiringSoon } from "./jwt";
-import { getSessionId } from "./session";
+import { isTokenExpiringSoon } from "./jwt";
 
 const AUTH_REQUIRED_MESSAGE = "Authentication required. Please sign in.";
+const CANCELLATION_TIMEOUT_MS = 15_000;
 
-function applyTokenHeaders(
-  headers: Record<string, string>,
-  idToken: string,
-): void {
-  headers.Authorization = `Bearer ${idToken}`;
-  delete headers["X-HW-AgentGateway-User-Id"];
-  const userId = extractUserIdFromToken(idToken);
-  if (userId) {
-    headers["X-HW-AgentGateway-User-Id"] = userId;
+export class ChatApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly detail?: string,
+  ) {
+    super(message);
+    this.name = "ChatApiError";
   }
 }
 
-export function buildHeaders(idToken: string | null): Record<string, string> {
+export function buildHeaders(
+  idToken: string | null,
+  accept = "text/event-stream",
+): Record<string, string> {
   const headers: Record<string, string> = {
-    Accept: "text/event-stream",
+    Accept: accept,
     "Content-Type": "application/json",
-    "x-hw-agentarts-session-id": getSessionId(),
   };
   if (idToken) {
-    applyTokenHeaders(headers, idToken);
+    headers.Authorization = `Bearer ${idToken}`;
   }
   return headers;
 }
 
 function sendChatRequest(
   query: string,
+  conversationId: string,
+  clientMessageId: string,
   abortSignal: AbortSignal,
   headers: Record<string, string>,
 ): Promise<Response> {
   return fetch("/invocations", {
     method: "POST",
     headers,
-    body: JSON.stringify({ message: query, stream: true }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      client_message_id: clientMessageId,
+      message: query,
+      stream: true,
+    }),
     signal: abortSignal,
+    credentials: "same-origin",
   });
 }
 
@@ -57,33 +67,73 @@ export async function getRequestToken(): Promise<string | null> {
   return idToken;
 }
 
+async function readResponseDetail(
+  response: Response,
+): Promise<{ code?: string; detail?: string }> {
+  try {
+    const body = (await response.json()) as {
+      code?: unknown;
+      detail?: unknown;
+    };
+    return {
+      code: typeof body.code === "string" ? body.code : undefined,
+      detail: typeof body.detail === "string" ? body.detail : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function throwResponseError(response: Response): Promise<never> {
   if (response.status === 401 || response.status === 403) {
     await clearInboundAuthSession();
     throw new Error(AUTH_REQUIRED_MESSAGE);
   }
-  throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+
+  const { code, detail } = await readResponseDetail(response);
+  if (response.status === 409 && code === "conversation_busy") {
+    throw new ChatApiError(
+      "This conversation is already processing a message. Try again when it finishes.",
+      response.status,
+      code,
+      detail,
+    );
+  }
+  if (
+    response.status === 409 &&
+    code === "duplicate_message"
+  ) {
+    throw new ChatApiError(
+      "This message was already received. Conversation history is being refreshed.",
+      response.status,
+      code,
+      detail,
+    );
+  }
+
+  throw new ChatApiError(
+    detail ?? `Chat API error: ${response.status} ${response.statusText}`,
+    response.status,
+    code,
+    detail,
+  );
 }
 
 export async function invokeChat(
   query: string,
+  conversationId: string,
+  clientMessageId: string,
   abortSignal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   const idToken = await getRequestToken();
   const headers = buildHeaders(idToken);
-  let response = await sendChatRequest(query, abortSignal, headers);
-
-  if ((response.status === 401 || response.status === 403) && idToken) {
-    const freshToken = await acquireIdTokenSilently();
-    if (!freshToken) {
-      await clearInboundAuthSession();
-      throw new Error(AUTH_REQUIRED_MESSAGE);
-    }
-
-    useAuthStore.getState().setIdToken(freshToken);
-    applyTokenHeaders(headers, freshToken);
-    response = await sendChatRequest(query, abortSignal, headers);
-  }
+  const response = await sendChatRequest(
+    query,
+    conversationId,
+    clientMessageId,
+    abortSignal,
+    headers,
+  );
 
   if (!response.ok) {
     await throwResponseError(response);
@@ -92,4 +142,32 @@ export async function invokeChat(
     throw new Error("No response body");
   }
   return response.body;
+}
+
+export async function cancelChat(
+  conversationId: string,
+  clientMessageId: string,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    CANCELLATION_TIMEOUT_MS,
+  );
+  try {
+    const idToken = await getRequestToken();
+    const response = await fetch(
+      `/api/conversations/${encodeURIComponent(conversationId)}/invocations/${encodeURIComponent(clientMessageId)}/cancel`,
+      {
+        method: "POST",
+        headers: buildHeaders(idToken, "application/json"),
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      await throwResponseError(response);
+    }
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }

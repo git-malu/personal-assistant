@@ -17,6 +17,8 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.0.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
     "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
+    "langchain-mcp-adapters>=0.3.0",
 ]
 
 [tool.ruff.lint]
@@ -41,10 +43,12 @@ markers = [
     "contract: stable API, configuration, logging, or tool schema contracts",
     "regression: service regression tests for fixed bugs",
     "slow: tests that take longer than 5 seconds",
+    "postgres: tests that require a disposable PostgreSQL schema",
 ]
 
 [dependency-groups]
 dev = [
+    "alembic>=1.14.0",
     "ruff>=0.11.0",
     "httpx>=0.28.1",
     "pytest>=9.0.3",

@@ -25,7 +25,7 @@ Personal Assistant 开发计划。Feature 按依赖关系持续演进，已完�
 | [10a](feature-10-outbound-email-obs/issue.md) | Outbound Email — Microsoft 365 邮件处理 | 邮件工具（Microsoft Graph API）+ AgentArts Identity SDK `@require_access_token` | Feature 1, 4 | ✅ 已实现 |
 | 10b | Outbound OBS 文件查询（STS） | 拆分为独立 issue，待 Feature 8 完成后创建 | Feature 1, 4, 8 | [Planned] |
 | [11](feature-11-github-workflow-terraform-deploy/issue.md) | GitHub Workflow + Terraform 自动化部署 | CI/CD 流水线（GitHub Actions + CDKTF + docker buildx），Client（OBS+CDN）+ Service（AgentArts）自动部署 | Feature 1, 1.1, 1.2, 9 | backlog |
-| [14](feature-14-multi-session-runtime-prewarm/issue.md) | Web Chat 多 Conversation 管理与 Runtime 预热 | Conversation sidebar、切换/归档、`sessions-start` pre-warm、`sessions-stop` lifecycle | Feature 13, Session Checkpoint, Feature 4, Feature 1.2 | backlog |
+| [14](feature-14-multi-session-runtime-prewarm/issue.md) | Web Chat 多 Conversation 管理与 Runtime 提前唤醒 | Conversation sidebar、切换/归档/永久删除、BFF HttpOnly Runtime Cookie、Conversation list application-level warm-up；不接入 Session lifecycle/lease | Feature 13, Session Checkpoint, Feature 4, Feature 1.2 | backlog |
 | [15](feature-15-calendar-agentarts-full-oauth2/issue.md) | Calendar Tool 使用 AgentArts 完整 OAuth2 流程 | Microsoft 365 日历只读工具 + `complete_resource_token_auth` session binding 示范 | Feature 10a, Feature on-auth-url, Feature 4 | backlog |
 | [16](backlog/feature-16-inbound-auth-common/issue.md) | Inbound Auth 切换到 Microsoft Entra common | Web Chat 使用 `common` 登录，AGIG / AgentArts Gateway 直接验证多租户 Microsoft JWT | Feature 4, AGIG common issuer template support | blocked |
 

@@ -122,7 +122,12 @@ def test_vite_serves_spa_and_proxies_invocations(dev_stack):
 
         proxied = client.post(
             f"{dev_stack['vite_url']}/invocations",
-            json={"message": "", "stream": True},
+            json={
+                "conversation_id": "0190e9fe-82b4-7000-8000-000000000001",
+                "client_message_id": "0190e9fe-82b4-7000-8000-000000000002",
+                "message": "",
+                "stream": True,
+            },
             headers={
                 "Accept": "text/event-stream",
                 "x-hw-agentarts-session-id": "full-stack-proxy-session",

@@ -105,7 +105,14 @@ flowchart LR
 
 > 完整部署操作手册见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)。
 
-### 3.3 注意事项
+### 3.3 跨端 API 兼容发布
+
+Frontend 与 Service deployment workflows 保持独立。新增跨端 API 时使用 additive
+Service-first rollout：先独立部署并验证 Service endpoint，再独立部署使用该能力的
+Frontend。Client 必须容忍短暂版本错配，不把 endpoint 404 变成不可恢复的聊天错误。
+该发布顺序是单次 contract change 的兼容策略，不构成 workflow 间的永久依赖。
+
+### 3.4 注意事项
 
 - AgentArts 部署需要 ARM64 镜像。CI Runner 必须是 ARM64 机器或使用 QEMU 模拟（`docker buildx`）
 - SWR 不支持 OCI 镜像格式。Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`
@@ -232,8 +239,8 @@ flowchart LR
 
 `.github/workflows/deploy-infra.yml` 不在 `main` push 后自动 apply。Apply 必须
 由操作者手动 dispatch，并以已 review 的 plan 为依据。`pa-terraform-state`
-继续保留，为未来 RDS、IAM、VPC、EIP 等 HuaweiCloud resources 提供共享
-state。
+保存 PostgreSQL RDS、VPC/Subnet 引用、Security Group、EIP 和 Agent Identity
+OAuth helper 等 HuaweiCloud resources 的共享 state。
 
 ---
 
@@ -244,4 +251,4 @@ state。
 | Layer 0 — Cloudflare Frontend | Pages + Pages Function | GitHub Actions + Wrangler | 每次 Client 变更 |
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
-| Layer 3 — 基础资源 | OpenTofu + HCL 空基线，State 存储在 OBS | `tofu plan` + 手动 dispatch apply | 首次创建 + 偶尔变更 |
+| Layer 3 — 基础资源 | OpenTofu + HCL 管理 RDS、网络、安全组、EIP 与 OAuth helper，State 存储在 OBS | `tofu plan` + 手动 dispatch apply | 首次创建 + 偶尔变更 |

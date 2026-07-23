@@ -23,10 +23,10 @@ class OAuth2StateClaims:
     """Verified OAuth2 state claims."""
 
     user_id: str
-    session_id: str
     provider: str
     nonce: str
     exp: int
+    session_id: str | None = None
 
 
 _COMPLETED_NONCES: dict[str, int] = {}
@@ -37,7 +37,6 @@ def create_oauth2_state(
     *,
     settings: Settings,
     user_id: str,
-    session_id: str,
     provider: str,
     now: float | None = None,
 ) -> str:
@@ -45,7 +44,6 @@ def create_oauth2_state(
     issued_at = int(now if now is not None else time.time())
     claims = {
         "user_id": user_id,
-        "session_id": session_id,
         "provider": provider,
         "nonce": secrets.token_urlsafe(16),
         "exp": issued_at + settings.oauth2_pending_auth_ttl_seconds,
@@ -74,12 +72,15 @@ def verify_oauth2_state(
 
     try:
         raw_claims = _b64decode_json(payload)
+        legacy_session_id = raw_claims.get("session_id")
+        if legacy_session_id is not None:
+            legacy_session_id = _required_str(raw_claims, "session_id")
         claims = OAuth2StateClaims(
             user_id=_required_str(raw_claims, "user_id"),
-            session_id=_required_str(raw_claims, "session_id"),
             provider=_required_str(raw_claims, "provider"),
             nonce=_required_str(raw_claims, "nonce"),
             exp=int(raw_claims["exp"]),
+            session_id=legacy_session_id,
         )
     except (KeyError, TypeError, ValueError) as e:
         raise OAuth2StateError("invalid OAuth2 state claims") from e

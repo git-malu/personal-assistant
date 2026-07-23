@@ -1,6 +1,6 @@
 # Web Chat Inbound Auth Lifecycle
 
-> 状态：Draft | 范围：Web Chat Inbound Auth | 关联：`frontend_architecture.md`、`ADR/ADR-007-identity-provider.md`
+> 状态：Active | 更新时间：2026-07-15 | 范围：Web Chat Inbound Auth | 关联：`frontend_architecture.md`、`ADR/ADR-007-identity-provider.md`
 
 本文描述 Web Chat Inbound Auth lifecycle 的当前架构：MSAL、Zustand `auth-store`、ID Token、silent refresh、AuthGuard、LandingPage、ChatPage 以及 `/invocations` 请求之间如何协作。
 
@@ -16,7 +16,7 @@ Web Chat 的 Inbound Auth 负责回答一个问题：浏览器端什么时候可
 - 请求 `/invocations` 前必须携带当前可用的 ID Token。
 - ID Token 临近过期时优先 silent refresh，用户无感续期。
 - token 已过期且无法 refresh 时，不发送旧 token，进入 signed-out 状态。
-- `/invocations` 返回 401/403 时最多执行一次 refresh + retry，避免请求循环。
+- `/invocations` 返回 401/403 时清理登录态，不自动重放可能已到达 Service 的 POST。
 - 页面认证状态与 token 状态保持一致：没有可用 ID Token 时不显示 ChatPage。
 
 ---
@@ -61,7 +61,7 @@ flowchart TB
 | `useAuthStore` | 保存当前可用于请求的 `idToken`，以及初始化是否完成的 `hydrated` |
 | `AuthGuard` | 只处理 MSAL transition loading，例如 Startup、HandleRedirect |
 | `App.tsx` | 决定显示 LandingPage 还是 ChatPage |
-| `chat-api-client.ts` | 发送 `/invocations` 前做 token 检查、silent refresh、401/403 retry |
+| `chat-api-client.ts` | 所有业务请求前做 token 检查/silent refresh；401/403 fail closed，不 retry Invocation POST |
 | `LandingPage` | signed-out 状态入口，用户可重新触发登录 |
 | `ChatPage` | signed-in 状态入口，包含 assistant-ui 对话运行时 |
 
@@ -78,10 +78,10 @@ stateDiagram-v2
     SignedOut --> MsalRedirect: 用户点击登录
     MsalRedirect --> Hydrating: Entra redirect 返回
 
-    SignedIn --> Refreshing: idToken 即将过期\n或 /invocations 返回 401/403
+    SignedIn --> Refreshing: idToken 即将过期
     Refreshing --> SignedIn: silent refresh 成功\n更新 idToken
     Refreshing --> SignedOut: silent refresh 失败\nclearInboundAuthSession()
-    SignedIn --> SignedOut: 401/403 retry 后仍失败\nclearInboundAuthSession()
+    SignedIn --> SignedOut: 业务请求返回 401/403\nclearInboundAuthSession()，不 retry POST
 ```
 
 状态含义：
@@ -183,49 +183,36 @@ flowchart TB
 - 过期、临近过期、无法解析的 ID Token 都视为需要 refresh。
 - refresh 成功时，请求 header 使用新 token。
 - refresh 失败时，不发送旧 token。
-- `Authorization` 与 `X-HW-AgentGateway-User-Id` 必须来自同一个最终 token；替换 token 时会重建这两个 header。
+- Client 只发送最终 `Authorization`；不从 JWT 构造或发送 caller User header。
 
 ---
 
-## 7. 401/403 refresh + retry
+## 7. 401/403 fail closed，不重放 POST
 
-Gateway 或后端返回 401/403 时，Client 只允许一次受控恢复。
+Gateway 或后端返回 401/403 时，Client 清理 inbound auth 并返回 auth error。Proactive
+refresh 只发生在请求发送前；响应后不自动重放 Invocation，因为网络/代理歧义下原 POST
+可能已写入 user Message 或已开始 Agent run。
 
 ```mermaid
 sequenceDiagram
     participant Chat as ChatPage
     participant Api as chat-api-client.ts
-    participant MSAL as MSAL
     participant Store as Zustand
     participant Gateway as AgentArts Gateway
 
     Chat->>Api: invokeChat(message)
     Api->>Gateway: POST /invocations with current token
     Gateway-->>Api: 401 / 403
-    Api->>MSAL: acquireIdTokenSilently()
-    alt refresh success
-        MSAL-->>Api: freshToken
-        Api->>Store: setIdToken(freshToken)
-        Api->>Gateway: retry once with freshToken
-        alt retry ok
-            Gateway-->>Api: SSE stream
-            Api-->>Chat: stream
-        else retry 401 / 403
-            Gateway-->>Api: 401 / 403
-            Api->>Api: clearInboundAuthSession()
-            Api-->>Chat: auth error
-        end
-    else refresh fails
-        MSAL-->>Api: null
-        Api->>Api: clearInboundAuthSession()
-        Api-->>Chat: auth error
-    end
+    Api->>Store: clearInboundAuthSession()
+    Api-->>Chat: auth error
+    Note over Api,Gateway: no automatic POST retry
 ```
 
-这个设计避免两类问题：
+这个设计避免三类问题：
 
 1. 旧 token 在 refresh 失败后继续被发送。
 2. 401/403 触发无限 refresh/request 循环。
+3. 不确定响应下重复执行 Agent 或重复写 Message。
 
 ---
 
@@ -285,7 +272,7 @@ flowchart LR
 | `personal-assistant-client/src/stores/auth-store.ts` | `idToken` 与 `hydrated` 状态 |
 | `personal-assistant-client/src/components/landing/AuthGuard.tsx` | MSAL transition loading gate |
 | `personal-assistant-client/src/App.tsx` | LandingPage / ChatPage gate |
-| `personal-assistant-client/src/lib/chat/chat-api-client.ts` | `/invocations` 请求、proactive refresh、401/403 retry |
+| `personal-assistant-client/src/lib/chat/chat-api-client.ts` | Conversation/Invocation 请求、proactive refresh、401/403 fail closed、POST no-retry |
 | `personal-assistant-client/src/lib/chat/jwt.ts` | JWT payload decode、`exp` 检查、user id 提取 |
 | `personal-assistant-client/src/components/landing/LandingPage.tsx` | signed-out 入口 |
 | `personal-assistant-client/src/components/chat/ChatPage.tsx` | signed-in 对话入口 |
@@ -298,7 +285,7 @@ flowchart LR
 |------|------|
 | token 临近过期 + silent refresh 成功 | `personal-assistant-client/src/lib/chat-adapter.test.ts` |
 | token 临近过期 + silent refresh 失败 | `personal-assistant-client/src/lib/chat-adapter.test.ts` |
-| 401/403 refresh + retry | `personal-assistant-client/src/lib/chat-adapter.test.ts` |
+| 401/403 清理登录态且不重放 POST | `personal-assistant-client/src/lib/chat-adapter.test.ts` |
 | MSAL authenticated 但无 `idToken` | `personal-assistant-client/src/App.test.tsx` |
 | `clearToken()` 不回滚 hydration | `personal-assistant-client/src/stores/auth-store.test.ts` |
 | 已过期 token 不发送 `/invocations`，自动回 LandingPage | `personal-assistant-e2e/tests/regression/test_bug_18_expired_login_token_not_logging_out.py` |

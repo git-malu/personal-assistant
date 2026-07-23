@@ -8,6 +8,8 @@
 
 ### 1.1 整体架构
 
+图类型：**Component Diagram（组件图）**。用于说明前端、Gateway、Service 与平台服务边界。
+
 ```mermaid
 flowchart TB
     subgraph Frontends["🖥️ 前端（详见 frontend_architecture.md）"]
@@ -17,12 +19,12 @@ flowchart TB
         OC["OfficeClaw<br/>桌面客户端"]
     end
 
-    PagesFunction["Cloudflare Pages Function<br/>/invocations"]
+    PagesFunction["Cloudflare Pages BFF<br/>/invocations<br/>/api/conversations/*"]
 
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
         APIGW["API Gateway<br/>defaultgw-xxx...<br/>JWT 认证<br/>PREFIX_MATCH: /invocations/*"]
         subgraph Container["容器 :8080"]
-            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/playground（调试）"]
+            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/api/conversations/*<br/>/invocations/playground（调试）"]
             Handler["Agent 处理逻辑<br/>deepagents 编排"]
             SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
         end
@@ -38,10 +40,10 @@ flowchart TB
         InternalAPI["企业内部 API"]
     end
 
-    WebChat -->|"/invocations"| PagesFunction
+    WebChat -->|"Invocation + Conversation API"| PagesFunction
     PagesFunction -->|"JWT + SSE<br/>full Runtime path"| APIGW
-    Feishu -->|"/invocations"| APIGW
-    OC -->|"/invocations"| APIGW
+    Feishu -. "roadmap: channel identity adapter" .-> APIGW
+    OC -. "roadmap: channel identity adapter" .-> APIGW
     APIGW -->|"转发"| Routes
     Routes --> Handler
     Handler --> SDK
@@ -59,7 +61,7 @@ flowchart TB
 | **前端** | Cloudflare Pages 静态站点、Pages Function Proxy、消息通道 | `frontend_architecture.md` |
 | **API Gateway** | JWT 认证、`PREFIX_MATCH` 路由转发（`/invocations` 及其子路径） | `cloud-service/agentarts.md` §9 |
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
-| **Session 状态** | 短期会话状态持久化（Checkpoint）+ 长期记忆（Memory） | `session-state-management.md` |
+| **Conversation 状态** | PostgreSQL Conversation/Message + per-Conversation Checkpoint；Runtime Session 仅路由 | `session-state-management.md` |
 | **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
 | **Cloudflare Pages** | Production hosting、Pages Function Proxy、Wrangler CLI | [`cloud-service/cloudflare/pages.md`](cloud-service/cloudflare/pages.md) |
 
@@ -69,11 +71,11 @@ flowchart TB
 |------|------|------|
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
-| **Session State** | LangGraph Checkpoint | 短期会话状态持久化，keyed by `thread_id`，支持单 Session 多轮上下文保持和中断恢复。详见 [session-state-management.md](session-state-management.md) |
+| **Conversation State** | PostgreSQL + LangGraph Checkpoint | 业务状态 keyed by `conversation_id`，Checkpoint 使用 `thread_id=user_id:conversation_id`；与 Runtime Session 解耦。详见 [session-state-management.md](session-state-management.md) |
 | **LLM** | typed Settings + internal Provider catalog | `.env.example` 是唯一配置目录；Pydantic Settings 校验 Runtime 参数，credential 由 AgentArts Identity 提供。详见 ADR-011 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域。详见 [ADR-003](ADR/ADR-003-agentarts-platform.md) |
-| **Memory** | AgentArts Memory SDK | 长期语义/偏好/情景记忆，跨 Session 持久化用户知识。与 Checkpoint 分工：Checkpoint 管短期会话状态，Memory 管长期用户知识。详见 [session-state-management.md](session-state-management.md) §2 |
-| **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
+| **Memory** | AgentArts Memory SDK | 长期语义/偏好/情景记忆，跨 Conversation 持久化用户知识。Checkpoint 管单个 Conversation 状态，Memory 管长期用户知识。详见 [session-state-management.md](session-state-management.md) §10 |
+| **Identity** | AgentArts Gateway + Identity SDK | 当前 Inbound 只使用 CUSTOM_JWT；Identity SDK 负责 Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API 定义 → MCP Tool 自动转换 |
 | **可观测** | OTEL (AgentArts 内置) + stdout structured logging | Tracing + Metrics；Service 使用统一 Uvicorn log config 输出 JSON 并关联 request/session/trace context，见 [ADR-018](ADR/ADR-018-service-structured-logging.md) |
 | **Container** | Docker (linux/arm64) | Python 3.12+ |
@@ -95,6 +97,8 @@ flowchart TB
 
 ### 2.1 前后端关系
 
+图类型：**Component Diagram（组件图）**。用于区分 production Web Chat 与 roadmap 渠道。
+
 ```mermaid
 flowchart LR
     subgraph Frontends["前端（消息通道）"]
@@ -108,9 +112,9 @@ flowchart LR
         Handler["Agent 处理逻辑"]
     end
 
-    WebChat -->|"POST /invocations"| Routes
-    Feishu -->|"POST /invocations"| Routes
-    OC -->|"AgentArts /invocations"| Routes
+    WebChat -->|"Pages BFF: Invocation + Conversation API"| Routes
+    Feishu -. "roadmap: trusted channel identity" .-> Routes
+    OC -. "roadmap: trusted channel identity" .-> Routes
     Routes --> Handler
 ```
 
@@ -120,11 +124,15 @@ flowchart LR
 
 ## 3. 认证流详解
 
+图类型：**Sequence Diagram（时序图）**。用于说明 CUSTOM_JWT inbound 与 Identity outbound。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant Client as Chat UI
-    participant RT as AgentArts Runtime
+    participant Pages as Cloudflare Pages BFF
+    participant GW as AgentArts Gateway
+    participant API as FastAPI
     participant ID as Identity Service
     participant Agent as Personal Assistant
     participant Ext as External API (GitHub)
@@ -132,16 +140,18 @@ sequenceDiagram
     Note over User,Ext: === Inbound 认证（用户 → Agent） ===
 
     User->>Client: 打开聊天界面
-    Client->>RT: POST /invocations<br/>Authorization: Bearer {OAuth2_Access_Token}
-    RT->>ID: 验证 JWT/API Key
-    ID-->>RT: 验证通过，注入 RequestContext<br/>(包含 user_id, scopes 等)
-    RT->>Agent: handler(payload, context)
+    Client->>Pages: POST /invocations<br/>Authorization: Bearer {ID_Token}
+    Pages->>GW: Authorization + resolver Session header
+    GW->>GW: 验证 signature / issuer / audience / expiry
+    GW->>API: 转发已验证 Authorization
+    API->>API: 从 JWT sub 派生 canonical user_id
+    API->>Agent: handle(message, user_id, conversation_id)
 
     Note over User,Ext: === Outbound 认证（Agent → 外部服务） ===
 
     User->>Agent: "帮我查 GitHub Issues"
 
-    Agent->>ID: get_resource_oauth2_token(<br/>  provider_name="github",<br/>  scopes=["repo", "read:user"],<br/>  agent_identity_token=context.user_token<br/>)
+    Agent->>ID: 使用 Gateway WAT 获取<br/>provider-scoped user token
     ID-->>Agent: GitHub Access Token
 
     Agent->>Ext: GET /repos/{owner}/{repo}/issues<br/>Authorization: Bearer {GitHub_Token}
@@ -157,7 +167,8 @@ sequenceDiagram
 
 ### 4.1 Inbound — 用户认证到 Agent
 
-AgentArts Runtime 通过 `agentarts_config.yaml` 中 `runtime.identity_configuration` 配置三种 Inbound 认证方式：
+AgentArts 平台支持多种 Inbound authorizer，但 Personal Assistant 当前 production contract
+固定为 CUSTOM_JWT：FastAPI ownership 必须从 Gateway 已验证并转发的 JWT `sub` 派生。
 
 ```yaml
 runtime:
@@ -174,22 +185,35 @@ runtime:
           - "openid"
           - "profile"
           - "email"
-      key_auth:
-        api_keys:
-          - "opencode-2026-api-key-xxxxx"       # 开发调试用
 ```
 
-| 认证方式 | 适用场景 | 配置 |
-|----------|----------|------|
-| **IAM** | 华为云内部用户（Console / CLI） | `authorizer_type: IAM` |
-| **Custom JWT** | 自有 IdP 用户登录（Microsoft Entra ID / Okta / Auth0） | `authorizer_type: CUSTOM_JWT` + `discovery_url` |
-| **API Key** | 开发调试 / 机器对机器调用 | `authorizer_type: KEY_AUTH` + `api_keys[]` |
+| 认证方式 | 平台能力 | Personal Assistant 当前状态 |
+|----------|----------|-----------------------------|
+| **IAM** | 华为云内部用户（Console / CLI） | 不兼容当前 JWT `sub` ownership contract |
+| **Custom JWT** | 自有 IdP 用户登录（Microsoft Entra ID / Okta / Auth0） | production 唯一启用方式 |
+| **API Key** | 开发调试 / 机器对机器调用 | 不兼容；需要先实现可信 channel identity adapter |
 
 > 推荐生产环境使用 **Custom JWT** 方式，通过 Microsoft Entra ID 或自有 OIDC IdP 提供用户认证。
 
-**Gateway Header 注入**：除用户身份 header（`X-HW-AgentGateway-User-Id`）外，AgentArts Gateway 在转发请求时还会注入 `X-HW-AgentGateway-Workload-Access-Token`——Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。后端提取该 token 存入 `AgentArtsRuntimeContext` 后，Outbound 认证装饰器（如 `@require_access_token`）可直接使用，无需容器自行从 `.agent_identity.json` 走本地认证流程。详见 [backend_architecture.md §2.3](backend_architecture.md#23-agentarts-gateway-header-注入)。
+**Gateway 身份与 Workload token**：Gateway 校验 CUSTOM_JWT 并转发原始 Authorization；
+FastAPI 从已验证 token 的 `sub` 派生 canonical `user_id`，不信任 caller User header。
+Gateway 注入的 `X-HW-AgentGateway-Workload-Access-Token` 用于容器访问 Identity Service。
+详见 [backend_architecture.md §2.3](backend_architecture.md#23-agentarts-gateway-header-注入)。
 
 **OAuth2 鉴权 URL 呈现**：当 `@require_access_token` 的 `on_auth_url` callback 触发时，tool 通过 LangGraph `get_stream_writer()` 将 `auth_required` custom event 写入 SSE stream，Web Chat 使用 provider-scoped Auth Card 直接呈现，不依赖 LLM 转述。授权凭据可用后发送 `auth_complete`，仅更新匹配的 pending Card。详见 [backend_architecture.md §5.2.1](backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) 和 [frontend_architecture.md §2.1.4](frontend_architecture.md#214-sse-事件协议)。
+
+**GitHub MCP activity source**：Feature 17 新增的 GitHub MCP data source
+使用 AgentArts MCP Gateway 和 GitHub remote MCP 读取平台账号可见的工程活动。
+它通过 `github-mcp-gateway` STS Provider 获取临时 IAM 凭据，Target 出站使用
+平台侧托管的 GitHub PAT。该 source 支持 commit、Pull Request、Issue、review、
+comment，供 Report internal orchestration 和 Agent-facing activity tools 使用；
+review/comment 详情需要所属 PR/Issue number。Service 保留四个 `github_mcp_*`
+internal source functions 且不将其注册为 Agent Tool；Agent 只看到
+`github_search_activity` 和 `github_get_activity_detail`，所有返回结果固定包含
+`identity_scope="platform"`。只有 `GITHUB_MCP_ENABLED` 与
+`GITHUB_ACTIVITY_TOOLS_ENABLED` 同时为 `true` 时才注册这两个 Tool。该能力不暴露
+remote MCP 原子工具，也不代表当前用户。详见
+[backend_architecture.md §5.2.0](backend_architecture.md#520-github-mcp-activity-data-source)。
 
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 
@@ -200,6 +224,7 @@ AgentArts Identity SDK 提供三种 Outbound 认证模式：
 | **User Federation** | `USER_FEDERATION` | Agent 以用户身份调用外部 API | 查 GitHub Issues、读 Outlook Calendar、查 Microsoft 365 邮件 |
 | **M2M** | `M2M` | Agent 以自身服务身份调用 API | 调用企业内部 CRM、OA 系统 |
 | **STS Token** | — | Agent 获取云资源访问凭证 | 操作 OBS 对象存储、访问 RDS |
+| **MCP Gateway + STS** | — | Agent 以平台身份调用外部 MCP data source | GitHub activity source |
 
 #### 4.2.1 Credential Provider 创建
 
@@ -362,6 +387,8 @@ agent = create_deep_agent(
 
 deepagents 底层是 LangGraph，内置 ReAct 循环：
 
+图类型：**Flowchart（流程图）**。用于说明 Agent 的 ReAct tool loop。
+
 ```mermaid
 stateDiagram-v2
     [*] --> agent: 入口
@@ -382,33 +409,35 @@ stateDiagram-v2
 ```python
 # app/main.py
 from fastapi import FastAPI
-from app.agent_handler import AgentHandler
+from app.auth import extract_authenticated_user_id
+from app.invocations.models import InvocationRequest
+from app.invocations.service import InvocationService
 
 app = FastAPI()
-handler = AgentHandler()
-
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
 
 @app.post("/invocations")
 async def invoke(request: Request):
-    payload = await request.json()
-    result = await handler.handle(
-        message=payload.get("message", ""),
-        user_id=request.headers.get("X-AgentArts-User-Id"),
-        session_id=request.headers.get("X-AgentArts-Session-Id"),
+    invocation = InvocationRequest.model_validate(await request.json())
+    execution = await InvocationService(request.app.state.database).prepare(
+        request=invocation,
+        user_id=extract_authenticated_user_id(request),
+        handler=request.app.state.agent_handler,
     )
-    return {"response": result}
+    return await execution.run_sync()
 ```
 
 不再使用 `AgentArtsRuntimeApp` 和 `@app.entrypoint`，改用标准 FastAPI 路由。平台层面完全兼容——只要容器在 8080 提供 `/ping`（平台内部健康检查）和 `/invocations`（Gateway 转发入口），并启用 `url_match_type: PREFIX_MATCH` 以支持 `/invocations/*` 子路径。详见 [backend_architecture.md §2.1](backend_architecture.md#21-agentarts-gateway-路由约束)。
 
 ### 5.3 Agent 数据流
 
+图类型：**Data Flow Diagram（数据流图）**。用于说明 InvocationService、Agent 与 Tool 数据流。
+
 ```mermaid
 flowchart LR
-    Entry["entrypoint<br/>handler(payload, context)"] --> Agent["deepagents Agent<br/>内置 ReAct loop"]
+    Entry["POST /invocations<br/>InvocationService"] --> Agent["AgentHandler + deepagents<br/>内置 ReAct loop"]
     Agent -->|"tool_calls"| Tools["工具调用<br/>执行 Identity SDK 装饰的工具"]
     Agent -->|"无 tool_calls"| Response["Dict[str, Any]<br/>{response: '...'}"]
     Tools -->|"tool results"| Agent
@@ -437,17 +466,25 @@ class AgentHandler:
         # TTL fast path → single-flight refresh → atomic Bundle swap
         ...
 
-    async def handle(self, message: str, user_id: str) -> str:
+    async def handle(
+        self, message: str, user_id: str, conversation_id: str
+    ) -> str:
         agent = await self.get_agent()
-        result = await agent.ainvoke({
-            "messages": [{"role": "user", "content": message}],
-        })
+        config = {
+            "configurable": {
+                "thread_id": f"{user_id}:{conversation_id}",
+            }
+        }
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
+        )
         return result["messages"][-1].content
 ```
 
 Model 和 compiled Agent 组成 process-scoped Agent Bundle，在
 `LLM_AGENT_BUNDLE_TTL_SECONDS` 内复用。Bundle refresh 不替换共享 Checkpointer，
-因此相同 `user_id + session_id` 的 checkpoint 状态连续。
+因此相同 `user_id + conversation_id` 的 checkpoint 状态连续。
 
 ## 6. LLM Provider 配置
 
@@ -474,6 +511,8 @@ Service 不从环境变量读取 LLM API Key。
 
 ### 6.3 配置加载逻辑
 
+图类型：**Flowchart（流程图）**。用于说明 typed Settings 的配置来源与消费方。
+
 ```mermaid
 flowchart TD
     Entry[".env.example<br/>唯一配置目录"] --> Local[".env（本地）"]
@@ -496,6 +535,8 @@ Persistence 配置冲突时，Service 在 startup 阶段失败。
 ### 7.1 Memory 模型
 
 AgentArts Memory 采用分层存储模型：
+
+图类型：**Hierarchy Diagram（层级图）**。用于说明 Memory 的分层结构。
 
 ```mermaid
 flowchart TD

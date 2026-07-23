@@ -4,6 +4,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { AuthGuard } from "@/components/landing/AuthGuard";
 import { LoadingState } from "@/components/landing/LoadingState";
 import { ChunkErrorBoundary } from "@/components/landing/ChunkErrorBoundary";
+import { getPublicConfig } from "@/config";
 
 const ChatPage = React.lazy(() => import("./components/chat/ChatPage"));
 const LandingPage = React.lazy(() => import("./components/landing/LandingPage"));
@@ -15,7 +16,8 @@ function App() {
   const isAuthenticated = useIsAuthenticated();
   const hydrated = useAuthStore((s) => s.hydrated);
   const idToken = useAuthStore((s) => s.idToken);
-  const canShowChat = isAuthenticated && Boolean(idToken);
+  const isLocalDev = import.meta.env.DEV && !getPublicConfig().isEntraEnabled;
+  const canShowChat = isLocalDev || (isAuthenticated && Boolean(idToken));
   const isCalendarCallback =
     window.location.pathname === "/auth/callback/m365-calendar";
 

@@ -10,7 +10,8 @@
 
 - **核心语言与框架**: Python 3.12+, FastAPI, Uvicorn
 - **Agent/LLM**: deepagents, LangChain (`langchain-core`, `langchain-openai`), LangGraph checkpointers
-- **Identity 与云服务**: `agentarts-sdk`, HuaweiCloud IAM SDK, AgentArts Runtime
+- **Identity 与云服务**: `agentarts-sdk`, HuaweiCloud IAM SDK, AgentArts Runtime, AgentArts MCP Gateway
+- **MCP**: `langchain-mcp-adapters`, `httpx`, Streamable HTTP
 - **持久化**: PostgreSQL checkpointer for production, SQLite checkpointer for local/test
 - **开发工具链**: uv, Ruff, pytest, pytest-asyncio, Chainlit playground
 
@@ -27,7 +28,8 @@ personal-assistant-service/
 │   ├── logging_config.py    # structured logging
 │   ├── playground.py        # Chainlit playground mount
 │   ├── settings.py          # typed runtime settings
-│   └── tools/               # Calendar/Email/GitHub/Gitee/IAM 等外部工具
+│   ├── mcp/                  # MCP Gateway client、STS 交换与 IAM signing
+│   └── tools/               # Calendar/Email/GitHub/GitHub MCP/Gitee/IAM 等外部工具
 ├── tests/                   # pytest unit/integration tests
 ├── scripts/
 │   └── generate_openapi.py  # OpenAPI artifact 生成脚本
@@ -62,7 +64,7 @@ personal-assistant-service/
 
 - 单元测试和集成测试统一放在 `tests/`。
 - 使用 pytest + pytest-asyncio；异步方法优先写 async tests。
-- 测试必须 mock 外部依赖，尤其是 AgentArts SDK、HuaweiCloud SDK、Microsoft Graph、GitHub/Gitee API 和 LLM。
+- 测试必须 mock 外部依赖，尤其是 AgentArts SDK、HuaweiCloud SDK、MCP Gateway、Microsoft Graph、GitHub/Gitee API 和 LLM。
 - 修改 auth/session/checkpointer/streaming 行为时，必须覆盖 sync 与 SSE 两种调用路径。
 - 提交前运行 `uv run ruff check .`、`uv run ruff format --check .` 和相关 `uv run pytest ...`。
 

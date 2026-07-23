@@ -1,41 +1,38 @@
-"""Service integration tests for Feature 10a — Outbound Email.
+"""Outbound Email behavior at the Feature 14 invocation boundary."""
 
-Tests email conversation flows through the POST /invocations endpoint
-with a mocked AgentHandler that returns canned email-specific responses.
-Covers all 10 test scenarios defined in the test plan:
+from __future__ import annotations
 
-Scenario 1 — View Inbox (2 tests)
-Scenario 2 — Search Emails (1 test)
-Scenario 3 — Reply + Guard Confirmation Multi-turn (3 tests)
-Scenario 4 — Cross-Session Identity (2 tests)
-Scenario 5 — Integration-level / Real Service (2 tests)
-"""
-
+import asyncio
+import base64
+import inspect
 import json
+import sys
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+from agentarts.sdk.runtime.model import ACCESS_TOKEN_HEADER, SESSION_HEADER
+from alembic import command
+from alembic.config import Config
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Fake Email AgentHandler
-# ═══════════════════════════════════════════════════════════════════════════
+from app.conversations.store import ConversationRecord, ConversationStore
+from app.database import Database
+from app.invocations.models import AgentEventType, AgentStreamEvent
+from app.main import app
+from tests.conftest import PostgresTestSchema
+
+SERVICE_ROOT = Path(__file__).resolve().parents[2]
+EMAIL_USER_ID = "email-user"
+
+pytestmark = pytest.mark.integration
 
 
 class FakeEmailHandler:
-    """Simulates the backend email Agent with canned Chinese responses.
-
-    Tracks per-session state for multi-turn Guard confirmation flows
-    (reply + send). Returns Markdown-formatted email content so the
-    existing Web Chat MarkdownText renderer displays it correctly.
-    """
-
-    def __init__(self):
-        self.handle_calls: list[tuple] = []
-        self.stream_calls: list[tuple] = []
-        self._session_state: dict[str, str] = {}
-
-    # ── Non-streaming response templates ──────────────────────────────
+    """Return canned email responses with Guard state scoped by Conversation."""
 
     INBOX_RESPONSE = (
         "你有 3 封未读邮件：\n\n"
@@ -45,7 +42,6 @@ class FakeEmailHandler:
         "| 李四 | 会议邀请：Q2 复盘 | 2026-06-13 |\n"
         "| 王五 | 报销审批通知 | 2026-06-12 |"
     )
-
     SEARCH_RESPONSE = (
         "搜索到 2 封关于「项目进度」的邮件：\n\n"
         "| 发件人 | 主题 | 时间 |\n"
@@ -54,7 +50,6 @@ class FakeEmailHandler:
         "| 赵六 | 项目进度阻塞风险 | 2026-06-10 |\n\n"
         "需要查看哪封邮件的详细内容？"
     )
-
     REPLY_PREVIEW = (
         "📧 **回复预览**\n\n"
         "**收件人**: 张三 <zhangsan@example.com>\n"
@@ -64,11 +59,8 @@ class FakeEmailHandler:
         "---\n"
         "是否确认发送此回复？（回复「发送」确认，回复「取消」放弃）"
     )
-
     REPLY_SENT = "邮件已回复 ✅"
-
     REPLY_CANCELLED = "已取消，不发送。"
-
     SEND_PREVIEW = (
         "📧 **新邮件预览**\n\n"
         "**收件人**: zhangsan@example.com\n"
@@ -78,179 +70,79 @@ class FakeEmailHandler:
         "---\n"
         "需要发送吗？请回复「确认」发送，或「取消」放弃。"
     )
-
     GENERIC = "我是你的 Personal Assistant，可以帮你处理邮件、日程等事务。"
 
-    # ── Streaming token lists ─────────────────────────────────────────
-
-    STREAM_TOKENS_INBOX = [
-        "你有 ",
-        "3 封",
-        "未读",
-        "邮件",
-        "：\n",
-        "| 发件人 | 主题 | 时间 |\n",
-        "| 张三 | 项目进度更新 | 2026-06-14 |",
-    ]
-
-    STREAM_TOKENS_SEARCH = [
-        "搜索到 ",
-        "2 封",
-        "关于",
-        "「项目进度」",
-        "的邮件",
-    ]
-
-    STREAM_TOKENS_REPLY_PREVIEW = [
-        "📧 ",
-        "**回复预览**\n\n",
-        "**收件人**: ",
-        "张三 ",
-        "<zhangsan@example.com>\n",
-        "**主题**: ",
-        "Re: 项目进度更新\n",
-    ]
-
-    STREAM_TOKENS_SEND_PREVIEW = [
-        "📧 ",
-        "**新邮件预览**\n\n",
-        "**收件人**: ",
-        "zhangsan@example.com\n",
-        "**主题**: ",
-        "你好\n",
-    ]
-
-    STREAM_TOKENS_REPLY_SENT = ["邮件已回复", " ✅"]
-
-    STREAM_TOKENS_REPLY_CANCELLED = ["已取消，", "不发送。"]
-
-    STREAM_TOKENS_GENERIC = ["Hello", " from", " stream"]
-
-    # ── Handler: non-streaming ────────────────────────────────────────
+    def __init__(self) -> None:
+        self.handle_calls: list[tuple[str, str, str]] = []
+        self.stream_calls: list[tuple[str, str, str]] = []
+        self._conversation_state: dict[str, str] = {}
 
     async def handle(
         self,
         message: str,
-        user_id: str = "anonymous",
-        session_id: str | None = None,
+        user_id: str,
+        conversation_id: str,
     ) -> str:
-        self.handle_calls.append((message, user_id, session_id))
-        sid = session_id or "default"
-        state = self._session_state.get(sid)
-
-        # ── Guard: awaiting reply confirmation ──
-        if state == "awaiting_reply":
-            self._session_state[sid] = _resolve_guard(
-                message,
-                sid,
-                self._session_state,
-                confirm_value="reply_sent",
-                cancel_value="reply_cancelled",
-            )
-            return _guard_response(
-                self._session_state[sid],
-                sent=self.REPLY_SENT,
-                cancelled=self.REPLY_CANCELLED,
-                preview=self.REPLY_PREVIEW,
-            )
-
-        # ── Guard: awaiting send confirmation ──
-        if state == "awaiting_send":
-            self._session_state[sid] = _resolve_guard(
-                message,
-                sid,
-                self._session_state,
-                confirm_value="send_confirmed",
-                cancel_value="send_cancelled",
-            )
-            return _guard_response(
-                self._session_state[sid],
-                sent="邮件已发送 ✅",
-                cancelled="已取消，不发送。",
-                preview=self.SEND_PREVIEW,
-            )
-
-        # ── Message routing ──
-        if "收件箱" in message:
-            return self.INBOX_RESPONSE
-
-        if "搜索" in message or "查" in message:
-            return self.SEARCH_RESPONSE
-
-        if "回" in message and ("张三" in message or "邮件" in message):
-            self._session_state[sid] = "awaiting_reply"
-            return self.REPLY_PREVIEW
-
-        if "发邮件" in message or "发一封" in message:
-            self._session_state[sid] = "awaiting_send"
-            return self.SEND_PREVIEW
-
-        return self.GENERIC
-
-    # ── Handler: SSE streaming ────────────────────────────────────────
+        self.handle_calls.append((message, user_id, conversation_id))
+        return self._respond(message, conversation_id)
 
     async def handle_stream(
         self,
         message: str,
-        user_id: str = "anonymous",
-        session_id: str | None = None,
-        message_queue=None,
-    ):
-        self.stream_calls.append((message, user_id, session_id))
-        sid = session_id or "default"
-        state = self._session_state.get(sid)
+        user_id: str,
+        conversation_id: str,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        self.stream_calls.append((message, user_id, conversation_id))
+        response = self._respond(message, conversation_id)
+        yield AgentStreamEvent(
+            type=AgentEventType.CUSTOM,
+            data={"type": "email_progress", "status": "complete"},
+        )
+        midpoint = len(response) // 2
+        for token in (response[:midpoint], response[midpoint:]):
+            yield AgentStreamEvent(type=AgentEventType.TOKEN, token=token)
 
-        # ── Guard: awaiting reply confirmation (streaming) ──
+    def _respond(self, message: str, conversation_id: str) -> str:
+        state = self._conversation_state.get(conversation_id)
         if state == "awaiting_reply":
-            new_state = _resolve_guard(
+            state = _resolve_guard(
                 message,
-                sid,
-                self._session_state,
+                state,
                 confirm_value="reply_sent",
                 cancel_value="reply_cancelled",
             )
-            self._session_state[sid] = new_state
-            if new_state == "reply_sent":
-                tokens = self.STREAM_TOKENS_REPLY_SENT
-            elif new_state == "reply_cancelled":
-                tokens = self.STREAM_TOKENS_REPLY_CANCELLED
-            else:
-                tokens = self.STREAM_TOKENS_REPLY_PREVIEW
-        # ── Guard: awaiting send confirmation (streaming) ──
-        elif state == "awaiting_send":
-            new_state = _resolve_guard(
+            self._conversation_state[conversation_id] = state
+            return _guard_response(
+                state,
+                sent=self.REPLY_SENT,
+                cancelled=self.REPLY_CANCELLED,
+                preview=self.REPLY_PREVIEW,
+            )
+        if state == "awaiting_send":
+            state = _resolve_guard(
                 message,
-                sid,
-                self._session_state,
+                state,
                 confirm_value="send_confirmed",
                 cancel_value="send_cancelled",
             )
-            self._session_state[sid] = new_state
-            if new_state == "send_confirmed":
-                tokens = ["邮件已发送", " ✅"]
-            elif new_state == "send_cancelled":
-                tokens = ["已取消，", "不发送。"]
-            else:
-                tokens = self.STREAM_TOKENS_GENERIC
-        elif "收件箱" in message:
-            tokens = self.STREAM_TOKENS_INBOX
-        elif "搜索" in message or "查" in message:
-            tokens = self.STREAM_TOKENS_SEARCH
-        elif "回" in message and ("张三" in message or "邮件" in message):
-            self._session_state[sid] = "awaiting_reply"
-            tokens = self.STREAM_TOKENS_REPLY_PREVIEW
-        elif "发邮件" in message or "发一封" in message:
-            self._session_state[sid] = "awaiting_send"
-            tokens = self.STREAM_TOKENS_SEND_PREVIEW
-        else:
-            tokens = self.STREAM_TOKENS_GENERIC
-
-        for token in tokens:
-            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
-        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
-
-
-# ── Guard helpers ─────────────────────────────────────────────────────────
+            self._conversation_state[conversation_id] = state
+            return _guard_response(
+                state,
+                sent="邮件已发送 ✅",
+                cancelled="已取消，不发送。",
+                preview=self.SEND_PREVIEW,
+            )
+        if "收件箱" in message:
+            return self.INBOX_RESPONSE
+        if "搜索" in message or "查" in message:
+            return self.SEARCH_RESPONSE
+        if "回" in message and ("张三" in message or "邮件" in message):
+            self._conversation_state[conversation_id] = "awaiting_reply"
+            return self.REPLY_PREVIEW
+        if "发邮件" in message or "发一封" in message:
+            self._conversation_state[conversation_id] = "awaiting_send"
+            return self.SEND_PREVIEW
+        return self.GENERIC
 
 
 _CONFIRM_TERMS = {"发送", "确认", "好的", "确认发送", "好的，发送", "是"}
@@ -259,23 +151,20 @@ _CANCEL_TERMS = {"取消", "不发送", "先不发了", "不要发", "否"}
 
 def _resolve_guard(
     message: str,
-    session_id: str,
-    state_dict: dict,
+    current_state: str,
+    *,
     confirm_value: str,
     cancel_value: str,
 ) -> str:
-    """Decode user intent in a Guard confirmation turn."""
-    msg_lower = message.strip().lower()
-    if msg_lower in _CONFIRM_TERMS:
+    intent = message.strip().lower()
+    if intent in _CONFIRM_TERMS:
         return confirm_value
-    if msg_lower in _CANCEL_TERMS:
+    if intent in _CANCEL_TERMS:
         return cancel_value
-    # Ambiguous — stay in current state
-    return state_dict.get(session_id, "")
+    return current_state
 
 
-def _guard_response(state: str, sent: str, cancelled: str, preview: str) -> str:
-    """Map guard state to response text."""
+def _guard_response(state: str, *, sent: str, cancelled: str, preview: str) -> str:
     if "sent" in state or "confirmed" in state:
         return sent
     if "cancelled" in state:
@@ -283,439 +172,266 @@ def _guard_response(state: str, sent: str, cancelled: str, preview: str) -> str:
     return preview
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Fixture
-# ═══════════════════════════════════════════════════════════════════════════
+@dataclass
+class EmailInvocationContext:
+    client: httpx.AsyncClient
+    handler: FakeEmailHandler
+    store: ConversationStore
+
+
+def _token(subject: str) -> str:
+    def encode(value: dict[str, str]) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{encode({'alg': 'RS256'})}.{encode({'sub': subject})}.signature"
+
+
+def _headers(*, stream: bool = False) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {_token(EMAIL_USER_ID)}",
+        ACCESS_TOKEN_HEADER: "gateway-workload-token",
+        SESSION_HEADER: "shared-runtime-session",
+    }
+    if stream:
+        headers["Accept"] = "text/event-stream"
+    return headers
+
+
+def _payload(
+    conversation: ConversationRecord,
+    *,
+    message: str,
+    stream: bool = False,
+    client_message_id: UUID | None = None,
+) -> dict[str, object]:
+    return {
+        "conversation_id": str(conversation.id),
+        "client_message_id": str(client_message_id or uuid4()),
+        "message": message,
+        "stream": stream,
+    }
+
+
+async def _post(
+    context: EmailInvocationContext,
+    conversation: ConversationRecord,
+    message: str,
+    *,
+    stream: bool = False,
+) -> httpx.Response:
+    return await context.client.post(
+        "/invocations",
+        json=_payload(conversation, message=message, stream=stream),
+        headers=_headers(stream=stream),
+    )
+
+
+def _sse_payloads(response: httpx.Response) -> list[dict[str, object]]:
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
 
 
 @pytest.fixture
-def email_test_client():
-    """Create FastAPI TestClient with mocked LLM and FakeEmailHandler.
+async def email_invocation_context(
+    postgres_schema: PostgresTestSchema,
+) -> AsyncIterator[EmailInvocationContext]:
+    config = Config(str(SERVICE_ROOT / "alembic.ini"))
+    config.attributes["dsn"] = postgres_schema.dsn
+    config.attributes["schema"] = postgres_schema.name
+    command.upgrade(config, "head")
 
-    Patches init_chat_model (for lifespan startup) and the AgentHandler class
-    (so get_agent_handler() returns our fake handler). This allows testing
-    the full FastAPI stack — routing, auth, SSE formatting, header handling —
-    without real LLM calls or AgentArts Identity Service.
-    """
-    fake_handler = FakeEmailHandler()
-
-    with (
-        patch("app.llm_config.init_chat_model", return_value=MagicMock()),
-        patch("app.agent_handler.AgentHandler", return_value=fake_handler),
-    ):
-        from app.main import app
-
-        # Ensure the handler is set (lifespan will call get_agent_handler
-        # which now returns our fake handler)
-        app.state.agent_handler = fake_handler
-
-        client = TestClient(app, raise_server_exceptions=False)
-        yield client, fake_handler
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 1: View Inbox
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.integration
-def test_list_inbox_non_streaming(email_test_client):
-    """E2E-01: POST /invocations with "帮我看看收件箱" (stream=false).
-
-    Returns 200 with email list in response body. Verifies handler
-    received correct message, user_id, and session_id.
-    """
-    client, fake_handler = email_test_client
-
-    resp = client.post(
-        "/invocations",
-        json={"message": "帮我看看收件箱", "stream": False},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "e2e-session-1",
-        },
+    database = Database(
+        postgres_schema.dsn,
+        connection_kwargs={"options": f"-csearch_path={postgres_schema.name}"},
     )
-    assert resp.status_code == 200, (
-        f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
-    )
+    await database.startup()
+    handler = FakeEmailHandler()
+    previous_database = getattr(app.state, "database", None)
+    previous_handler = getattr(app.state, "agent_handler", None)
+    app.state.database = database
+    app.state.agent_handler = handler
 
-    data = resp.json()
-    assert "response" in data, f"No 'response' key in: {data}"
-    assert len(data["response"]) > 0, "Response should not be empty"
-    assert "张三" in data["response"], (
-        f"Expected sender '张三' in response, got: {data['response'][:200]}"
-    )
-    assert "邮件" in data["response"], (
-        f"Expected email-related content, got: {data['response'][:200]}"
-    )
-
-    # Verify handler was called with correct params
-    assert len(fake_handler.handle_calls) == 1, (
-        f"Expected 1 handle call, got {len(fake_handler.handle_calls)}"
-    )
-    msg, user_id, session_id = fake_handler.handle_calls[0]
-    assert msg == "帮我看看收件箱"
-    assert user_id == "test-user", f"Expected user_id='test-user', got {user_id!r}"
-    assert session_id == "e2e-session-1", (
-        f"Expected session_id='e2e-session-1', got {session_id!r}"
-    )
-
-
-@pytest.mark.integration
-def test_list_inbox_sse_streaming(email_test_client):
-    """E2E-02: POST /invocations stream=true — SSE format + email content.
-
-    Verifies content-type is text/event-stream, SSE headers, data: prefix
-    on every line, valid JSON with 'done' field, and accumulated tokens
-    contain email keywords.
-    """
-    client, fake_handler = email_test_client
-
-    resp = client.post(
-        "/invocations",
-        json={"message": "帮我看看收件箱", "stream": True},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "e2e-session-1",
-            "Accept": "text/event-stream",
-        },
-    )
-    assert resp.status_code == 200, (
-        f"Expected 200 for streaming, got {resp.status_code}: {resp.text[:300]}"
-    )
-
-    # Content-type
-    content_type = resp.headers.get("content-type", "")
-    assert "text/event-stream" in content_type, (
-        f"Expected text/event-stream, got: {content_type}"
-    )
-
-    # SSE infrastructure headers
-    assert resp.headers.get("cache-control") == "no-cache"
-    assert resp.headers.get("connection") == "keep-alive"
-
-    # Verify stream_calls recorded
-    assert len(fake_handler.stream_calls) == 1, (
-        f"Expected 1 stream call, got {len(fake_handler.stream_calls)}"
-    )
-    msg, user_id, session_id = fake_handler.stream_calls[0]
-    assert msg == "帮我看看收件箱"
-    assert user_id == "test-user"
-
-    # Parse SSE and validate format
-    body = resp.text
-    lines = [line.strip() for line in body.split("\n") if line.strip()]
-    assert len(lines) > 0, "SSE response should have data lines"
-
-    accumulated = ""
-    for line in lines:
-        assert line.startswith("data: "), (
-            f"SSE line should start with 'data: ': {line[:80]}"
-        )
-        payload = line[6:]  # strip "data: " prefix
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            pytest.fail(f"Invalid JSON in SSE: {payload[:100]}")
-        assert "done" in data, f"SSE data missing 'done' field: {data}"
-        if data.get("token") and not data.get("done"):
-            accumulated += data["token"]
+            yield EmailInvocationContext(
+                client=client,
+                handler=handler,
+                store=ConversationStore(database),
+            )
+        finally:
+            if previous_database is None:
+                delattr(app.state, "database")
+            else:
+                app.state.database = previous_database
+            if previous_handler is None:
+                delattr(app.state, "agent_handler")
+            else:
+                app.state.agent_handler = previous_handler
+            await database.shutdown()
 
-    # Last event must signal completion
-    last_event = json.loads(lines[-1][6:])
-    assert last_event["done"] is True, (
-        f"Last SSE event should have done=True: {last_event}"
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_email_listing_and_search_use_conversation_contract(
+    email_invocation_context: EmailInvocationContext,
+) -> None:
+    context = email_invocation_context
+    conversation = await context.store.create(user_id=EMAIL_USER_ID, title="Email")
+
+    inbox = await _post(context, conversation, "帮我看看收件箱")
+    search = await _post(
+        context,
+        conversation,
+        "帮我查一下最近关于项目进度的邮件",
+        stream=True,
     )
 
-    # Accumulated text must contain email keywords
-    assert len(accumulated) > 0, "No tokens accumulated from SSE stream"
-    assert any(kw in accumulated for kw in ("邮件", "未读", "发件人", "张三")), (
-        f"Expected email keywords in stream: {accumulated[:200]}"
+    assert inbox.status_code == 200
+    assert inbox.json() == {"response": FakeEmailHandler.INBOX_RESPONSE}
+    assert search.status_code == 200
+    search_payloads = _sse_payloads(search)
+    assert search_payloads[0] == {"type": "email_progress", "status": "complete"}
+    assert (
+        "".join(
+            str(payload["token"]) for payload in search_payloads if payload.get("token")
+        )
+        == FakeEmailHandler.SEARCH_RESPONSE
+    )
+    assert context.handler.handle_calls == [
+        ("帮我看看收件箱", EMAIL_USER_ID, str(conversation.id))
+    ]
+    assert context.handler.stream_calls == [
+        ("帮我查一下最近关于项目进度的邮件", EMAIL_USER_ID, str(conversation.id))
+    ]
+
+    messages = await context.store.list_messages(
+        conversation_pk=conversation.pk,
+        after_sequence=None,
+        limit=10,
+    )
+    assert [message.role for message in messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [
+        message.content.parts[0].text
+        for message in messages
+        if message.role == "assistant"
+    ] == [FakeEmailHandler.INBOX_RESPONSE, FakeEmailHandler.SEARCH_RESPONSE]
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected", "forbidden"),
+    [
+        ("发送", "已回复", "已取消"),
+        ("取消", "已取消", "已回复"),
+    ],
+)
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_reply_guard_requires_preview_before_decision(
+    email_invocation_context: EmailInvocationContext,
+    decision: str,
+    expected: str,
+    forbidden: str,
+) -> None:
+    context = email_invocation_context
+    conversation = await context.store.create(user_id=EMAIL_USER_ID, title="Reply")
+
+    preview = await _post(context, conversation, "帮我回张三的邮件，说收到")
+    result = await _post(context, conversation, decision)
+
+    assert preview.status_code == 200
+    assert preview.json() == {"response": FakeEmailHandler.REPLY_PREVIEW}
+    assert "已回复" not in preview.json()["response"]
+    assert "已发送" not in preview.json()["response"]
+    assert result.status_code == 200
+    assert expected in result.json()["response"]
+    assert forbidden not in result.json()["response"]
+    assert context.handler.handle_calls == [
+        ("帮我回张三的邮件，说收到", EMAIL_USER_ID, str(conversation.id)),
+        (decision, EMAIL_USER_ID, str(conversation.id)),
+    ]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_direct_send_stops_at_confirmation_preview(
+    email_invocation_context: EmailInvocationContext,
+) -> None:
+    context = email_invocation_context
+    conversation = await context.store.create(user_id=EMAIL_USER_ID, title="Send")
+
+    response = await _post(
+        context,
+        conversation,
+        "帮zhangsan@example.com发邮件说你好",
     )
 
+    assert response.status_code == 200
+    assert response.json() == {"response": FakeEmailHandler.SEND_PREVIEW}
+    assert "已发送" not in response.json()["response"]
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 2: Search Emails
-# ═══════════════════════════════════════════════════════════════════════════
 
-
-@pytest.mark.integration
-def test_search_emails(email_test_client):
-    """E2E-03: POST /invocations with search query returns search results."""
-    client, fake_handler = email_test_client
-
-    resp = client.post(
-        "/invocations",
-        json={"message": "帮我查一下最近关于项目进度的邮件", "stream": False},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "e2e-session-search",
-        },
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_guard_state_is_independent_across_conversations(
+    email_invocation_context: EmailInvocationContext,
+) -> None:
+    context = email_invocation_context
+    conversation_a = await context.store.create(
+        user_id=EMAIL_USER_ID,
+        title="Reply",
     )
-    assert resp.status_code == 200, (
-        f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+    conversation_b = await context.store.create(
+        user_id=EMAIL_USER_ID,
+        title="Inbox",
     )
 
-    data = resp.json()
-    assert "response" in data
-    assert "项目进度" in data["response"], (
-        f"Expected '项目进度' in search result, got: {data['response'][:200]}"
+    preview_a = await _post(context, conversation_a, "帮我回张三的邮件，说收到")
+    inbox_b = await _post(context, conversation_b, "帮我看看收件箱")
+    cancelled_a = await _post(context, conversation_a, "取消")
+
+    assert preview_a.json() == {"response": FakeEmailHandler.REPLY_PREVIEW}
+    assert inbox_b.json() == {"response": FakeEmailHandler.INBOX_RESPONSE}
+    assert "请先授权" not in inbox_b.json()["response"]
+    assert "需要登录 Microsoft 365" not in inbox_b.json()["response"]
+    assert cancelled_a.json() == {"response": FakeEmailHandler.REPLY_CANCELLED}
+    assert context.handler.handle_calls == [
+        ("帮我回张三的邮件，说收到", EMAIL_USER_ID, str(conversation_a.id)),
+        ("帮我看看收件箱", EMAIL_USER_ID, str(conversation_b.id)),
+        ("取消", EMAIL_USER_ID, str(conversation_a.id)),
+    ]
+
+    messages_a = await context.store.list_messages(
+        conversation_pk=conversation_a.pk,
+        after_sequence=None,
+        limit=10,
     )
-
-    # Handler recorded the search request
-    assert len(fake_handler.handle_calls) == 1
-    msg, _, _ = fake_handler.handle_calls[0]
-    assert "项目进度" in msg
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 3: Reply + Guard Confirmation (Multi-turn)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.integration
-def test_reply_to_email_guard_confirm_flow(email_test_client):
-    """E2E-04: Reply Guard — preview then confirm → sent.
-
-    Round 1: "帮我回张三的邮件，说收到" → preview with recipient info.
-    Round 2: "发送" → confirms, returns "邮件已回复".
-    """
-    client, fake_handler = email_test_client
-    session_id = "e2e-guard-confirm"
-    headers = {
-        "X-HW-AgentGateway-User-Id": "test-user",
-        "x-hw-agentarts-session-id": session_id,
-    }
-
-    # ── Round 1: Request reply → preview ──
-    resp1 = client.post(
-        "/invocations",
-        json={"message": "帮我回张三的邮件，说收到"},
-        headers=headers,
+    messages_b = await context.store.list_messages(
+        conversation_pk=conversation_b.pk,
+        after_sequence=None,
+        limit=10,
     )
-    assert resp1.status_code == 200, (
-        f"Round 1 failed: {resp1.status_code}: {resp1.text[:300]}"
-    )
-    data1 = resp1.json()
-    response1 = data1["response"]
-    assert "预览" in response1, (
-        f"Round 1 should show reply preview, got: {response1[:200]}"
-    )
-    assert "张三" in response1, "Preview should include recipient name"
-    assert "已回复" not in response1, "Preview must NOT contain '已回复'"
-    assert "已发送" not in response1, "Preview must NOT contain '已发送'"
-    assert "回复成功" not in response1, "Preview must NOT contain '回复成功'"
-
-    # ── Round 2: Confirm → sent ──
-    resp2 = client.post(
-        "/invocations",
-        json={"message": "发送"},
-        headers=headers,
-    )
-    assert resp2.status_code == 200, (
-        f"Round 2 failed: {resp2.status_code}: {resp2.text[:300]}"
-    )
-    data2 = resp2.json()
-    response2 = data2["response"]
-    assert ("已回复" in response2) or ("回复成功" in response2), (
-        f"Round 2 should confirm reply sent, got: {response2[:200]}"
-    )
-
-    # Both turns tracked
-    assert len(fake_handler.handle_calls) == 2
-
-
-@pytest.mark.integration
-def test_reply_to_email_cancel_flow(email_test_client):
-    """E2E-05: Reply Guard — preview then cancel → not sent.
-
-    Round 1: preview shown.
-    Round 2: "取消" → returns cancellation, no "已回复".
-    """
-    client, fake_handler = email_test_client
-    session_id = "e2e-guard-cancel"
-    headers = {
-        "X-HW-AgentGateway-User-Id": "test-user",
-        "x-hw-agentarts-session-id": session_id,
-    }
-
-    # Round 1: Preview
-    resp1 = client.post(
-        "/invocations",
-        json={"message": "帮我回张三的邮件，说收到"},
-        headers=headers,
-    )
-    assert resp1.status_code == 200
-    assert "预览" in resp1.json()["response"]
-
-    # Round 2: Cancel
-    resp2 = client.post(
-        "/invocations",
-        json={"message": "取消"},
-        headers=headers,
-    )
-    assert resp2.status_code == 200
-    response2 = resp2.json()["response"]
-    assert ("已取消" in response2) or ("不发送" in response2), (
-        f"Round 2 should confirm cancellation, got: {response2[:200]}"
-    )
-    assert "已回复" not in response2, "Cancellation must NOT contain '已回复'"
-
-
-@pytest.mark.integration
-def test_direct_send_shows_preview(email_test_client):
-    """E2E-06: Direct send request shows preview, NOT "已发送".
-
-    POST "帮zhangsan@example.com发邮件说你好" →
-    shows recipient, confirmation prompt; must NOT auto-send.
-    """
-    client, fake_handler = email_test_client
-    session_id = "e2e-send-preview"
-    headers = {
-        "X-HW-AgentGateway-User-Id": "test-user",
-        "x-hw-agentarts-session-id": session_id,
-    }
-
-    resp = client.post(
-        "/invocations",
-        json={"message": "帮zhangsan@example.com发邮件说你好"},
-        headers=headers,
-    )
-    assert resp.status_code == 200
-    response = resp.json()["response"]
-
-    # Must mention recipient or show send context
-    assert ("zhangsan@example.com" in response) or ("收件人" in response), (
-        f"Preview should mention recipient, got: {response[:200]}"
-    )
-    # Must ask for confirmation
-    assert any(phrase in response for phrase in ("确认", "发送吗", "需要发送")), (
-        f"Preview should ask for confirmation, got: {response[:200]}"
-    )
-    # Must NOT auto-send
-    assert "已发送" not in response, (
-        "Preview must NOT contain '已发送' before confirmation"
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 4: Cross-Session Identity
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.integration
-def test_cross_session_no_reauth(email_test_client):
-    """E2E-07: Two sessions, same user — both return email content.
-
-    Verifies no "请先授权" / "需要登录 Microsoft 365" re-auth prompt
-    appears. Each session is independent at the HTTP + handler layer.
-    """
-    client, fake_handler = email_test_client
-
-    # Session A
-    resp_a = client.post(
-        "/invocations",
-        json={"message": "帮我看看收件箱"},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "session-a",
-        },
-    )
-    assert resp_a.status_code == 200
-    data_a = resp_a.json()
-    assert "邮件" in data_a["response"], (
-        f"Session A should return email content: {data_a['response'][:200]}"
-    )
-    assert "请先授权" not in data_a["response"]
-    assert "需要登录 Microsoft 365" not in data_a["response"]
-
-    # Session B (same user, new session)
-    resp_b = client.post(
-        "/invocations",
-        json={"message": "再帮我看看收件箱"},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "session-b",
-        },
-    )
-    assert resp_b.status_code == 200
-    data_b = resp_b.json()
-    assert "邮件" in data_b["response"], (
-        f"Session B should return email content: {data_b['response'][:200]}"
-    )
-    assert "请先授权" not in data_b["response"]
-    assert "需要登录 Microsoft 365" not in data_b["response"]
-
-    # Both sessions tracked with correct session IDs
-    assert len(fake_handler.handle_calls) == 2
-    assert fake_handler.handle_calls[0][2] == "session-a"
-    assert fake_handler.handle_calls[1][2] == "session-b"
-
-
-@pytest.mark.integration
-def test_cross_session_independent_state(email_test_client):
-    """E2E-08: Session A cancels reply; Session B queries inbox normally.
-
-    Guard state must be scoped per session — cancellation in Session A
-    does not affect Session B's ability to read email.
-    """
-    client, fake_handler = email_test_client
-
-    headers_a = {
-        "X-HW-AgentGateway-User-Id": "test-user",
-        "x-hw-agentarts-session-id": "session-a",
-    }
-    headers_b = {
-        "X-HW-AgentGateway-User-Id": "test-user",
-        "x-hw-agentarts-session-id": "session-b",
-    }
-
-    # Session A: reply preview → cancel
-    r1 = client.post(
-        "/invocations",
-        json={"message": "帮我回张三的邮件，说收到"},
-        headers=headers_a,
-    )
-    assert r1.status_code == 200
-    assert "预览" in r1.json()["response"]
-
-    r2 = client.post(
-        "/invocations",
-        json={"message": "取消"},
-        headers=headers_a,
-    )
-    assert r2.status_code == 200
-    assert ("已取消" in r2.json()["response"]) or ("不发送" in r2.json()["response"])
-
-    # Session B: query inbox — must still work
-    r3 = client.post(
-        "/invocations",
-        json={"message": "帮我看看收件箱"},
-        headers=headers_b,
-    )
-    assert r3.status_code == 200
-    data3 = r3.json()
-    assert "邮件" in data3["response"], (
-        f"Session B should work after Session A cancel: {data3['response'][:200]}"
-    )
-    assert "已取消" not in data3["response"], (
-        "Session B must not see Session A's cancelled state"
-    )
-
-    # All three calls tracked
-    assert len(fake_handler.handle_calls) == 3
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 3b: Tool-level confirm parameter behavior
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-# ── Helpers for tool-level tests ────────────────────────────────────────────
+    assert [message.role for message in messages_a] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [message.role for message in messages_b] == ["user", "assistant"]
+    assert messages_b[-1].content.parts[0].text == FakeEmailHandler.INBOX_RESPONSE
 
 
 def _make_passthrough_decorator(*args, **kwargs):
-    """Mock require_access_token — returns function unchanged (no token injection)."""
+    """Return the decorated function without injecting an access token."""
 
     def decorator(func):
         import functools
@@ -730,14 +446,7 @@ def _make_passthrough_decorator(*args, **kwargs):
 
 
 def _import_email_tools():
-    """Import email_tools with agentarts.sdk mocked.
-
-    The real SDK is not needed for these tool contract checks, so the
-    decorator boundary is mocked before the module is imported.
-    """
-    import sys
-    from unittest.mock import MagicMock
-
+    """Import email_tools with the AgentArts decorator boundary mocked."""
     mock_agentarts_sdk = MagicMock()
     mock_agentarts_sdk.require_access_token = _make_passthrough_decorator
     mock_agentarts_sdk.IdentityClient = MagicMock()
@@ -751,31 +460,25 @@ def _import_email_tools():
             "agentarts.sdk.identity.types": MagicMock(),
         },
     ):
-        from app.tools import email_tools  # noqa: E402
+        from app.tools import email_tools
 
         return email_tools
 
 
 def _mock_graph_client():
-    """Return a mock httpx.AsyncClient that returns 202 for POST calls."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 202
-    mock_resp.text = ""
+    """Return an async Graph client whose requests receive HTTP 202."""
+    mock_response = MagicMock()
+    mock_response.status_code = 202
+    mock_response.text = ""
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-    mock_client.request = AsyncMock(return_value=mock_resp)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.request = AsyncMock(return_value=mock_response)
     return mock_client
 
 
-@pytest.mark.integration
-def test_email_public_tool_signatures_exclude_access_token():
-    """E2E-11: public Email tool signatures expose business parameters only."""
-    import inspect
-
+def test_email_public_tool_signatures_exclude_access_token() -> None:
     email_tools = _import_email_tools()
 
     assert list(inspect.signature(email_tools.send_email).parameters) == [
@@ -790,13 +493,9 @@ def test_email_public_tool_signatures_exclude_access_token():
     ]
 
 
-@pytest.mark.integration
-def test_send_email_calls_m365_request_boundary():
-    """E2E-12: send_email calls the M365 request boundary directly."""
+def test_send_email_calls_m365_request_boundary() -> None:
     email_tools = _import_email_tools()
     mock_client = _mock_graph_client()
-
-    import asyncio
 
     with patch.object(
         email_tools,
@@ -811,25 +510,14 @@ def test_send_email_calls_m365_request_boundary():
             )
         )
 
-    assert result["sent"] is True, (
-        f"Expected sent=True via request boundary, got: {result}"
-    )
-    assert result["error"] is None, f"Expected no error, got: {result}"
+    assert result["sent"] is True
+    assert result["error"] is None
     request.assert_awaited_once()
-    call_args = request.call_args
-    assert call_args.args[:2] == ("POST", "/sendMail")
+    assert request.call_args.args[:2] == ("POST", "/sendMail")
 
 
-@pytest.mark.integration
-def test_send_email_input_validation():
-    """E2E-13: send_email validates 'to' before request boundary.
-
-    Calling send_email with an empty to list should return an error dict
-    immediately, without calling Graph API or the request boundary.
-    """
+def test_send_email_input_validation() -> None:
     email_tools = _import_email_tools()
-
-    import asyncio
 
     with patch.object(email_tools, "_m365_email_request", AsyncMock()) as request:
         result = asyncio.run(
@@ -840,138 +528,27 @@ def test_send_email_input_validation():
             )
         )
 
-    assert result["sent"] is False, f"Expected sent=False for empty to, got: {result}"
-    assert "error" in result, f"Expected error key, got: {result}"
-    assert "recipient" in result["error"].lower(), (
-        f"Expected error about recipients, got: {result['error']}"
-    )
+    assert result["sent"] is False
+    assert "recipient" in result["error"].lower()
     request.assert_not_awaited()
 
 
-@pytest.mark.integration
-def test_reply_to_email_input_validation():
-    """E2E-14: reply_to_email validates input before request boundary.
-
-    Empty/whitespace-only email_id or body should return error dicts
-    immediately, without calling Graph API or the request boundary.
-    """
+def test_reply_to_email_input_validation() -> None:
     email_tools = _import_email_tools()
 
-    import asyncio
-
-    with patch.object(
-        email_tools,
-        "_m365_email_request",
-        AsyncMock(),
-    ) as request:
-        # Empty email_id
-        result = asyncio.run(
-            email_tools.reply_to_email(
-                email_id="",
-                body="Some reply",
-            )
+    with patch.object(email_tools, "_m365_email_request", AsyncMock()) as request:
+        empty_id = asyncio.run(
+            email_tools.reply_to_email(email_id="", body="Some reply")
         )
-        assert result["sent"] is False, (
-            f"Expected sent=False for empty email_id, got: {result}"
-        )
-        assert "email_id" in result.get("error", "").lower(), (
-            f"Expected error about email_id, got: {result}"
+        empty_body = asyncio.run(email_tools.reply_to_email(email_id="msg123", body=""))
+        whitespace_body = asyncio.run(
+            email_tools.reply_to_email(email_id="msg123", body="   ")
         )
 
-        # Empty body
-        result = asyncio.run(
-            email_tools.reply_to_email(
-                email_id="msg123",
-                body="",
-            )
-        )
-        assert result["sent"] is False, (
-            f"Expected sent=False for empty body, got: {result}"
-        )
-        assert "body" in result.get("error", "").lower(), (
-            f"Expected error about body, got: {result}"
-        )
-
-        # Whitespace-only body
-        result = asyncio.run(
-            email_tools.reply_to_email(
-                email_id="msg123",
-                body="   ",
-            )
-        )
-        assert result["sent"] is False
-        assert "body" in result.get("error", "").lower()
-
+    assert empty_id["sent"] is False
+    assert "email_id" in empty_id["error"].lower()
+    assert empty_body["sent"] is False
+    assert "body" in empty_body["error"].lower()
+    assert whitespace_body["sent"] is False
+    assert "body" in whitespace_body["error"].lower()
     request.assert_not_awaited()
-
-
-@pytest.mark.integration
-def test_search_emails_sse_streaming(email_test_client):
-    """E2E-15: SSE streaming search returns valid SSE with search results.
-
-    Similar to E2E-02 but with a search message. Verifies SSE format,
-    content-type, and accumulated tokens contain search keywords.
-    """
-    client, fake_handler = email_test_client
-
-    resp = client.post(
-        "/invocations",
-        json={"message": "帮我查一下项目进度的邮件", "stream": True},
-        headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "e2e-session-search-sse",
-            "Accept": "text/event-stream",
-        },
-    )
-    assert resp.status_code == 200, (
-        f"Expected 200 for search SSE, got {resp.status_code}: {resp.text[:300]}"
-    )
-
-    # Content-type
-    content_type = resp.headers.get("content-type", "")
-    assert "text/event-stream" in content_type, (
-        f"Expected text/event-stream, got: {content_type}"
-    )
-
-    # SSE infrastructure headers
-    assert resp.headers.get("cache-control") == "no-cache"
-    assert resp.headers.get("connection") == "keep-alive"
-
-    # Verify stream_calls recorded
-    assert len(fake_handler.stream_calls) == 1, (
-        f"Expected 1 stream call, got {len(fake_handler.stream_calls)}"
-    )
-    msg, user_id, session_id = fake_handler.stream_calls[0]
-    assert "项目进度" in msg
-    assert user_id == "test-user"
-
-    # Parse SSE and validate format
-    body = resp.text
-    lines = [line.strip() for line in body.split("\n") if line.strip()]
-    assert len(lines) > 0, "SSE response should have data lines"
-
-    accumulated = ""
-    for line in lines:
-        assert line.startswith("data: "), (
-            f"SSE line should start with 'data: ': {line[:80]}"
-        )
-        payload = line[6:]
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            pytest.fail(f"Invalid JSON in SSE: {payload[:100]}")
-        assert "done" in data, f"SSE data missing 'done' field: {data}"
-        if data.get("token") and not data.get("done"):
-            accumulated += data["token"]
-
-    # Last event must signal completion
-    last_event = json.loads(lines[-1][6:])
-    assert last_event["done"] is True, (
-        f"Last SSE event should have done=True: {last_event}"
-    )
-
-    # Accumulated text must contain search keywords
-    assert len(accumulated) > 0, "No tokens accumulated from SSE stream"
-    assert any(kw in accumulated for kw in ("搜索", "项目进度", "封")), (
-        f"Expected search keywords in stream: {accumulated[:200]}"
-    )

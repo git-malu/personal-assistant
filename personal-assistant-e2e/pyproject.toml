@@ -23,6 +23,7 @@ line-ending = "lf"
 target-version = "py312"
 
 [tool.pytest.ini_options]
+addopts = ["-m", "not manual"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [

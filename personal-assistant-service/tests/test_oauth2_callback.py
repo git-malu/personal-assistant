@@ -1,7 +1,11 @@
 """Tests for Calendar OAuth2 backend-owned callback completion."""
 
+import base64
+import hashlib
+import hmac
+import json
 from contextlib import suppress
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -44,9 +48,78 @@ def _state(settings: Settings, user_id: str = "user-1") -> str:
     return create_oauth2_state(
         settings=settings,
         user_id=user_id,
-        session_id="session-1",
         provider=settings.m365_calendar_provider_name,
     )
+
+
+def _jwt_token(subject: str) -> str:
+    def encode(value: dict[str, str]) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{encode({'alg': 'RS256'})}.{encode({'sub': subject})}.gateway-signature"
+
+
+def _authorization(subject: str = "state-user") -> dict[str, str]:
+    return {"Authorization": f"Bearer {_jwt_token(subject)}"}
+
+
+def test_new_oauth_state_omits_runtime_session_and_legacy_state_is_readable(
+    calendar_settings,
+):
+    state = _state(calendar_settings)
+    payload, _signature = state.rsplit(".", maxsplit=1)
+    padded = payload + "=" * (-len(payload) % 4)
+    raw_claims = json.loads(base64.urlsafe_b64decode(padded))
+
+    assert "session_id" not in raw_claims
+    current = verify_oauth2_state(
+        state,
+        settings=calendar_settings,
+        expected_provider=calendar_settings.m365_calendar_provider_name,
+    )
+    assert current.session_id is None
+
+    raw_claims["session_id"] = "legacy-runtime-session"
+    legacy_payload = (
+        base64.urlsafe_b64encode(
+            json.dumps(raw_claims, separators=(",", ":"), sort_keys=True).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    legacy_signature = (
+        base64.urlsafe_b64encode(
+            hmac.new(
+                calendar_settings.oauth2_state_secret.encode(),
+                legacy_payload.encode(),
+                hashlib.sha256,
+            ).digest()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    legacy = verify_oauth2_state(
+        f"{legacy_payload}.{legacy_signature}",
+        settings=calendar_settings,
+        expected_provider=calendar_settings.m365_calendar_provider_name,
+    )
+    assert legacy.session_id == "legacy-runtime-session"
+
+
+@pytest.mark.asyncio
+async def test_callback_store_startup_leaves_schema_to_alembic():
+    store = OAuth2CallbackStore(
+        settings=Settings(postgres_dsn="postgresql://localhost/test")
+    )
+
+    with patch(
+        "app.oauth2_callback_store.psycopg.AsyncConnection.connect",
+        new_callable=AsyncMock,
+    ) as connect:
+        await store.startup()
+
+    connect.assert_not_awaited()
 
 
 class _IdentityPermissionError(Exception):
@@ -102,6 +175,7 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
     identity_client.create_workload_access_token.return_value = "callback-jwt-wat"
     store = FakeOAuth2CallbackStore()
     state = _state(calendar_settings, user_id="state-user")
+    user_token = _jwt_token("state-user")
 
     with (
         patch("app.auth.IdentityClient", return_value=identity_client),
@@ -115,7 +189,7 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
-            headers={"Authorization": "Bearer callback-user-token"},
+            headers={"Authorization": f"Bearer {user_token}"},
         )
 
     assert response.status_code == 200
@@ -124,11 +198,11 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
     identity_client.complete_resource_token_auth.assert_called_once()
     kwargs = identity_client.complete_resource_token_auth.call_args.kwargs
     assert kwargs["session_uri"] == "urn:uuid:test"
-    assert kwargs["user_identifier"].user_token == "callback-user-token"
+    assert kwargs["user_identifier"].user_token == user_token
     assert kwargs["user_identifier"].user_id is None
     identity_client.create_workload_access_token.assert_called_once_with(
         "pa-local-jwt-workload",
-        user_token="callback-user-token",
+        user_token=user_token,
     )
     assert len(store.begin_calls) == 1
     assert len(store.completed_calls) == 1
@@ -143,6 +217,7 @@ async def test_backend_callback_returns_json_for_local_fallback(
     identity_client.create_workload_access_token.return_value = "callback-jwt-wat"
     store = FakeOAuth2CallbackStore()
     state = _state(calendar_settings, user_id="state-user")
+    user_token = _jwt_token("state-user")
 
     with (
         patch("app.auth.IdentityClient", return_value=identity_client),
@@ -158,7 +233,7 @@ async def test_backend_callback_returns_json_for_local_fallback(
             },
             headers={
                 "Accept": "application/json",
-                "Authorization": "Bearer callback-user-token",
+                "Authorization": f"Bearer {user_token}",
             },
         )
 
@@ -210,6 +285,7 @@ async def test_backend_callback_rejects_invalid_state(client, calendar_settings)
                 "session_uri": "urn:uuid:test",
                 "state": "not-a-valid-state",
             },
+            headers=_authorization(),
         )
 
     assert response.status_code == 200
@@ -239,6 +315,7 @@ async def test_backend_callback_completed_replay_does_not_call_identity(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
+            headers=_authorization(),
         )
         second = await client.get(
             "/auth/oauth2/callback/m365-calendar",
@@ -246,6 +323,7 @@ async def test_backend_callback_completed_replay_does_not_call_identity(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
+            headers=_authorization(),
         )
 
     assert first.status_code == 200
@@ -275,6 +353,7 @@ async def test_backend_callback_active_duplicate_does_not_call_identity(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
+            headers=_authorization(),
         )
 
     assert response.status_code == 200
@@ -320,6 +399,7 @@ async def test_backend_callback_reports_identity_permission_error(
     )
     store = FakeOAuth2CallbackStore()
     state = _state(calendar_settings, user_id="state-user")
+    user_token = _jwt_token("state-user")
 
     with (
         patch("app.auth.IdentityClient", return_value=identity_client),
@@ -333,7 +413,7 @@ async def test_backend_callback_reports_identity_permission_error(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
-            headers={"Authorization": "Bearer callback-user-token"},
+            headers={"Authorization": f"Bearer {user_token}"},
         )
 
     assert response.status_code == 200
@@ -366,9 +446,9 @@ async def test_backend_callback_requires_authorization_user_token(
 
     assert response.status_code == 200
     assert "授权失败" in response.text
-    assert "请保持原聊天窗口处于登录状态" in response.text
+    assert "登录状态无效" in response.text
     identity_client.complete_resource_token_auth.assert_not_called()
-    assert len(store.clear_calls) == 1
+    assert store.begin_calls == []
 
 
 @pytest.mark.asyncio

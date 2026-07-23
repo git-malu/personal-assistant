@@ -28,6 +28,7 @@ Personal Assistant 是一个以 **Agent Identity 最佳实现 Demo** 为目标�
 | LLM Credential | 已实现 | DeepSeek API Key 通过 `DEEPSEEK_API_KEY` Credential Provider 注入 |
 | Microsoft 365 邮件 | 已实现 | `m365-provider` OAuth2 User Federation，支持邮件列表、详情、搜索、发送、回复 |
 | GitHub 工具 | 已实现 | `github-provider` OAuth2 User Federation，支持仓库列表、目录/文件读取、代码搜索、加星 |
+| GitHub MCP Activity | 已实现 | `github-mcp-gateway` STS + read-only MCP Target；4 个 internal source 供内部编排复用，Agent 仅暴露 `github_search_activity` / `github_get_activity_detail` |
 | Gitee 工具 | 已实现 | `gitee-provider` OAuth2 User Federation，支持仓库列表 |
 | 华为云 IAM 工具 | 已实现 | `iam-users-readonly` STS Provider，只读列出 IAM 用户 |
 | 敏感操作 Guard | 已实现 | 邮件发送、邮件回复、GitHub 加星均需要二次确认 |
@@ -49,12 +50,16 @@ flowchart LR
     Agent -->|"@require_access_token"| GitHub["Identity<br/>github-provider"]
     Agent -->|"@require_access_token"| Gitee["Identity<br/>gitee-provider"]
     Agent -->|"@require_sts_token"| IAM["Identity<br/>iam-users-readonly"]
+    Agent -->|"WAT → STS"| MCPIdentity["Identity<br/>github-mcp-gateway"]
 
     LLMKey --> LLM["DeepSeek Chat API"]
     M365 --> Graph["Microsoft Graph Mail API"]
     GitHub --> GitHubAPI["GitHub API"]
     Gitee --> GiteeAPI["Gitee API"]
     IAM --> HuaweiIAM["Huawei Cloud IAM API"]
+    MCPIdentity -->|"IAM signed MCP"| MCPGateway["AgentArts MCP Gateway"]
+    MCPGateway --> MCPTarget["read-only GitHub MCP Target"]
+    MCPTarget --> GitHubAPI
 ```
 
 后端是标准 FastAPI 应用，部署到 AgentArts Runtime 的 ARM64 容器中。AgentArts 负责 Runtime、Gateway、Identity 和可观测性；业务代码负责 Agent 编排、工具注册、用户会话隔离和敏感操作确认。
@@ -87,8 +92,12 @@ Web Chat 通过 MSAL 获取 Microsoft Entra ID `id_token`，请求 `/invocations
 | `github-provider` | OAuth2 User Federation | 调用 GitHub API |
 | `gitee-provider` | OAuth2 User Federation | 调用 Gitee API |
 | `iam-users-readonly` | STS | 使用临时云凭据只读访问华为云 IAM |
+| `github-mcp-gateway` | STS | IAM 签名调用 GitHub MCP Gateway；PAT 只由 Target 托管 |
 
-代码通过 `@require_api_key`、`@require_access_token` 和 `@require_sts_token` 装饰器获取凭据，不直接持久化用户 token、client secret、AK/SK 或长期 API key。
+普通外部工具通过 `@require_api_key`、`@require_access_token` 和
+`@require_sts_token` 装饰器获取凭据；GitHub MCP client 使用 request context 中的
+WAT 换取专用 STS 临时凭据并逐请求签名。代码不持久化用户 token、client secret、
+AK/SK 或长期 API key。
 
 ### 3. Agent 执行敏感操作
 
@@ -107,7 +116,7 @@ personal-assistant/
 ├── personal-assistant-client/   # Web Chat 前端：React、assistant-ui、MSAL、SSE
 ├── personal-assistant-service/  # Agent 后端：FastAPI、deepagents、Identity SDK、工具实现
 ├── personal-assistant-meta/     # Design hub：规格、ADR、issue plan、架构文档
-├── personal-assistant-infra/    # OpenTofu + HCL：未来华为云基础资源的空基线
+├── personal-assistant-infra/    # OpenTofu + HCL：RDS、网络、安全组、EIP 与 OAuth helper
 ├── personal-assistant-e2e/      # pytest E2E：Service + Client 联调
 ├── .opencode/                   # OpenCode agent 定义与 workflow 配置
 ├── AGENTS.md                    # 项目协作规范
@@ -188,7 +197,7 @@ Vite dev server 默认监听 `http://localhost:5173`，并将 `/invocations` 代
 | Backend | AgentArts Runtime | FastAPI ARM64 容器，入口 `/ping` 和 `/invocations` |
 | Identity | AgentArts Identity | 配置 Inbound `CUSTOM_JWT` 与 Outbound Credential Providers |
 | Frontend | Cloudflare Pages | Vite 静态文件 + Pages Function same-origin `/invocations` Proxy |
-| Infrastructure | OpenTofu + HCL | 保留未来 RDS、IAM、VPC、EIP 等华为云资源的 IaC 空基线 |
+| Infrastructure | OpenTofu + HCL | 管理 PostgreSQL RDS、VPC/Subnet 引用、Security Group、EIP 与 Agent Identity OAuth helper |
 
 后端部署配置在 `personal-assistant-service/.agentarts_config.yaml`；Cloudflare
 Pages 配置位于 `personal-assistant-client/wrangler.toml`。Production Web

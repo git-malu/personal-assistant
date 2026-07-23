@@ -34,6 +34,19 @@ def get_github_scopes_list() -> list[str]:
     return get_settings().github_scope_list
 
 
+def get_github_mcp_config() -> dict[str, str | float | bool]:
+    """Return GitHub MCP Gateway data source settings."""
+    settings = get_settings()
+    return {
+        "enabled": settings.github_mcp_enabled,
+        "gateway_url": str(settings.github_mcp_gateway_url),
+        "auth_mode": settings.github_mcp_auth_mode,
+        "sts_provider_name": settings.github_mcp_sts_provider_name,
+        "sts_agency_session_name": settings.github_mcp_sts_agency_session_name,
+        "timeout_seconds": settings.github_mcp_timeout_seconds,
+    }
+
+
 def get_iam_users_readonly_config() -> dict[str, str]:
     """Return outbound IAM Users credential provider settings."""
     settings = get_settings()

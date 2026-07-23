@@ -38,10 +38,9 @@ class TestBuildConfig:
             "Different users should produce different thread_ids"
         )
 
-    def test_build_config_fallback_default(self):
-        """_build_config("user_a", None) → thread_id = "user_a:default"."""
-        config = AgentHandler._build_config("user_a", None)
-        assert config == {"configurable": {"thread_id": "user_a:default"}}
+    def test_build_config_requires_conversation_id(self):
+        with pytest.raises(ValueError, match="conversation_id is required"):
+            AgentHandler._build_config("user_a", "")
 
     def test_build_config_different_sessions_same_user(self):
         """Same user with different sessions → different thread_ids."""
@@ -54,12 +53,11 @@ class TestBuildConfig:
         assert config_s1["configurable"]["thread_id"] == "user_a:s1"
         assert config_s2["configurable"]["thread_id"] == "user_a:s2"
 
-    def test_build_config_default_session_same_for_anonymous(self):
-        """Two anonymous users with no session_id get same default suffix."""
-        config_1 = AgentHandler._build_config("anonymous", None)
-        config_2 = AgentHandler._build_config("anonymous", None)
+    def test_build_config_is_deterministic(self):
+        config_1 = AgentHandler._build_config("anonymous", "conversation-1")
+        config_2 = AgentHandler._build_config("anonymous", "conversation-1")
         assert config_1 == config_2
-        assert config_1["configurable"]["thread_id"] == "anonymous:default"
+        assert config_1["configurable"]["thread_id"] == "anonymous:conversation-1"
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +136,44 @@ class TestInitCheckpointer:
             await handler.shutdown()
             context.__aexit__.assert_awaited_once_with(None, None, None)
 
+    @pytest.mark.asyncio
+    async def test_restart_replaces_stale_postgres_checkpointer(self):
+        """Recovery closes the stale context and opens a fresh Checkpointer."""
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        settings = Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://localhost/test",
+        )
+        stale_checkpointer = MagicMock(spec=AsyncPostgresSaver)
+        stale_checkpointer.setup = AsyncMock()
+        stale_context = MagicMock()
+        stale_context.__aenter__ = AsyncMock(return_value=stale_checkpointer)
+        stale_context.__aexit__ = AsyncMock(return_value=None)
+
+        fresh_checkpointer = MagicMock(spec=AsyncPostgresSaver)
+        fresh_checkpointer.setup = AsyncMock()
+        fresh_context = MagicMock()
+        fresh_context.__aenter__ = AsyncMock(return_value=fresh_checkpointer)
+        fresh_context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(
+            AsyncPostgresSaver,
+            "from_conn_string",
+            side_effect=[stale_context, fresh_context],
+        ) as mock_from:
+            handler = AgentHandler(settings=settings)
+            await handler.startup()
+            await handler._restart_checkpointer(stale_checkpointer)
+
+            assert handler.checkpointer is fresh_checkpointer
+            assert mock_from.call_count == 2
+            stale_context.__aexit__.assert_awaited_once_with(None, None, None)
+            fresh_checkpointer.setup.assert_awaited_once()
+
+            await handler.shutdown()
+            fresh_context.__aexit__.assert_awaited_once_with(None, None, None)
+
 
 # ---------------------------------------------------------------------------
 # Config passing — handle() and handle_stream()
@@ -183,7 +219,7 @@ class TestConfigPassing:
         await handler.handle(
             message="Hello",
             user_id="user-42",
-            session_id="sess-xyz",
+            conversation_id="conversation-xyz",
         )
 
         mock_agent.ainvoke.assert_called_once()
@@ -193,23 +229,26 @@ class TestConfigPassing:
             "agent.ainvoke() should be called with a config kwarg"
         )
         assert call_kwargs["config"] == {
-            "configurable": {"thread_id": "user-42:sess-xyz"}
+            "configurable": {"thread_id": "user-42:conversation-xyz"}
         }
 
     @pytest.mark.asyncio
-    async def test_handler_passes_config_with_default_session(self, patched_handler):
-        """handle() without explicit session_id uses 'default' suffix."""
+    async def test_handler_passes_conversation_config(self, patched_handler):
         handler, mock_agent, _ = patched_handler
 
         mock_message = MagicMock()
         mock_message.content = "response"
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
 
-        await handler.handle(message="Hello", user_id="user-99")
+        await handler.handle(
+            message="Hello",
+            user_id="user-99",
+            conversation_id="conversation-99",
+        )
 
         call_kwargs = mock_agent.ainvoke.call_args[1]
         assert call_kwargs["config"] == {
-            "configurable": {"thread_id": "user-99:default"}
+            "configurable": {"thread_id": "user-99:conversation-99"}
         }
 
     @pytest.mark.asyncio
@@ -229,15 +268,13 @@ class TestConfigPassing:
             async for event in handler.handle_stream(
                 message="Hi",
                 user_id="user-42",
-                session_id="sess-abc",
+                conversation_id="conversation-abc",
             )
         ]
-        # At least 1 token event + 1 done event
-        assert len(events) >= 2, f"Expected >= 2 events, got {len(events)}: {events}"
+        assert len(events) == 1
 
     @pytest.mark.asyncio
-    async def test_handle_stream_accepts_session_id(self, patched_handler):
-        """handle_stream(msg, session_id="s1") works correctly."""
+    async def test_handle_stream_accepts_conversation_id(self, patched_handler):
         handler, mock_agent, _ = patched_handler
 
         async def mock_astream(_input, stream_mode=None, config=None):
@@ -249,9 +286,13 @@ class TestConfigPassing:
 
         events = [
             event
-            async for event in handler.handle_stream(message="Test", session_id="s1")
+            async for event in handler.handle_stream(
+                message="Test",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
         ]
-        assert len(events) >= 2, f"Expected >= 2 events, got {len(events)}: {events}"
+        assert len(events) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +301,11 @@ class TestConfigPassing:
 
 
 class TestContextRetention:
-    """Tests that the same session_id reuses the same thread_id across turns,
-    while different session_ids get isolated thread_ids."""
+    """Conversation ids retain context while keeping conversations isolated."""
 
     @pytest.mark.asyncio
     async def test_multi_turn_context_retention(self, patched_handler):
-        """Mock agent called twice with same (user_id, session_id) →
+        """Mock agent called twice with same (user_id, conversation_id) →
         both calls use the same thread_id."""
         handler, mock_agent, _ = patched_handler
 
@@ -277,13 +317,13 @@ class TestContextRetention:
         await handler.handle(
             message="First message",
             user_id="user-x",
-            session_id="session-y",
+            conversation_id="conversation-y",
         )
         # Turn 2 — same user and session
         await handler.handle(
             message="Second message",
             user_id="user-x",
-            session_id="session-y",
+            conversation_id="conversation-y",
         )
 
         assert mock_agent.ainvoke.call_count == 2
@@ -292,25 +332,31 @@ class TestContextRetention:
         config_2 = mock_agent.ainvoke.call_args_list[1][1]["config"]
 
         assert config_1 == config_2, (
-            f"Same (user_id, session_id) should produce same thread_id, "
+            f"Same (user_id, conversation_id) should produce same thread_id, "
             f"got {config_1} vs {config_2}"
         )
-        assert config_1["configurable"]["thread_id"] == "user-x:session-y"
+        assert config_1["configurable"]["thread_id"] == "user-x:conversation-y"
 
     @pytest.mark.asyncio
-    async def test_session_isolation(self, patched_handler):
-        """Two different session_ids produce different thread_ids."""
+    async def test_conversation_isolation(self, patched_handler):
+        """Two different conversation ids produce different thread_ids."""
         handler, mock_agent, _ = patched_handler
 
         mock_message = MagicMock()
         mock_message.content = "response"
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
 
-        # Session A
-        await handler.handle(message="Hello", user_id="user-1", session_id="session-a")
-        # Session B — same user, different session
+        # Conversation A
         await handler.handle(
-            message="Hello again", user_id="user-1", session_id="session-b"
+            message="Hello",
+            user_id="user-1",
+            conversation_id="conversation-a",
+        )
+        # Conversation B - same user, different conversation
+        await handler.handle(
+            message="Hello again",
+            user_id="user-1",
+            conversation_id="conversation-b",
         )
 
         assert mock_agent.ainvoke.call_count == 2
@@ -319,14 +365,14 @@ class TestContextRetention:
         config_b = mock_agent.ainvoke.call_args_list[1][1]["config"]
 
         assert config_a != config_b, (
-            f"Different sessions should produce different thread_ids, "
+            f"Different conversations should produce different thread_ids, "
             f"got {config_a} and {config_b}"
         )
-        assert config_a["configurable"]["thread_id"] == "user-1:session-a"
-        assert config_b["configurable"]["thread_id"] == "user-1:session-b"
+        assert config_a["configurable"]["thread_id"] == "user-1:conversation-a"
+        assert config_b["configurable"]["thread_id"] == "user-1:conversation-b"
 
     def test_user_scoped_thread_id_prevents_cross_user_leak(self):
-        """Even with the same session_id, different users get different thread_ids.
+        """Even with the same conversation id, users get different thread_ids.
 
         This prevents user A from reading user B's checkpoint state.
         _build_config is a static method, so we test it directly.
@@ -335,7 +381,7 @@ class TestContextRetention:
         config_b = AgentHandler._build_config("user_b", "shared-session")
 
         assert config_a != config_b, (
-            "Different users with same session_id must have different thread_ids "
+            "Different users with same conversation id must have different thread_ids "
             "to prevent cross-user state leakage"
         )
         assert config_a["configurable"]["thread_id"] == "user_a:shared-session"

@@ -27,6 +27,23 @@ jobs:
     name: Service lint and tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/personal_assistant_test
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: personal_assistant_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d personal_assistant_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -51,6 +68,12 @@ jobs:
         working-directory: personal-assistant-service
         run: uv run ruff check .
 
+      - name: Verify database migrations
+        working-directory: personal-assistant-service
+        env:
+          POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+        run: uv run alembic upgrade head
+
       - name: Pytest
         working-directory: personal-assistant-service
         run: uv run pytest tests/
@@ -67,7 +90,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: personal-assistant-client/package-lock.json
 
@@ -83,10 +106,27 @@ jobs:
         working-directory: personal-assistant-client
         run: npm run build
 
-  e2e-smoke:
-    name: E2E smoke
+  e2e:
+    name: E2E tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/personal_assistant_test
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: personal_assistant_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d personal_assistant_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -96,6 +136,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: personal-assistant-client/package-lock.json
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -113,6 +160,14 @@ jobs:
         working-directory: personal-assistant-e2e
         run: uv sync --locked
 
+      - name: Install Playwright Chromium
+        working-directory: personal-assistant-e2e
+        run: uv run playwright install --with-deps chromium
+
+      - name: Install client dependencies
+        working-directory: personal-assistant-client
+        run: npm ci
+
       - name: Ruff check
         working-directory: personal-assistant-e2e
         run: uv run ruff check .
@@ -124,3 +179,7 @@ jobs:
       - name: Smoke tests
         working-directory: personal-assistant-e2e
         run: uv run pytest -m smoke -q
+
+      - name: Full-stack integration tests
+        working-directory: personal-assistant-e2e
+        run: uv run pytest -m full_stack -q

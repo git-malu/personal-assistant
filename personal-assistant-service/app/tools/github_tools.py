@@ -312,28 +312,32 @@ GITHUB_TOOLS = [
         "github_list_repositories",
         description=(
             "List GitHub repositories visible to the current end user. "
-            "Returns repository names, privacy flags, default branches, and URLs."
+            "Returns repository names, privacy flags, default branches, and URLs. "
+            "Uses end-user OAuth; do not use for GitHub MCP activity requests."
         ),
     )(list_repositories),
     tool(
         "github_list_repo_contents",
         description=(
             "List files and directories in a GitHub repository path visible to "
-            "the current end user."
+            "the current end user. Uses end-user OAuth; do not use for GitHub MCP "
+            "activity requests."
         ),
     )(list_repo_contents),
     tool(
         "github_get_file_content",
         description=(
             "Fetch and decode a text file from a GitHub repository visible to "
-            "the current end user."
+            "the current end user. Uses end-user OAuth; do not use for GitHub MCP "
+            "activity requests."
         ),
     )(get_file_content),
     tool(
         "github_search_code",
         description=(
             "Search GitHub code visible to the current end user using GitHub "
-            "search query syntax."
+            "search query syntax. Uses end-user OAuth; do not use for GitHub MCP "
+            "activity requests."
         ),
     )(search_code),
     tool(
@@ -341,7 +345,8 @@ GITHUB_TOOLS = [
         description=(
             "Star a GitHub repository for the current end user. This is a "
             "sensitive write operation: call with confirm=False to preview, "
-            "then call with confirm=True only after explicit user confirmation."
+            "then call with confirm=True only after explicit user confirmation. "
+            "Uses end-user OAuth; do not use for GitHub MCP activity requests."
         ),
     )(star_repository),
 ]

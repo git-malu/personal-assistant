@@ -18,6 +18,7 @@ Tests the Landing Page UI rendered for unauthenticated users:
 
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -50,7 +51,7 @@ _vite_port: int | None = None
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
+        s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
@@ -79,10 +80,25 @@ def vite_url() -> str:
         )
 
     _vite_port = _find_free_port()
-    env = {**os.environ, "BROWSER": "none"}
+    env = {
+        **os.environ,
+        "BROWSER": "none",
+        "VITE_ENTRA_CLIENT_ID": "00000000-0000-0000-0000-000000000001",
+        "VITE_ENTRA_TENANT_ID": "common",
+    }
+    node = shutil.which("node.exe") or shutil.which("node") or "node"
+    vite = CLIENT_DIR / "node_modules" / "vite" / "bin" / "vite.js"
 
     _vite_proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", str(_vite_port)],
+        [
+            node,
+            str(vite),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(_vite_port),
+            "--strictPort",
+        ],
         cwd=str(CLIENT_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -97,7 +113,7 @@ def vite_url() -> str:
                 f"Vite dev server exited early with code {_vite_proc.returncode}"
             )
         try:
-            resp = httpx.get(f"http://localhost:{_vite_port}/", timeout=2.0)
+            resp = httpx.get(f"http://127.0.0.1:{_vite_port}/", timeout=2.0)
             if resp.status_code == 200:
                 break
         except (httpx.ConnectError, httpx.TimeoutException):
@@ -109,7 +125,7 @@ def vite_url() -> str:
             f"Vite dev server did not start within 60s on port {_vite_port}"
         )
 
-    yield f"http://localhost:{_vite_port}"
+    yield f"http://127.0.0.1:{_vite_port}"
 
     _stop_vite()
 
@@ -837,8 +853,9 @@ class TestClientUnitTests:
         if not (CLIENT_DIR / "node_modules").is_dir():
             pytest.skip("node_modules/ not found")
 
+        npx = "npx.cmd" if os.name == "nt" else "npx"
         result = subprocess.run(
-            ["npx", "vitest", "run"],
+            [npx, "vitest", "run"],
             cwd=str(CLIENT_DIR),
             capture_output=True,
             text=True,

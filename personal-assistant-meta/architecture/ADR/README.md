@@ -2,6 +2,10 @@
 
 Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 格式](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)。
 
+ADR 按决策时间统一编号，不按 Frontend、Backend 或 Infra 拆分目录。决策范围通过标题、
+关联文档和正文标明，因为重要决策通常跨越多个系统边界。纯视觉样式和容易撤销的组件
+调整不创建 ADR；这类约定记录在 Client `DESIGN.md` 或对应 issue 中。
+
 ## 决策列表
 
 | 编号 | 标题 | 状态 | 决策 |
@@ -25,6 +29,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-017](ADR-017-cloudflare-pages-proxy.md) | Cloudflare Pages 托管与 Same-Origin API Proxy | Accepted | Cloudflare Pages 托管 SPA，Pages Function 透明代理 JWT 与 SSE 到 AgentArts Gateway |
 | [ADR-018](ADR-018-service-structured-logging.md) | Service Structured Logging 与统一配置所有权 | Accepted | Uvicorn `--log-config` 统一 process logging，本地 console、生产 JSON，并关联 request/session/trace context |
 | [ADR-019](ADR-019-web-chat-bff-boundary.md) | Web Chat BFF 边界与 Full BFF 演进 | Accepted | 当前 Cloudflare Pages Function 是 lightweight BFF/proxy；full BFF / token handler 作为高敏 Web Chat 的未来演进方向 |
+| [ADR-020](ADR-020-lazy-conversation-creation.md) | Web Chat Conversation 采用 Lazy Creation | Accepted | New Conversation 先进入本地空白 draft，首次发送时才创建持久化 Conversation |
 
 ## 决策原则
 

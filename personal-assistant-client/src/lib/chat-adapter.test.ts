@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { chatAdapter, getSessionId, resetSessionId } from "./chat-adapter";
+import { chatAdapter, createChatAdapter } from "./chat-adapter";
+import {
+  resetInvocationCancellations,
+  retryInvocationCancellation,
+  useInvocationCancellationStore,
+} from "@/lib/chat/cancellation-coordinator";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
@@ -7,6 +12,7 @@ import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/reac
 type RunMessage = ChatModelRunOptions["messages"][number];
 type UserMessage = Extract<RunMessage, { role: "user" }>;
 type UserMessagePart = UserMessage["content"][number];
+
 
 // Mock the auth module to control acquireIdTokenSilently behavior
 const { mockAcquireIdTokenSilently, mockClearInboundAuthSession } = vi.hoisted(
@@ -50,6 +56,7 @@ function createOptions(
     abortSignal: abortSignal ?? new AbortController().signal,
     runConfig: {},
     context: {},
+    unstable_threadId: "11111111-1111-4111-8111-111111111111",
     unstable_getMessage: () =>
       makeUserMessage(query),
   };
@@ -64,6 +71,11 @@ function createMockStream(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
       for (const chunk of chunks) {
         controller.enqueue(chunk);
       }
+      controller.enqueue(
+        new TextEncoder().encode(
+          `data: ${JSON.stringify({ token: "", done: true })}\n\n`,
+        ),
+      );
       controller.close();
     },
   });
@@ -98,6 +110,7 @@ describe("chatAdapter", () => {
     // Reset auth store to clean state before each test
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
+    resetInvocationCancellations();
     mockAcquireIdTokenSilently.mockReset();
     mockClearInboundAuthSession.mockReset();
     mockClearInboundAuthSession.mockImplementation(async () => {
@@ -124,9 +137,13 @@ describe("chatAdapter", () => {
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(url).toBe("/invocations");
       expect(init.method).toBe("POST");
-      expect(init.body).toBe(
-        JSON.stringify({ message: "Hello World!", stream: true }),
-      );
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        conversation_id: "11111111-1111-4111-8111-111111111111",
+        message: "Hello World!",
+        stream: true,
+      });
+      expect(body.client_message_id).toEqual(expect.any(String));
     });
 
     it("sends streaming headers and excludes Authorization when idToken is null", async () => {
@@ -161,6 +178,163 @@ describe("chatAdapter", () => {
 
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(init.signal).toBe(controller.signal);
+    });
+
+    it("cancels the active Invocation before sending the next message", async () => {
+      let resolveCancellation: ((response: Response) => void) | undefined;
+      let postCount = 0;
+      const mockFetch = vi.fn().mockImplementation(
+        (url: string, init?: RequestInit) => {
+          if (url.endsWith("/cancel")) {
+            return new Promise<Response>((resolve) => {
+              resolveCancellation = resolve;
+            });
+          }
+
+          postCount += 1;
+          if (postCount === 1) {
+            return Promise.resolve({
+              ok: true,
+              body: new ReadableStream<Uint8Array>({
+                start(streamController) {
+                  init?.signal?.addEventListener(
+                    "abort",
+                    () => {
+                      streamController.error(
+                        new DOMException("The operation was aborted", "AbortError"),
+                      );
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+            });
+          }
+
+          return Promise.resolve({
+            ok: true,
+            body: createMockStream([]),
+          });
+        },
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+      const controller = new AbortController();
+      const firstRun = collectResults("first", controller.signal).catch(
+        (error: unknown) => error,
+      );
+
+      await vi.waitFor(() => expect(postCount).toBe(1));
+      const firstPostBody = JSON.parse(
+        String((mockFetch.mock.calls[0][1] as RequestInit).body),
+      ) as Record<string, unknown>;
+      controller.abort();
+
+      await vi.waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockFetch.mock.calls[1][1]).toMatchObject({ method: "POST" });
+      });
+      expect(mockFetch.mock.calls[1][0]).toBe(
+        `/api/conversations/11111111-1111-4111-8111-111111111111/invocations/${String(firstPostBody.client_message_id)}/cancel`,
+      );
+
+      const secondRun = collectResults("second");
+      await Promise.resolve();
+      expect(postCount).toBe(1);
+
+      resolveCancellation?.(new Response(null, { status: 204 }));
+
+      await secondRun;
+      expect(postCount).toBe(2);
+      expect((await firstRun as DOMException).name).toBe("AbortError");
+    });
+
+    it("exposes a failed cancellation for manual retry without sending a new Invocation", async () => {
+      let cancellationCount = 0;
+      let resolveCancellation: ((response: Response) => void) | undefined;
+      let postCount = 0;
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mockFetch = vi.fn().mockImplementation(
+        (url: string, init?: RequestInit) => {
+          if (url.endsWith("/cancel")) {
+            cancellationCount += 1;
+            if (cancellationCount <= 2) {
+              return Promise.resolve(
+                Response.json(
+                  { detail: "Not Found" },
+                  { status: 404, statusText: "Not Found" },
+                ),
+              );
+            }
+            return new Promise<Response>((resolve) => {
+              resolveCancellation = resolve;
+            });
+          }
+
+          postCount += 1;
+          if (postCount === 1) {
+            return Promise.resolve({
+              ok: true,
+              body: new ReadableStream<Uint8Array>({
+                start(streamController) {
+                  init?.signal?.addEventListener(
+                    "abort",
+                    () => {
+                      streamController.error(
+                        new DOMException("The operation was aborted", "AbortError"),
+                      );
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+            });
+          }
+
+          return Promise.resolve({
+            ok: true,
+            body: createMockStream([]),
+          });
+        },
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+      const controller = new AbortController();
+      const firstRun = collectResults("first", controller.signal).catch(
+        (error: unknown) => error,
+      );
+
+      await vi.waitFor(() => expect(postCount).toBe(1));
+      controller.abort();
+      await vi.waitFor(() => expect(cancellationCount).toBe(2));
+      await vi.waitFor(() => {
+        expect(
+          useInvocationCancellationStore.getState().byConversation[
+            "11111111-1111-4111-8111-111111111111"
+          ]?.status,
+        ).toBe("cancel_failed");
+      });
+
+      await expect(collectResults("blocked")).resolves.toEqual([]);
+      expect(cancellationCount).toBe(2);
+      expect(postCount).toBe(1);
+
+      const retry = retryInvocationCancellation(
+        "11111111-1111-4111-8111-111111111111",
+      );
+      await vi.waitFor(() => expect(cancellationCount).toBe(3));
+      expect(postCount).toBe(1);
+      resolveCancellation?.(new Response(null, { status: 204 }));
+      await expect(retry).resolves.toBe(true);
+      expect(
+        useInvocationCancellationStore.getState().byConversation[
+          "11111111-1111-4111-8111-111111111111"
+        ],
+      ).toBeUndefined();
+
+      const continued = collectResults("continued");
+      await continued;
+      expect(postCount).toBe(2);
+      expect((await firstRun as DOMException).name).toBe("AbortError");
+      consoleError.mockRestore();
     });
   });
 
@@ -574,11 +748,9 @@ describe("chatAdapter", () => {
     return `header.${base64Payload}.signature`;
   }
 
-  describe("401 / 403 auth refresh", () => {
-    it("on 401: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
-      // Use a valid JWT so proactive refresh (isTokenExpiringSoon) does not trigger
+  describe("401 / 403 responses", () => {
+    it("on 401: clears auth and does not replay the Invocation POST", async () => {
       useAuthStore.getState().setIdToken(makeTestJWT());
-      mockAcquireIdTokenSilently.mockResolvedValue(null);
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: false,
@@ -591,17 +763,14 @@ describe("chatAdapter", () => {
         "Authentication required. Please sign in.",
       );
 
-      // Verify acquireIdTokenSilently was called exactly once (401 handler)
-      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
-
-      // Verify store token was cleared
+      expect(mockAcquireIdTokenSilently).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(useAuthStore.getState().idToken).toBeNull();
       expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
 
-    it("on 403: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
+    it("on 403: clears auth and does not replay the Invocation POST", async () => {
       useAuthStore.getState().setIdToken(makeTestJWT());
-      mockAcquireIdTokenSilently.mockResolvedValue(null);
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: false,
@@ -614,12 +783,13 @@ describe("chatAdapter", () => {
         "Authentication required. Please sign in.",
       );
 
-      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+      expect(mockAcquireIdTokenSilently).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(useAuthStore.getState().idToken).toBeNull();
       expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
 
-    it("on 401: calls acquireIdTokenSilently, updates store with fresh token, still throws auth error", async () => {
+    it("never performs a post-response token refresh", async () => {
       useAuthStore.getState().setIdToken(makeTestJWT());
       mockAcquireIdTokenSilently.mockResolvedValue("fresh-token-456");
 
@@ -634,15 +804,8 @@ describe("chatAdapter", () => {
         "Authentication required. Please sign in.",
       );
 
-      // Verify acquireIdTokenSilently was called exactly once (401 handler)
-      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      const retryInit = mockFetch.mock.calls[1][1] as RequestInit;
-      const retryHeaders = retryInit.headers as Record<string, string>;
-      expect(retryHeaders["Authorization"]).toBe("Bearer fresh-token-456");
-
-      // Verify store was cleared after fresh token also failed
+      expect(mockAcquireIdTokenSilently).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(useAuthStore.getState().idToken).toBeNull();
       expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
@@ -736,6 +899,7 @@ describe("chatAdapter", () => {
         abortSignal: new AbortController().signal,
         runConfig: {},
         context: {},
+        unstable_threadId: "11111111-1111-4111-8111-111111111111",
         unstable_getMessage: () => makeUserMessage(""),
       };
 
@@ -747,197 +911,108 @@ describe("chatAdapter", () => {
       const url = mockFetch.mock.calls[0][0] as string;
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(url).toBe("/invocations");
-      expect(init.body).toBe(JSON.stringify({ message: "", stream: true }));
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        conversation_id: "11111111-1111-4111-8111-111111111111",
+        message: "",
+        stream: true,
+      });
     });
   });
 
-  describe("session ID header", () => {
-    beforeEach(() => {
-      localStorage.clear();
-    });
-
-    afterEach(() => {
-      localStorage.clear();
-    });
-
-    it("sends x-hw-agentarts-session-id header with each request", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
+  describe("platform-owned headers", () => {
+    it("uses the initialized remote Conversation ID instead of the local thread ID", async () => {
+      const remoteConversationId = "22222222-2222-4222-8222-222222222222";
+      const resolveConversationId = vi.fn().mockResolvedValue(remoteConversationId);
+      const adapter = createChatAdapter(resolveConversationId);
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([]),
+      }) as unknown as typeof fetch;
+
+      const options = createOptions("remote id");
+      const generator = adapter.run(options);
+      for await (const _result of generator as AsyncGenerator<
+        ChatModelRunResult,
+        void
+      >) {
+        // Consume the generator.
+      }
+
+      expect(resolveConversationId).toHaveBeenCalledWith(options);
+      const init = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0][1] as RequestInit;
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        conversation_id: remoteConversationId,
       });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("test session");
-
-      const init = mockFetch.mock.calls[0][1] as RequestInit;
-      const headers = init.headers as Record<string, string>;
-      expect(headers).toHaveProperty("x-hw-agentarts-session-id");
-      expect(headers["x-hw-agentarts-session-id"]).toBeTruthy();
     });
 
-    it("uses same session ID across multiple requests", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream([]),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("request 1");
-      await collectResults("request 2");
-
-      const headers1 = mockFetch.mock.calls[0][1].headers as Record<string, string>;
-      const headers2 = mockFetch.mock.calls[1][1].headers as Record<string, string>;
-
-      expect(headers1["x-hw-agentarts-session-id"]).toBe(
-        headers2["x-hw-agentarts-session-id"],
+    it("refreshes history on duplicate_message without replaying the Invocation", async () => {
+      const conversationId = "22222222-2222-4222-8222-222222222222";
+      const onDuplicateMessage = vi.fn();
+      const adapter = createChatAdapter(
+        async () => conversationId,
+        onDuplicateMessage,
       );
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: "duplicate_message",
+            detail: "client_message_id already exists",
+          }),
+          {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const consume = async () => {
+        const generator = adapter.run(createOptions("duplicate"));
+        for await (const _result of generator as AsyncGenerator<
+          ChatModelRunResult,
+          void
+        >) {
+          // Consume the generator.
+        }
+      };
+
+      await expect(consume()).rejects.toMatchObject({
+        status: 409,
+        code: "duplicate_message",
+      });
+      expect(onDuplicateMessage).toHaveBeenCalledWith(conversationId);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it("session ID is a valid UUID v4 format", async () => {
+    it("does not send Runtime Session or caller user headers", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([]),
       });
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
-      await collectResults("uuid test");
+      await collectResults("header ownership");
 
       const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
-      const sessionId = headers["x-hw-agentarts-session-id"];
-
-      // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-      const uuidV4Regex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      expect(sessionId).toMatch(uuidV4Regex);
-    });
-
-    it("persists session ID in localStorage under agentarts-session-id key", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream([]),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("persist test");
-
-      const stored = localStorage.getItem("agentarts-session-id");
-      expect(stored).toBeTruthy();
-
-      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
-      expect(stored).toBe(headers["x-hw-agentarts-session-id"]);
-    });
-
-    it("reuses existing session ID from localStorage", async () => {
-      // Simulate a previously stored session ID
-      const existingId = "12345678-1234-4123-8123-123456789abc";
-      localStorage.setItem("agentarts-session-id", existingId);
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream([]),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("reuse test");
-
-      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
-      expect(headers["x-hw-agentarts-session-id"]).toBe(existingId);
-    });
-
-    it("falls back to non-persisted UUID when localStorage throws", async () => {
-      // Simulate localStorage being completely unavailable (e.g., SecurityError)
-      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-        throw new DOMException("Blocked", "SecurityError");
-      });
-      const setItemSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-        throw new DOMException("Blocked", "SecurityError");
-      });
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream([]),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("fallback test");
-
-      // Should still receive a session ID header even when localStorage fails
-      const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>;
-      expect(headers).toHaveProperty("x-hw-agentarts-session-id");
-      const sessionId = headers["x-hw-agentarts-session-id"];
-      expect(sessionId).toBeTruthy();
-
-      // The fallback ID should be a valid UUID v4
-      const uuidV4Regex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      expect(sessionId).toMatch(uuidV4Regex);
-
-      // setItem should never have been called (no persistence in fallback)
-      expect(setItemSpy).not.toHaveBeenCalled();
-
-      vi.restoreAllMocks();
-    });
-  });
-
-  describe("resetSessionId", () => {
-    beforeEach(() => {
-      localStorage.clear();
-    });
-
-    afterEach(() => {
-      localStorage.clear();
-      vi.restoreAllMocks();
-    });
-
-    it("UT-RS-01: removes agentarts-session-id from localStorage", () => {
-      localStorage.setItem("agentarts-session-id", "test-session-id");
-      expect(localStorage.getItem("agentarts-session-id")).toBe("test-session-id");
-
-      resetSessionId();
-
+      expect(headers).not.toHaveProperty("x-hw-agentarts-session-id");
+      expect(headers).not.toHaveProperty("X-HW-AgentGateway-User-Id");
       expect(localStorage.getItem("agentarts-session-id")).toBeNull();
     });
 
-    it("UT-RS-02: is a no-op when key does not exist", () => {
-      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
+    it("requires assistant-ui to initialize a remote Conversation first", async () => {
+      const options = createOptions("missing conversation");
+      delete (options as { unstable_threadId?: string }).unstable_threadId;
 
-      expect(() => resetSessionId()).not.toThrow();
-
-      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
-    });
-
-    it("UT-RS-03: silently handles localStorage errors (privacy mode)", () => {
-      vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
-        throw new DOMException("Blocked", "SecurityError");
-      });
-
-      expect(() => resetSessionId()).not.toThrow();
-    });
-
-    it("UT-RS-04: after resetSessionId, getSessionId returns a new UUID", () => {
-      // Set an existing session ID
-      localStorage.setItem("agentarts-session-id", "old-session-id");
-
-      // Record the old value
-      const oldId = getSessionId();
-      expect(oldId).toBe("old-session-id");
-
-      // Reset the session ID
-      resetSessionId();
-
-      // Get new session ID
-      const newId = getSessionId();
-
-      // New ID should differ from old
-      expect(newId).not.toBe(oldId);
-
-      // New ID should be a valid UUID v4
-      const uuidV4Regex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      expect(newId).toMatch(uuidV4Regex);
-
-      // New ID should also be persisted in localStorage
-      expect(localStorage.getItem("agentarts-session-id")).toBe(newId);
+      const generator = chatAdapter.run(options);
+      await expect(async () => {
+        for await (const _result of generator as AsyncGenerator<
+          ChatModelRunResult,
+          void
+        >) {
+          // Consume the generator.
+        }
+      }).rejects.toThrow("Conversation initialization did not return an ID.");
     });
   });
 });

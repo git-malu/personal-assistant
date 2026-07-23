@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import logging
 
@@ -86,6 +87,48 @@ def extract_gateway_user_id(request: Request) -> str:
             status_code=401,
             detail=f"Missing {USER_ID_HEADER} header",
         )
+    AgentArtsRuntimeContext.set_user_id(user_id)
+    return user_id
+
+
+def extract_authenticated_user_id(request: Request) -> str:
+    """Read `sub` from the JWT already validated by AgentArts Gateway."""
+    authorization = request.headers.get("authorization", "").strip()
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="A Gateway-validated Bearer token is required",
+        )
+
+    try:
+        segments = token.strip().split(".")
+        if len(segments) != 3:
+            raise ValueError
+        encoded_payload = segments[1].encode("ascii")
+        padded_payload = encoded_payload + b"=" * (-len(encoded_payload) % 4)
+        payload = base64.b64decode(
+            padded_payload,
+            altchars=b"-_",
+            validate=True,
+        )
+        claims = json.loads(payload)
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError
+    except (
+        UnicodeEncodeError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+        ValueError,
+    ) as error:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Gateway-validated Bearer token",
+        ) from error
+
+    user_id = subject.strip()
     AgentArtsRuntimeContext.set_user_id(user_id)
     return user_id
 

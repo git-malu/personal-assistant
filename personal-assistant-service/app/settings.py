@@ -47,6 +47,13 @@ class Settings(BaseSettings):
 
     github_provider_name: str = "github-provider"
     github_scopes: str = "repo,read:user"
+    github_mcp_enabled: bool = True
+    github_activity_tools_enabled: bool = True
+    github_mcp_gateway_url: AnyHttpUrl = "https://gateway-github-mcp-defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/mcp"
+    github_mcp_auth_mode: Literal["iam"] = "iam"
+    github_mcp_sts_provider_name: str = "github-mcp-gateway"
+    github_mcp_sts_agency_session_name: str = "personal-assistant-github-mcp"
+    github_mcp_timeout_seconds: float = Field(default=30.0, gt=0.0)
 
     m365_calendar_provider_name: str = "m365-calendar-provider"
     m365_calendar_scopes: str = "https://graph.microsoft.com/Calendars.Read"
@@ -83,6 +90,9 @@ class Settings(BaseSettings):
         "gitee_provider_name",
         "github_provider_name",
         "github_scopes",
+        "github_mcp_auth_mode",
+        "github_mcp_sts_provider_name",
+        "github_mcp_sts_agency_session_name",
         "agent_identity_local_jwt_workload_name",
         "iam_users_provider_name",
         "iam_users_agency_session_name",

@@ -20,12 +20,16 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { AuthCard } from "@/components/chat/AuthCard";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
+import {
+  retryInvocationCancellation,
+  type InvocationCancellationStatus,
+  useInvocationCancellationStore,
+} from "@/lib/chat/cancellation-coordinator";
 import { cn } from "@/lib/utils";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
   AuiIf,
-  BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
   groupPartByType,
@@ -38,16 +42,14 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
+  LoaderCircleIcon,
   MoreHorizontalIcon,
-  PencilIcon,
-  RefreshCwIcon,
+  RotateCwIcon,
   SquareIcon,
 } from "lucide-react";
-import type { FC } from "react";
+import type { FC, FormEvent } from "react";
 
 export const Thread: FC = () => {
   return (
@@ -64,7 +66,10 @@ export const Thread: FC = () => {
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
       >
         <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4">
-          <AuiIf condition={(s) => s.thread.isEmpty}>
+          <AuiIf condition={(s) => s.thread.isLoading}>
+            <ThreadLoading />
+          </AuiIf>
+          <AuiIf condition={(s) => !s.thread.isLoading && s.thread.isEmpty}>
             <ThreadWelcome />
           </AuiIf>
 
@@ -89,11 +94,19 @@ export const Thread: FC = () => {
 
 const ThreadMessage: FC = () => {
   const role = useAuiState((s) => s.message.role);
-  const isEditing = useAuiState((s) => s.message.composer.isEditing);
 
-  if (isEditing) return <EditComposer />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessage />;
+};
+
+const ThreadLoading: FC = () => {
+  return (
+    <div className="flex flex-1 flex-col gap-8 py-8" aria-label="Loading messages">
+      <div className="h-5 w-2/3 animate-pulse rounded-lg bg-muted" />
+      <div className="ml-auto h-10 w-1/2 animate-pulse rounded-lg bg-muted" />
+      <div className="h-5 w-3/4 animate-pulse rounded-lg bg-muted" />
+    </div>
+  );
 };
 
 const ThreadScrollToBottom: FC = () => {
@@ -138,9 +151,32 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
+export function guardComposerSubmission(
+  status: InvocationCancellationStatus,
+  event: Pick<FormEvent<HTMLFormElement>, "preventDefault">,
+): void {
+  if (status !== "idle") {
+    event.preventDefault();
+  }
+}
+
 const Composer: FC = () => {
+  const conversationId = useAuiState(
+    (state) => state.threadListItem.remoteId,
+  );
+  const cancellationStatus = useInvocationCancellationStore((state) =>
+    conversationId
+      ? (state.byConversation[conversationId]?.status ?? "idle")
+      : "idle",
+  );
+
   return (
-    <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+    <ComposerPrimitive.Root
+      className="aui-composer-root relative flex w-full flex-col"
+      onSubmit={(event) => {
+        guardComposerSubmission(cancellationStatus, event);
+      }}
+    >
       <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="bg-background focus-within:border-ring/75 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:bg-accent/50 flex w-full flex-col gap-2 rounded-(--composer-radius) border p-(--composer-padding) transition-shadow focus-within:ring-2 data-[dragging=true]:border-dashed" />}><ComposerAttachments /><ComposerPrimitive.Input
                       placeholder="Send a message..."
                       className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none"
@@ -152,16 +188,84 @@ const Composer: FC = () => {
   );
 };
 
+interface CancellationActionProps {
+  status: InvocationCancellationStatus;
+  onRetry: () => void;
+}
+
+export const CancellationAction: FC<CancellationActionProps> = ({
+  status,
+  onRetry,
+}) => {
+  if (status === "idle") return null;
+
+  if (status === "cancelling") {
+    return (
+      <TooltipIconButton
+        tooltip="Stopping response"
+        type="button"
+        variant="default"
+        size="icon"
+        className="aui-composer-cancel size-8 rounded-full"
+        aria-label="Stopping response"
+        data-cancellation-state="cancelling"
+        disabled
+      >
+        <LoaderCircleIcon className="size-4 animate-spin" />
+      </TooltipIconButton>
+    );
+  }
+
+  return (
+    <TooltipIconButton
+      tooltip="Retry stop"
+      type="button"
+      variant="default"
+      size="icon"
+      className="aui-composer-cancel size-8 rounded-full"
+      aria-label="Retry stop"
+      data-cancellation-state="cancel_failed"
+      onClick={onRetry}
+    >
+      <RotateCwIcon className="size-4" />
+    </TooltipIconButton>
+  );
+};
+
 const ComposerAction: FC = () => {
+  const conversationId = useAuiState(
+    (state) => state.threadListItem.remoteId,
+  );
+  const cancellationStatus = useInvocationCancellationStore((state) =>
+    conversationId
+      ? (state.byConversation[conversationId]?.status ?? "idle")
+      : "idle",
+  );
+
+  const retryCancellation = () => {
+    if (conversationId) {
+      void retryInvocationCancellation(conversationId);
+    }
+  };
+
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <ComposerAddAttachment />
-      <AuiIf condition={(s) => !s.thread.isRunning}>
-        <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-8 rounded-full" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
-      </AuiIf>
-      <AuiIf condition={(s) => s.thread.isRunning}>
-        <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-8 rounded-full" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3 fill-current" /></ComposerPrimitive.Cancel>
-      </AuiIf>
+      {cancellationStatus === "idle" ? (
+        <>
+          <AuiIf condition={(s) => !s.thread.isRunning}>
+            <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-8 rounded-full" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+          </AuiIf>
+          <AuiIf condition={(s) => s.thread.isRunning}>
+            <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-8 rounded-full" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3 fill-current" /></ComposerPrimitive.Cancel>
+          </AuiIf>
+        </>
+      ) : (
+        <CancellationAction
+          status={cancellationStatus}
+          onRetry={retryCancellation}
+        />
+      )}
     </div>
   );
 };
@@ -256,7 +360,6 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-footer"
         className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
       >
-        <BranchPicker />
         <AssistantActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -275,7 +378,6 @@ const AssistantActionBar: FC = () => {
                     </AuiIf><AuiIf condition={(s) => !s.message.isCopied}>
                       <CopyIcon />
                     </AuiIf></ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Reload render={<TooltipIconButton tooltip="Refresh" />}><RefreshCwIcon /></ActionBarPrimitive.Reload>
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger render={<TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent" />}><MoreHorizontalIcon /></ActionBarMorePrimitive.Trigger>
         <ActionBarMorePrimitive.Content
@@ -301,73 +403,10 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-2xl px-4 py-2.5 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content bg-muted text-foreground rounded-2xl px-4 py-2.5 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
-        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
-          <UserActionBar />
-        </div>
       </div>
-
-      <BranchPicker
-        data-slot="aui_user-branch-picker"
-        className="col-span-full col-start-1 row-start-3 -me-1 justify-end"
-      />
     </MessagePrimitive.Root>
-  );
-};
-
-const UserActionBar: FC = () => {
-  return (
-    <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="not-last"
-      className="aui-user-action-bar-root flex flex-col items-end"
-    >
-      <ActionBarPrimitive.Edit render={<TooltipIconButton tooltip="Edit" className="aui-user-action-edit p-4" />}><PencilIcon /></ActionBarPrimitive.Edit>
-    </ActionBarPrimitive.Root>
-  );
-};
-
-const EditComposer: FC = () => {
-  return (
-    <MessagePrimitive.Root
-      data-slot="aui_edit-composer-wrapper"
-      className="flex flex-col px-2"
-    >
-      <ComposerPrimitive.Root className="aui-edit-composer-root bg-muted ms-auto flex w-full max-w-[85%] flex-col rounded-2xl">
-        <ComposerPrimitive.Input
-          className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent p-4 text-sm outline-none"
-          autoFocus
-        />
-        <div className="aui-edit-composer-footer mx-3 mb-3 flex items-center gap-2 self-end">
-          <ComposerPrimitive.Cancel render={<Button variant="ghost" size="sm" />}>Cancel
-                              </ComposerPrimitive.Cancel>
-          <ComposerPrimitive.Send render={<Button size="sm" />}>Update</ComposerPrimitive.Send>
-        </div>
-      </ComposerPrimitive.Root>
-    </MessagePrimitive.Root>
-  );
-};
-
-const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
-  className,
-  ...rest
-}) => {
-  return (
-    <BranchPickerPrimitive.Root
-      hideWhenSingleBranch
-      className={cn(
-        "aui-branch-picker-root text-muted-foreground -ms-2 me-2 inline-flex items-center text-xs",
-        className,
-      )}
-      {...rest}
-    >
-      <BranchPickerPrimitive.Previous render={<TooltipIconButton tooltip="Previous" />}><ChevronLeftIcon /></BranchPickerPrimitive.Previous>
-      <span className="aui-branch-picker-state font-medium">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
-      </span>
-      <BranchPickerPrimitive.Next render={<TooltipIconButton tooltip="Next" />}><ChevronRightIcon /></BranchPickerPrimitive.Next>
-    </BranchPickerPrimitive.Root>
   );
 };

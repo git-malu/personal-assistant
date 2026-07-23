@@ -32,6 +32,22 @@ def test_get_iam_users_readonly_config_defaults():
         }
 
 
+def test_get_github_mcp_config_defaults():
+    settings = Settings(_env_file=None, github_mcp_enabled=False)
+    with patch("app.identity.get_settings", return_value=settings):
+        assert identity.get_github_mcp_config() == {
+            "enabled": False,
+            "gateway_url": (
+                "https://gateway-github-mcp-defaultgw-ha3wenzqga.cn-southwest-2."
+                "huaweicloud-agentarts.com/mcp"
+            ),
+            "auth_mode": "iam",
+            "sts_provider_name": "github-mcp-gateway",
+            "sts_agency_session_name": "personal-assistant-github-mcp",
+            "timeout_seconds": 30.0,
+        }
+
+
 def test_get_iam_users_readonly_config_reads_settings():
     settings = Settings(
         _env_file=None,

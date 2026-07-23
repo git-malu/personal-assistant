@@ -1,11 +1,14 @@
 import { applyCallbackContextCookies } from "./callback-context.js";
+import {
+  RUNTIME_SESSION_HEADER,
+  applyRuntimeSessionCookie,
+  resolveRuntimeSession,
+} from "./runtime-session.js";
 
 const FORWARDED_HEADERS = [
   "accept",
   "authorization",
   "content-type",
-  "x-hw-agentarts-session-id",
-  "x-hw-agentgateway-user-id",
 ];
 
 function getInvocationsUrl(env) {
@@ -24,7 +27,11 @@ function getInvocationsUrl(env) {
 export function buildUpstreamUrl(
   env,
   requestUrl,
-  { publicPrefix = "/invocations", upstreamPrefix = "" } = {},
+  {
+    publicPrefix = "/invocations",
+    upstreamPrefix = "",
+    allowedQueryParameters = [],
+  } = {},
 ) {
   const invocationsUrl = getInvocationsUrl(env);
   const incomingUrl = new URL(requestUrl);
@@ -42,26 +49,53 @@ export function buildUpstreamUrl(
     : "";
   const suffix = incomingPath.slice(publicPrefix.length);
   invocationsUrl.pathname = `${basePath}${normalizedUpstreamPrefix}${suffix}`;
-  invocationsUrl.search = incomingUrl.search;
+  invocationsUrl.search = "";
+  for (const name of allowedQueryParameters) {
+    for (const value of incomingUrl.searchParams.getAll(name)) {
+      invocationsUrl.searchParams.append(name, value);
+    }
+  }
   return invocationsUrl;
+}
+
+function withRuntimeSessionCookie(response, resolution) {
+  const headers = new Headers(response.headers);
+  applyRuntimeSessionCookie(headers, resolution);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 export async function proxyInvocationsRequest({
   request,
   env,
-  publicPrefix,
-  upstreamPrefix,
+  publicPrefix = "/invocations",
+  upstreamPrefix = "",
+  allowedMethods = ["POST"],
+  allowedQueryParameters = [],
+  snapshotOAuthContext = false,
 }) {
+  const runtimeSession = resolveRuntimeSession(request, env);
   try {
+    if (!allowedMethods.includes(request.method)) {
+      return withRuntimeSessionCookie(
+        Response.json({ message: "Method not allowed" }, { status: 405 }),
+        runtimeSession,
+      );
+    }
     const upstreamUrl = buildUpstreamUrl(env, request.url, {
       publicPrefix,
       upstreamPrefix,
+      allowedQueryParameters,
     });
     const headers = new Headers();
     for (const name of FORWARDED_HEADERS) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }
+    headers.set(RUNTIME_SESSION_HEADER, runtimeSession.id);
 
     const init = {
       method: request.method,
@@ -75,7 +109,14 @@ export async function proxyInvocationsRequest({
     const upstreamRequest = new Request(upstreamUrl, init);
     const upstreamResponse = await fetch(upstreamRequest);
     const responseHeaders = new Headers(upstreamResponse.headers);
-    applyCallbackContextCookies(responseHeaders, request);
+    if (snapshotOAuthContext) {
+      applyCallbackContextCookies(
+        responseHeaders,
+        request,
+        runtimeSession.id,
+      );
+    }
+    applyRuntimeSessionCookie(responseHeaders, runtimeSession);
 
     responseHeaders.set("Cache-Control", "no-store");
 
@@ -90,23 +131,32 @@ export async function proxyInvocationsRequest({
       error instanceof Error &&
       error.message.startsWith("AGENTARTS_INVOCATIONS_URL")
     ) {
-      return Response.json(
-        { message: "Frontend proxy is not configured" },
-        { status: 500 },
+      return withRuntimeSessionCookie(
+        Response.json(
+          { message: "Frontend proxy is not configured" },
+          { status: 500 },
+        ),
+        runtimeSession,
       );
     }
     if (
       error instanceof Error &&
       error.message.startsWith("Unsupported invocations proxy path")
     ) {
-      return Response.json(
-        { message: "Unsupported proxy path" },
-        { status: 404 },
+      return withRuntimeSessionCookie(
+        Response.json(
+          { message: "Unsupported proxy path" },
+          { status: 404 },
+        ),
+        runtimeSession,
       );
     }
-    return Response.json(
-      { message: "AgentArts Gateway is unavailable" },
-      { status: 502 },
+    return withRuntimeSessionCookie(
+      Response.json(
+        { message: "AgentArts Gateway is unavailable" },
+        { status: 502 },
+      ),
+      runtimeSession,
     );
   }
 }

@@ -1,4 +1,12 @@
-这份总结为你梳理了 **`deepagents` 框架 + AWS Bedrock AgentCore SDK + SPA 前端** 实现第三方授权（如 M365 邮箱发送）的完整、生产级闭环方案。它完美避开了 SDK 默认的同步阻塞，实现了高性能、无缝的用户交互。
+> 状态：**Historical / Superseded**。本文记录早期 AWS Bedrock AgentCore 方案，不是当前
+> Personal Assistant production contract。当前实现使用 AgentArts、PostgreSQL Checkpointer、
+> structured auth events，且 Client/BFF/Service 都不自动重试 Invocation。请以
+> [feature-15-calendar-oauth2-architecture.md](auth/feature-15-calendar-oauth2-architecture.md)、
+> [session-state-management.md](session-state-management.md) 和 [api.md](api.md) 为准。
+
+以下内容仅保留为历史设计记录。
+
+这份总结曾用于梳理 **`deepagents` 框架 + AWS Bedrock AgentCore SDK + SPA 前端** 实现第三方授权（如 M365 邮箱发送）的早期闭环方案。
 
 你可以直接将这份设计文档保存，作为后续系统实现的技术指南。
 

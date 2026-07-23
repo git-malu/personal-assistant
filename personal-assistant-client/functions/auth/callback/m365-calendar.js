@@ -8,6 +8,23 @@ import { buildUpstreamUrl } from "../../_shared/agentarts-proxy.js";
 const CALLBACK_PUBLIC_PATH = "/auth/callback/m365-calendar";
 const CALLBACK_UPSTREAM_PREFIX = "auth/oauth2/callback/m365-calendar";
 const CALLBACK_SECRET_HEADER = "x-pa-oauth2-callback-secret";
+const CALLBACK_QUERY_PARAMETERS = [
+  "state",
+  "custom_state",
+  "session_uri",
+  "error",
+  "error_description",
+];
+
+function copyCallbackQuery(target, requestUrl) {
+  const incomingUrl = new URL(requestUrl);
+  target.search = "";
+  for (const name of CALLBACK_QUERY_PARAMETERS) {
+    for (const value of incomingUrl.searchParams.getAll(name)) {
+      target.searchParams.append(name, value);
+    }
+  }
+}
 
 function getDirectCallbackUrl(env, requestUrl) {
   const value = env?.AGENTARTS_OAUTH_CALLBACK_URL?.trim();
@@ -18,8 +35,7 @@ function getDirectCallbackUrl(env, requestUrl) {
     throw new Error("AGENTARTS_OAUTH_CALLBACK_URL must use http or https");
   }
 
-  const incomingUrl = new URL(requestUrl);
-  target.search = incomingUrl.search;
+  copyCallbackQuery(target, requestUrl);
   return target;
 }
 
@@ -29,6 +45,7 @@ export function buildCallbackUpstreamUrl(env, requestUrl) {
     buildUpstreamUrl(env, requestUrl, {
       publicPrefix: CALLBACK_PUBLIC_PATH,
       upstreamPrefix: CALLBACK_UPSTREAM_PREFIX,
+      allowedQueryParameters: CALLBACK_QUERY_PARAMETERS,
     })
   );
 }
@@ -102,7 +119,8 @@ export async function onRequestGet({ request, env }) {
     );
     const responseHeaders = new Headers(upstreamResponse.headers);
     responseHeaders.set("Cache-Control", "no-store");
-    if (getCallbackContextFromCookies(request).authorization) {
+    const callbackContext = getCallbackContextFromCookies(request);
+    if (callbackContext.authorization || callbackContext.sessionId) {
       applyExpiredCallbackContextCookies(responseHeaders);
     }
 
@@ -117,7 +135,8 @@ export async function onRequestGet({ request, env }) {
       "Cache-Control": "no-store",
       "Content-Type": "text/html; charset=utf-8",
     });
-    if (getCallbackContextFromCookies(request).authorization) {
+    const callbackContext = getCallbackContextFromCookies(request);
+    if (callbackContext.authorization || callbackContext.sessionId) {
       applyExpiredCallbackContextCookies(responseHeaders);
     }
     return new Response(bffFailurePage(request.url), {

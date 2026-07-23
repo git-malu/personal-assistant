@@ -7,6 +7,12 @@ import path from 'path'
 const serviceProxyTarget =
   process.env.PA_SERVICE_PROXY_TARGET ?? 'http://localhost:8080'
 
+const localGatewayHeaders = {
+  Authorization:
+    'Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJkZXYtdXNlciJ9.local-gateway-signature',
+  'x-hw-agentarts-session-id': 'local-development',
+}
+
 export default defineConfig({
   test: {
     environment: 'jsdom',
@@ -38,11 +44,12 @@ export default defineConfig({
       '/invocations': {
         target: serviceProxyTarget,
         changeOrigin: true,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            proxyReq.setHeader('X-HW-AgentGateway-User-Id', 'dev-user')
-          })
-        },
+        headers: localGatewayHeaders,
+      },
+      '/api/conversations': {
+        target: serviceProxyTarget,
+        changeOrigin: true,
+        headers: localGatewayHeaders,
       },
     },
   },

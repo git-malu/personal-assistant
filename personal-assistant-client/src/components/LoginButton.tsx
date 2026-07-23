@@ -48,7 +48,7 @@ export function LoginButton() {
   if (!getPublicConfig().isEntraEnabled) {
     return (
       <span className="text-xs text-muted-foreground">
-        Dev Mode — Proxy auth enabled
+        Local
       </span>
     );
   }
@@ -64,8 +64,16 @@ export function LoginButton() {
   };
 
   const handleLogout = async () => {
-      await instance.logoutRedirect();
-      // Redirect back → LOGOUT_SUCCESS event → zustand cleared (see main.tsx)
+    try {
+      await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      console.error("Failed to clear the browser runtime session:", error);
+    }
+    await instance.logoutRedirect();
+    // Redirect back -> LOGOUT_SUCCESS event -> zustand cleared (see main.tsx)
   };
 
   if (isAuthenticated) {

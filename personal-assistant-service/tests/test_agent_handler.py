@@ -1,10 +1,10 @@
 """Unit tests for app.agent_handler.AgentHandler and get_agent_handler singleton."""
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg import OperationalError
 
 from app.agent_handler import (
     SYSTEM_PROMPT,
@@ -12,6 +12,7 @@ from app.agent_handler import (
     AgentHandler,
     get_agent_handler,
 )
+from app.invocations.models import AgentEventType
 from app.settings import Settings
 
 
@@ -102,6 +103,44 @@ class TestAgentHandlerInit:
         kwargs = mock_create_agent.call_args[1]
         assert kwargs["tools"] is mock_build_tools.return_value
 
+    def test_recoverable_error_requires_psycopg_operational_error(self, mock_deps):
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+
+        assert handler._is_recoverable_checkpointer_error(
+            OperationalError("the connection is closed")
+        )
+        assert not handler._is_recoverable_checkpointer_error(
+            RuntimeError("the connection is closed")
+        )
+        assert not handler._is_recoverable_checkpointer_error(
+            OperationalError("authentication failed")
+        )
+
+    @pytest.mark.asyncio
+    async def test_restart_skips_connection_already_replaced(self, mock_deps):
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+        stale_checkpointer = handler.checkpointer
+        handler.checkpointer = MagicMock()
+
+        with (
+            patch.object(handler, "shutdown", new_callable=AsyncMock) as mock_shutdown,
+            patch.object(handler, "startup", new_callable=AsyncMock) as mock_startup,
+        ):
+            await handler._restart_checkpointer(stale_checkpointer)
+
+        mock_shutdown.assert_not_awaited()
+        mock_startup.assert_not_awaited()
+
     def test_system_prompt_mentions_email_capabilities(self):
         """UT-AH-02: SYSTEM_PROMPT contains names of all 5 email tools."""
         assert "list_emails" in SYSTEM_PROMPT
@@ -117,6 +156,26 @@ class TestAgentHandlerInit:
         assert "github_get_file_content" in SYSTEM_PROMPT
         assert "github_search_code" in SYSTEM_PROMPT
         assert "github_star_repository" in SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_github_mcp_activity_capabilities(self):
+        """Feature 17 describes only the curated Agent-facing tools."""
+        assert "github_search_activity" in SYSTEM_PROMPT
+        assert "github_get_activity_detail" in SYSTEM_PROMPT
+        assert 'identity_scope="platform"' in SYSTEM_PROMPT
+        assert "禁止调用上述用户 OAuth GitHub 工具" in SYSTEM_PROMPT
+        assert "不要自动回退到 OAuth 工具" in SYSTEM_PROMPT
+        assert "必须串行调用，不要并行" in SYSTEM_PROMPT
+        assert "Agent-facing MCP 能力只包含两个" in SYSTEM_PROMPT
+        assert "conversation comment 使用 comment" in SYSTEM_PROMPT
+        assert "先调用一次 github_search_activity" in SYSTEM_PROMPT
+        assert "调用一次\ngithub_get_activity_detail" in SYSTEM_PROMPT
+        for internal_name in {
+            "github_mcp_resolve_identity",
+            "github_mcp_list_repositories",
+            "github_mcp_search_activity",
+            "github_mcp_get_detail",
+        }:
+            assert internal_name not in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_gitee_capabilities(self):
         """UT-AH-05: SYSTEM_PROMPT contains Gitee tool names."""
@@ -266,7 +325,7 @@ class TestHandle:
         result = await handler.handle(
             message="你好",
             user_id="user-123",
-            session_id="session-abc",
+            conversation_id="conversation-abc",
         )
 
         assert result == "你好！有什么可以帮助你的？"
@@ -276,7 +335,7 @@ class TestHandle:
         assert call_arg["messages"][0]["content"] == "你好"
 
     @pytest.mark.asyncio
-    async def test_handle_default_user_id(self, mock_deps):
+    async def test_handle_requires_conversation_identity(self, mock_deps):
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
@@ -285,15 +344,17 @@ class TestHandle:
         mock_message.content = "response"
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
 
-        result = await handler.handle(message="test")
+        result = await handler.handle(
+            message="test",
+            user_id="user-1",
+            conversation_id="conversation-1",
+        )
 
         assert result == "response"
         mock_agent.ainvoke.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_restarts_checkpointer_and_retries_idle_timeout(
-        self, mock_deps
-    ):
+    async def test_handle_recovers_checkpointer_during_preflight(self, mock_deps):
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler(
@@ -304,12 +365,13 @@ class TestHandle:
         )
         recovered_message = MagicMock()
         recovered_message.content = "recovered"
-        mock_agent.ainvoke = AsyncMock(
+        handler.checkpointer.aget_tuple = AsyncMock(
             side_effect=[
-                RuntimeError("terminating connection due to idle-session timeout"),
-                {"messages": [recovered_message]},
+                OperationalError("terminating connection due to idle-session timeout"),
+                None,
             ]
         )
+        mock_agent.ainvoke = AsyncMock(return_value={"messages": [recovered_message]})
 
         with patch.object(
             handler, "_restart_checkpointer", new_callable=AsyncMock
@@ -317,12 +379,43 @@ class TestHandle:
             result = await handler.handle(
                 message="继续",
                 user_id="user-1",
-                session_id="session-1",
+                conversation_id="conversation-1",
             )
 
         assert result == "recovered"
-        assert mock_agent.ainvoke.await_count == 2
+        assert handler.checkpointer.aget_tuple.await_count == 2
+        mock_agent.ainvoke.assert_awaited_once()
         mock_restart.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_does_not_retry_agent_after_execution_starts(self, mock_deps):
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler(
+            settings=Settings(
+                _env_file=None,
+                postgres_dsn="postgresql://localhost/test",
+            )
+        )
+        handler.checkpointer.aget_tuple = AsyncMock(return_value=None)
+        mock_agent.ainvoke = AsyncMock(
+            side_effect=OperationalError("the connection is closed")
+        )
+
+        with (
+            patch.object(
+                handler, "_restart_checkpointer", new_callable=AsyncMock
+            ) as mock_restart,
+            pytest.raises(OperationalError, match="connection is closed"),
+        ):
+            await handler.handle(
+                message="发送邮件",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
+
+        mock_agent.ainvoke.assert_awaited_once()
+        mock_restart.assert_not_awaited()
 
 
 class TestHandleStream:
@@ -345,20 +438,20 @@ class TestHandleStream:
 
         mock_agent.astream = mock_astream
 
-        events = [data async for data in handler.handle_stream(message="Hi")]
+        events = [
+            event
+            async for event in handler.handle_stream(
+                message="Hi",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
+        ]
 
-        assert len(events) >= 3
-
-        parsed = []
-        for event in events:
-            assert event.startswith("data: ")
-            parsed.append(json.loads(event[6:]))
-
-        tokens = [p["token"] for p in parsed if not p.get("done")]
-        assert "Hello" in tokens
-        assert " world" in tokens
-
-        assert parsed[-1]["done"] is True
+        assert [event.type for event in events] == [
+            AgentEventType.TOKEN,
+            AgentEventType.TOKEN,
+        ]
+        assert [event.token for event in events] == ["Hello", " world"]
 
     @pytest.mark.asyncio
     async def test_handle_stream_skips_empty_tokens(self, mock_deps):
@@ -377,16 +470,20 @@ class TestHandleStream:
 
         mock_agent.astream = mock_astream
 
-        events = [data async for data in handler.handle_stream(message="Hi")]
-
-        token_events = [
-            json.loads(e[6:]) for e in events if not json.loads(e[6:]).get("done")
+        events = [
+            event
+            async for event in handler.handle_stream(
+                message="Hi",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
         ]
-        assert len(token_events) == 1
-        assert token_events[0]["token"] == "real"
+
+        assert len(events) == 1
+        assert events[0].token == "real"
 
     @pytest.mark.asyncio
-    async def test_handle_stream_error_yields_sse_error_event(self, mock_deps):
+    async def test_handle_stream_propagates_error(self, mock_deps):
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
@@ -397,16 +494,18 @@ class TestHandleStream:
 
         mock_agent.astream = mock_astream_error
 
-        events = [data async for data in handler.handle_stream(message="Hi")]
-
-        assert len(events) == 1
-        parsed = json.loads(events[0][6:])
-        assert "error" in parsed
-        assert "API connection failed" in parsed["error"]
-        assert parsed["done"] is True
+        with pytest.raises(ConnectionError, match="API connection failed"):
+            _ = [
+                event
+                async for event in handler.handle_stream(
+                    message="Hi",
+                    user_id="user-1",
+                    conversation_id="conversation-1",
+                )
+            ]
 
     @pytest.mark.asyncio
-    async def test_handle_stream_restarts_checkpointer_and_retries_before_output(
+    async def test_handle_stream_recovers_checkpointer_during_preflight(
         self, mock_deps
     ):
         _, _, _, mock_agent, _, _ = mock_deps
@@ -417,13 +516,11 @@ class TestHandleStream:
                 postgres_dsn="postgresql://localhost/test",
             )
         )
-        calls = 0
+        handler.checkpointer.aget_tuple = AsyncMock(
+            side_effect=[OperationalError("the connection is closed"), None]
+        )
 
         async def mock_astream(_input, stream_mode=None, config=None):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise RuntimeError("the connection is closed")
             yield ("messages", (_fake_chunk("Recovered"), {}))
 
         mock_agent.astream = mock_astream
@@ -431,16 +528,21 @@ class TestHandleStream:
         with patch.object(
             handler, "_restart_checkpointer", new_callable=AsyncMock
         ) as mock_restart:
-            events = [data async for data in handler.handle_stream(message="Hi")]
+            events = [
+                event
+                async for event in handler.handle_stream(
+                    message="Hi",
+                    user_id="user-1",
+                    conversation_id="conversation-1",
+                )
+            ]
 
-        parsed = [json.loads(event[6:]) for event in events]
-        assert parsed[0]["token"] == "Recovered"
-        assert parsed[-1]["done"] is True
-        assert calls == 2
+        assert [event.token for event in events] == ["Recovered"]
+        assert handler.checkpointer.aget_tuple.await_count == 2
         mock_restart.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handle_stream_does_not_retry_after_output(self, mock_deps):
+    async def test_handle_stream_does_not_retry_agent_before_output(self, mock_deps):
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler(
@@ -449,22 +551,33 @@ class TestHandleStream:
                 postgres_dsn="postgresql://localhost/test",
             )
         )
+        handler.checkpointer.aget_tuple = AsyncMock(return_value=None)
+        calls = 0
 
         async def mock_astream(_input, stream_mode=None, config=None):
-            yield ("messages", (_fake_chunk("Partial"), {}))
-            raise RuntimeError("the connection is closed")
+            nonlocal calls
+            calls += 1
+            raise OperationalError("the connection is closed")
+            yield  # unreachable
 
         mock_agent.astream = mock_astream
 
-        with patch.object(
-            handler, "_restart_checkpointer", new_callable=AsyncMock
-        ) as mock_restart:
-            events = [data async for data in handler.handle_stream(message="Hi")]
+        with (
+            patch.object(
+                handler, "_restart_checkpointer", new_callable=AsyncMock
+            ) as mock_restart,
+            pytest.raises(OperationalError, match="connection is closed"),
+        ):
+            _ = [
+                event
+                async for event in handler.handle_stream(
+                    message="发送邮件",
+                    user_id="user-1",
+                    conversation_id="conversation-1",
+                )
+            ]
 
-        parsed = [json.loads(event[6:]) for event in events]
-        assert parsed[0]["token"] == "Partial"
-        assert parsed[1]["error"] == "the connection is closed"
-        assert parsed[1]["done"] is True
+        assert calls == 1
         mock_restart.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -480,12 +593,16 @@ class TestHandleStream:
 
         mock_agent.astream = mock_astream
 
-        events = [data async for data in handler.handle_stream(message="Hi")]
+        events = [
+            event
+            async for event in handler.handle_stream(
+                message="Hi",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
+        ]
 
-        # Only the completion event — chunk without .content → empty → skipped
-        assert len(events) == 1
-        parsed = json.loads(events[0][6:])
-        assert parsed["done"] is True
+        assert events == []
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -498,7 +615,7 @@ class TestHandleStreamWithCustomEvent:
 
     @pytest.mark.asyncio
     async def test_custom_event_yields_system_message(self, mock_deps):
-        """UT-HSM-01: auth_required custom events emit named 'auth_card' SSE."""
+        """Auth-required events stay structured for the Invocation Service."""
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
@@ -517,32 +634,20 @@ class TestHandleStreamWithCustomEvent:
         mock_agent.astream = mock_astream
 
         events = [
-            data
-            async for data in handler.handle_stream(
+            event
+            async for event in handler.handle_stream(
                 message="Hi",
+                user_id="user-1",
+                conversation_id="conversation-1",
             )
         ]
 
-        # Parse both named SSE (event: X\ndata: Y) and plain data: lines
-        parsed = []
-        for sse in events:
-            lines = sse.strip().split("\n")
-            data_line = None
-            for line in lines:
-                if line.startswith("data: "):
-                    data_line = line
-            if data_line:
-                parsed.append(json.loads(data_line[6:]))
-
-        system_msgs = [p for p in parsed if "system_message" in p]
-        assert len(system_msgs) == 1
-        assert system_msgs[0]["system_message"] == "Please authorize"
-        assert system_msgs[0]["auth_url"] == "https://auth.example.com"
-        assert system_msgs[0]["auth_required"] is True
-
-        tokens = [p for p in parsed if "token" in p and not p.get("done")]
-        assert len(tokens) == 1
-        assert tokens[0]["token"] == "Hello"
+        assert events[0].type is AgentEventType.AUTH_CARD
+        assert events[0].data["system_message"] == "Please authorize"
+        assert events[0].data["auth_url"] == "https://auth.example.com"
+        assert events[0].data["auth_required"] is True
+        assert events[1].type is AgentEventType.TOKEN
+        assert events[1].token == "Hello"
 
 
 # ---------------------------------------------------------------------------

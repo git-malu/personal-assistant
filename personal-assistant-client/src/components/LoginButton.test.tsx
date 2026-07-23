@@ -22,19 +22,22 @@ vi.mock("@azure/msal-react", () => ({
 import { LoginButton } from "./LoginButton";
 
 describe("LoginButton", () => {
+  const originalFetch = globalThis.fetch;
+
   afterEach(() => {
     vi.clearAllMocks();
     // Clear env stubs
     vi.unstubAllEnvs();
+    globalThis.fetch = originalFetch;
   });
 
   describe("in dev mode (no VITE_ENTRA_CLIENT_ID)", () => {
-    it('renders "Dev Mode — Proxy auth enabled" text', () => {
+    it('renders the compact "Local" environment label', () => {
       // Ensure VITE_ENTRA_CLIENT_ID is not defined
       vi.stubEnv("VITE_ENTRA_CLIENT_ID", undefined as unknown as string);
       render(<LoginButton />);
       expect(
-        screen.getByText(/Dev Mode — Proxy auth enabled/),
+        screen.getByText("Local"),
       ).toBeInTheDocument();
     });
 
@@ -117,11 +120,17 @@ describe("LoginButton", () => {
         accounts: [{ name: "Test User", username: "test@example.com" }],
       });
       mockUseIsAuthenticated.mockReturnValue(true);
+      const mockFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+      globalThis.fetch = mockFetch;
 
       const user = userEvent.setup();
       render(<LoginButton />);
 
       await user.click(screen.getByRole("button", { name: /logout/i }));
+      expect(mockFetch).toHaveBeenCalledWith("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
       expect(logoutRedirect).toHaveBeenCalledTimes(1);
     });
 

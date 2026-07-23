@@ -73,7 +73,7 @@ def test_json_formatter_emits_standard_fields():
     assert payload["deployment.environment"] == "test"
     assert payload["event.name"] == "http.request.completed"
     assert payload["request.id"] == "req-123"
-    assert payload["session.id"] == "session-456"
+    assert "session.id" not in payload
     assert payload["http.response.status_code"] == 200
     assert payload["duration_ms"] == 12.34
 
@@ -91,7 +91,7 @@ def test_context_filter_always_defines_optional_correlation_fields():
 
     assert ContextFilter().filter(record) is True
     assert hasattr(record, "request_id")
-    assert hasattr(record, "session_id")
+    assert not hasattr(record, "session_id")
     assert hasattr(record, "trace_id")
     assert hasattr(record, "span_id")
 
@@ -172,6 +172,6 @@ async def test_request_middleware_correlates_http_completion_event():
     assert len(records) == 1
     assert records[0].event_name == "http.request.completed"
     assert records[0].request_id == "request-123"
-    assert records[0].session_id == "session-456"
+    assert not hasattr(records[0], "session_id")
     assert records[0].http_route == "/invocations"
     assert records[0].http_status_code == 400

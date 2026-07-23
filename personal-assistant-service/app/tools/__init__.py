@@ -8,6 +8,8 @@ registers its tools via a module-level TOOLS list.
 import logging
 from typing import Any
 
+from app.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,5 +92,23 @@ def build_tools() -> list[Any]:
             e,
             exc_info=True,
         )
+
+    settings = get_settings()
+    if settings.github_mcp_enabled and settings.github_activity_tools_enabled:
+        try:
+            from app.tools.github_activity_tools import GITHUB_ACTIVITY_TOOLS
+
+            tools.extend(GITHUB_ACTIVITY_TOOLS)
+            logger.info(
+                "GitHub activity tools registered (%d tools).",
+                len(GITHUB_ACTIVITY_TOOLS),
+            )
+        except ImportError as e:
+            logger.warning(
+                "GitHub activity tools not available (import failed): %s. "
+                "Feature 17 Agent tools will be disabled for this session.",
+                e,
+                exc_info=True,
+            )
 
     return tools

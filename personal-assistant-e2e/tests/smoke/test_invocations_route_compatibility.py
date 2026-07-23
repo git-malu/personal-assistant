@@ -83,7 +83,11 @@ class TestScenario2SyncInvocation:
         """
         resp = httpx.post(
             f"{service_url}/invocations",
-            json={"message": "你好"},
+            json={
+                "conversation_id": "0190e9fe-82b4-7000-8000-000000000001",
+                "client_message_id": "0190e9fe-82b4-7000-8000-000000000002",
+                "message": "你好",
+            },
             headers={
                 "Accept": "text/event-stream",
                 "X-HW-AgentGateway-User-Id": "test-user",
@@ -145,38 +149,29 @@ class TestScenario3SSEStreamingNewPath:
         sp.stop()
 
     def test_sse_streaming_new_path_responds(self, service_url):
-        """POST /invocations with stream=true returns a response."""
+        """Streaming requests enforce the Feature 14 Conversation contract."""
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "你好", "stream": True},
-            headers={
-                "Accept": "text/event-stream",
-                "X-HW-AgentGateway-User-Id": "test-user",
-                "x-hw-agentarts-session-id": "e2e-test-session",
-            },
+            headers={"Accept": "text/event-stream"},
         )
-        assert resp.status_code < 500, (
-            f"SSE streaming should not cause server error, "
-            f"got {resp.status_code}: {resp.text[:200]}"
-        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "conversation_id is required"
 
     def test_sse_streaming_content_type(self, service_url):
-        """POST /invocations stream=true returns text/event-stream content-type."""
+        """Pre-stream validation errors remain explicit JSON responses."""
         resp = httpx.post(
             f"{service_url}/invocations",
-            json={"message": "hello", "stream": True},
-            headers={
-                "Accept": "text/event-stream",
-                "X-HW-AgentGateway-User-Id": "test-user",
-                "x-hw-agentarts-session-id": "e2e-test-session",
+            json={
+                "conversation_id": "0190e9fe-82b4-7000-8000-000000000001",
+                "message": "hello",
+                "stream": True,
             },
+            headers={"Accept": "text/event-stream"},
         )
-        # Only verify content-type if the response succeeded (200)
-        if resp.status_code == 200:
-            content_type = resp.headers.get("content-type", "")
-            assert "text/event-stream" in content_type, (
-                f"Expected text/event-stream content-type, got: {content_type}"
-            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "client_message_id is required"
+        assert "application/json" in resp.headers.get("content-type", "")
 
     def test_sse_empty_query_returns_400(self, service_url):
         """SSE streaming with empty message returns 400."""
@@ -247,27 +242,21 @@ class TestScenario4OldRouteReturns404:
         assert "detail" in data, f"Expected 'detail' in 404 error response: {data}"
 
     def test_new_route_works_old_route_404(self, service_url):
-        """POST /invocations stream works while old child routes are 404."""
+        """The new route validates requests while old child routes are 404."""
         # Old route is 404
         resp_old = httpx.get(f"{service_url}/api/chat/stream?q=test")
         assert resp_old.status_code == 404, (
             f"Expected 404 from /api/chat/stream, got {resp_old.status_code}"
         )
 
-        # New route works
+        # New route owns validation at the expected path.
         resp_new = httpx.post(
             f"{service_url}/invocations",
             json={"message": "test", "stream": True},
-            headers={
-                "Accept": "text/event-stream",
-                "X-HW-AgentGateway-User-Id": "test-user",
-                "x-hw-agentarts-session-id": "e2e-test-session",
-            },
+            headers={"Accept": "text/event-stream"},
         )
-        assert resp_new.status_code < 500, (
-            f"POST /invocations stream should work, "
-            f"got {resp_new.status_code}: {resp_new.text[:200]}"
-        )
+        assert resp_new.status_code == 400
+        assert resp_new.json()["detail"] == "conversation_id is required"
 
         resp_old_child = httpx.get(f"{service_url}/invocations/stream?q=test")
         assert resp_old_child.status_code == 404, (

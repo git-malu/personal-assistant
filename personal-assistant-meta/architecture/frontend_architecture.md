@@ -1,12 +1,14 @@
 # Personal Assistant — 前端架构
 
-> 版本：v0.1 | 状态：Draft | 关联文档：`backend_architecture.md`
+> 版本：v0.2 | 状态：Active | 更新时间：2026-07-20 | 关联文档：`backend_architecture.md`
 
 ---
 
 ## 1. 概述
 
 Personal Assistant 前端采用**多客户端架构**，所有客户端通过统一协议与 FastAPI 后端通信，共享同一套 Agent 处理逻辑和 Memory 空间。
+
+图类型：**Component Diagram（组件图）**。用于说明当前与 roadmap 客户端渠道。
 
 ```mermaid
 flowchart LR
@@ -38,6 +40,8 @@ flowchart LR
 Cloudflare Pages Function，由 Function 转发至 AgentArts Gateway 的
 `POST /invocations`。请求 body 使用 `stream: true`，响应为 SSE。
 
+图类型：**Sequence Diagram（时序图）**。用于说明 Web Chat same-origin Invocation 流程。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
@@ -55,8 +59,11 @@ sequenceDiagram
 
     Note over User,FastAPI: === 对话 ===
     User->>Browser: 输入消息
-    Browser->>Proxy: POST /invocations<br/>Authorization + Session ID
-    Proxy->>Gateway: POST Runtime /invocations
+    Browser->>Proxy: GET /api/conversations<br/>Authorization
+    Proxy->>Proxy: resolve HttpOnly Runtime Cookie
+    Proxy->>Gateway: Conversation list + controlled Session header
+    Browser->>Proxy: POST /invocations<br/>conversation_id + client_message_id
+    Proxy->>Gateway: Runtime invocation + same Cookie-derived Session
     Gateway->>FastAPI: JWT 验证后转发
     FastAPI-->>Gateway: SSE events
     Gateway-->>Proxy: SSE ReadableStream
@@ -66,7 +73,7 @@ sequenceDiagram
 
 | 维度 | 说明 |
 |------|------|
-| **协议** | `POST /invocations` + `{"stream": true}`，响应为 SSE |
+| **协议** | `POST /invocations` + `conversation_id` + `client_message_id` + `stream:true`，响应为 SSE |
 | **认证** | MSAL SPA 登录 Microsoft Entra ID；ID Token 存于 Zustand，并通过 `Authorization: Bearer` 发送。详见 [ADR-007](ADR/ADR-007-identity-provider.md) |
 | **路由** | Browser 与 Runtime 均为 `/invocations` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
@@ -81,13 +88,14 @@ sequenceDiagram
 - Outbound Auth（Agent 调用 Microsoft 365）由 AgentArts Identity SDK 管理。
   Web Chat 只负责展示 SDK 产生的 Auth Card，不接触 Microsoft Graph access
   token。
-- Cloudflare Pages Function 当前承担 lightweight BFF/proxy 职责：同源
-  `/invocations`、SSE pass-through、Gateway path mapping 和 OAuth callback bridge。
-  它不是 full OAuth BFF；full BFF / token handler 作为后续安全演进方向记录在
+- Cloudflare Pages Function 承担 lightweight BFF/proxy 职责：同源 Invocation 与
+  Conversation routes、Runtime HttpOnly Cookie、header overwrite、SSE pass-through、
+  logout Cookie cleanup 和 OAuth callback bridge。它不连接业务数据库、不做 ownership；
+  full inbound token handler 作为后续安全演进方向记录在
   [ADR-019](ADR/ADR-019-web-chat-bff-boundary.md)。
 
 Web Chat Inbound Auth 的完整登录态生命周期（AuthGuard、Zustand `idToken`、
-silent refresh、401/403 retry、LandingPage / ChatPage gate）见
+silent refresh、401/403 fail-closed（Invocation POST 不 retry）、LandingPage / ChatPage gate）见
 [`auth/inbound-auth-lifecycle.md`](auth/inbound-auth-lifecycle.md)。
 
 #### 2.1.1 Chainlit Playground（调试工具）
@@ -119,11 +127,15 @@ Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是
 
 #### 2.1.2 本地开发与网关模拟（Vite Proxy）
 
-在生产环境中，**AgentArts Gateway（API 网关）** 扮演着身份认证与安全过滤的角色。它会拦截请求、校验 Token，并将解析后的用户 ID 通过特有 Header（`X-HW-AgentGateway-User-Id`）透传给后端容器。
+在 production，AgentArts Gateway 校验 JWT，FastAPI 从已验证并转发的 Authorization
+token `sub` 派生用户。Runtime Session 由 Cloudflare BFF 的 HttpOnly Cookie resolver
+控制，caller User/Session header 不参与 ownership。
 
 为了在本地开发时实现**环境对齐（Environment Parity）**，同时规避浏览器的**同源策略（CORS）**限制，Web Chat 在本地开发阶段引入了 **Vite Proxy** 机制：
 
 ##### 1) 架构与数据流向
+
+图类型：**Data Flow Diagram（数据流图）**。用于说明 Vite proxy 的本地请求路径。
 
 ```mermaid
 sequenceDiagram
@@ -133,8 +145,8 @@ sequenceDiagram
     participant Backend as FastAPI<br/>(:8080 / Uvicorn)
 
     User->>Proxy: POST /invocations<br/>[Header] Authorization: Bearer eyJ...
-    Note over Proxy: 1. 识别代理规则<br/>2. 绕过浏览器 CORS<br/>3. 注入模拟身份 Header
-    Proxy->>Backend: POST http://localhost:8080/invocations<br/>[Header] Authorization: Bearer eyJ...<br/>[Header] X-HW-AgentGateway-User-Id: dev-user
+    Note over Proxy: 1. 识别代理规则<br/>2. 绕过浏览器 CORS<br/>3. 注入 local-only JWT + Session
+    Proxy->>Backend: POST http://localhost:8080/invocations<br/>Authorization: Bearer synthetic JWT<br/>x-hw-agentarts-session-id: local-development
     Backend-->>Proxy: 返回流式数据 (SSE)
     Proxy-->>User: 透传流式数据 (SSE)
 ```
@@ -142,8 +154,14 @@ sequenceDiagram
 ##### 2) 核心实现原理
 
 - **同源伪装（避开 CORS）**：前端代码中所有发往后端的 API 请求（如 `/invocations`），都以相对路径形式发出，即请求 `http://localhost:5173/invocations`（与前端自身同源）。浏览器检测到请求同源，**不会触发 CORS 校验，亦不会发起 OPTIONS 预检请求**。
-- **Node.js 侧转发与 Header 注入（Cosplay 华为云网关）**：运行在开发机上的 Vite 进程（Node.js 端）拦截到 `/invocations` 路径请求，在服务器端将其转发至真正的后端 `http://localhost:8080/invocations`。在转发之前，Vite 的 `vite.config.ts` 会利用 `proxyReq.setHeader` 钩子，强行在请求头中注入 `X-HW-AgentGateway-User-Id: dev-user`。
-- **后端 Uvicorn**：无论是本地还是云端，直接读取 `X-HW-AgentGateway-User-Id` 头即可，无感知调用方是 Vite 还是真实的 AgentArts Gateway。
+- **Node.js 侧转发与 local fixture**：Vite 代理 `/invocations` 与
+  `/api/conversations` 到 `localhost:8080`，在 dev server 边界注入固定 local-only
+  Session header 与带 `sub=dev-user` 的 synthetic JWT。
+- **Production-shaped Cookie 测试**：Vite 不实现 Runtime Cookie。Cookie 建立、复用、
+  非法值轮换、header overwrite、OAuth snapshot 和 logout 必须使用
+  `npm run pages:dev:local` 的 Wrangler Pages Functions 验证。
+- **后端 Uvicorn**：本地与 production 都从 Bearer JWT `sub` 派生 user，不读取 caller
+  User header 做 ownership。
 
 #### 2.1.3 Landing Page
 
@@ -152,6 +170,8 @@ sequenceDiagram
 **架构**：
 
 App.tsx 通过 AuthGuard 将 MSAL 认证流程中的三种状态分流：
+
+图类型：**Flowchart（流程图）**。用于说明 AuthGuard 状态分流。
 
 ```mermaid
 flowchart TB
@@ -173,6 +193,8 @@ flowchart TB
 
 **Inbound Auth token 生命周期**：
 
+图类型：**Sequence Diagram（时序图）**。用于说明 ID Token refresh 与失败关闭行为。
+
 ```mermaid
 stateDiagram-v2
     [*] --> Hydrating: main.tsx 启动
@@ -181,7 +203,7 @@ stateDiagram-v2
     SignedIn --> Refreshing: idToken 即将过期或 /invocations 401/403
     Refreshing --> SignedIn: silent refresh 成功
     Refreshing --> SignedOut: silent refresh 失败
-    SignedIn --> SignedOut: 401/403 retry 后仍失败
+    SignedIn --> SignedOut: proactive refresh 失败或 401/403（POST 不 retry）
     SignedOut --> Hydrating: 用户重新登录 redirect 返回
 ```
 
@@ -266,6 +288,8 @@ AgentArts Gateway 返回的 SSE `ReadableStream` 透明传回 Browser。Service 
 `auth_required` custom event。SDK 内部 poller 等待用户完成授权；tool 获取
 access token 后发送 `auth_complete` custom event。
 
+图类型：**Sequence Diagram（时序图）**。用于说明 OAuth custom event 与 Auth Card 更新。
+
 ```mermaid
 sequenceDiagram
     participant Tool as Email Tool / SDK
@@ -294,12 +318,17 @@ assistant message text。普通非 auth `system_message` 仍追加到聊天正�
 `assistant-ui` 通过 `RuntimeProvider` 注册 `chatAdapter`。Adapter 只负责流程
 编排，HTTP、协议解析和业务事件分发按职责拆分：
 
+图类型：**Component Diagram（组件图）**。用于说明 remote runtime 与 API adapter 分工。
+
 ```mermaid
 flowchart LR
     Runtime["assistant-ui Runtime"] --> Adapter["chat-adapter.ts<br/>流程编排"]
+    Runtime --> Threads["conversations/runtime.tsx<br/>RemoteThreadListAdapter"]
+    Threads --> ConversationAPI["conversations/api.ts<br/>CRUD + history"]
     Adapter --> API["chat/chat-api-client.ts<br/>HTTP + token refresh"]
+    Adapter --> Cancel["chat/cancellation-coordinator.ts<br/>cancel retry + UI state"]
+    Cancel --> API
     API --> JWT["chat/jwt.ts<br/>JWT claims"]
-    API --> Session["chat/session.ts<br/>Session ID"]
     Adapter --> Parser["chat/sse-parser.ts<br/>ReadableStream → SSEEvent"]
     Parser --> Handler["chat/chat-event-handler.ts<br/>事件归约与分发"]
     Handler --> Result["ChatModelRunResult"]
@@ -308,21 +337,38 @@ flowchart LR
 
 | 模块 | 稳定职责 |
 |------|----------|
-| `chat-adapter.ts` | 提取最后一条用户消息，编排 invoke/parse/handle，向 assistant-ui yield |
-| `chat-api-client.ts` | 构造请求 header/body、proactive refresh、401/403 retry、HTTP error |
+| `chat-adapter.ts` | 等待 remote Conversation 初始化，生成唯一 `client_message_id`，编排 invoke/parse/handle；Stop 后等待 per-Conversation cancellation barrier，未成功时不发送下一次 Invocation |
+| `cancellation-coordinator.ts` | 保存 per-Conversation `cancelling/cancel_failed` 状态；首次 Stop 有限重试，失败后复用同一 `client_message_id` 提供 `Retry stop`，204 后解除 barrier |
+| `chat-api-client.ts` | 构造 Conversation-aware body、proactive refresh、401/403 fail-closed；通过带 15 秒 timeout 的 `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` 显式取消，不 retry 普通 Invocation |
+| `conversations/api.ts` | snake_case wire 与 camelCase domain 转换、CRUD、Message history pagination |
+| `conversations/runtime.tsx` | RemoteThreadListAdapter、`remoteId=conversation_id`、load-only history adapter |
 | `sse-parser.ts` | 处理 stream chunk、CRLF normalization、`data:` line 和 JSON decode |
 | `chat-event-handler.ts` | 累积 token，区分普通 system message 与 auth event，更新 Auth Card Store |
-| `session.ts` | `localStorage` Session ID persistence 与 reset |
 | `jwt.ts` | base64url JWT payload decode、`sub/oid` 和 `exp` 提取 |
 
-该分层保持 `chatAdapter` 的公共 API 不变，不引入额外 networking library 或
-event bus。
+Runtime Session 不存在 Browser JavaScript/localStorage 中。desktop sidebar 与 mobile drawer
+共享 remote thread state，支持 create/select/rename/archive/restore/permanent delete；history
+hydration 完成前显示 loading skeleton。`409 duplicate_message` 只刷新对应 Message history，
+不会重新执行 Invocation。
+
+#### 2.1.6 New Conversation Lazy Creation
+
+New Conversation 采用 Lazy Creation。用户进入 Chat 或点击加号后，assistant-ui 只切换到
+唯一的本地空白 draft；该 draft 没有 `conversation_id`，不调用 Conversation API，也不在
+sidebar 中显示空 item。旧消息清空、welcome state 和已聚焦 Composer 共同提供即时反馈。
+
+首次发送时，Chat Adapter 先等待 `threadListItem.initialize()` 创建持久化 Conversation，
+取得 `conversation_id` 后再调用 Invocation API。未发送的 draft 可以在刷新或离开时丢弃，
+也不显示“创建成功”提示。完整决策与替代方案见
+[ADR-020](ADR/ADR-020-lazy-conversation-creation.md)。
 
 <!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat, refactor-9-modularize-chat-adapter -->
 
 ### 2.2 飞书直连
 
 **接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`
+
+图类型：**Sequence Diagram（时序图）**。用于说明飞书直连 roadmap 流程。
 
 ```mermaid
 sequenceDiagram
@@ -352,7 +398,14 @@ sequenceDiagram
 
 ### 2.3 OfficeClaw
 
-**接入方式**：OfficeClaw 桌面客户端作为飞书/微信桥接器，通过 AgentArts 调用后端 `/invocations`
+> **Roadmap**：当前 production Service 只接受 Gateway 已验证并转发、包含 `sub` 的 Bearer
+> JWT。OfficeClaw 的 IAM/API Key 调用没有 canonical user claim，尚不能直接使用 Feature 14
+> Conversation API；接入前必须增加可信 channel identity adapter。
+
+**目标接入方式**：OfficeClaw 桌面客户端作为飞书/微信桥接器，通过 AgentArts 调用后端
+`/invocations`。
+
+图类型：**Sequence Diagram（时序图）**。用于说明 OfficeClaw roadmap 流程。
 
 ```mermaid
 sequenceDiagram
@@ -364,8 +417,8 @@ sequenceDiagram
 
     User->>FS: @Agent 查日程
     FS->>OC: WebSocket 推送
-    OC->>AgentArts: 调用 Agent
-    AgentArts->>FastAPI: POST /invocations
+    OC-->>AgentArts: Roadmap: 携带可信 channel identity 调用 Agent
+    AgentArts-->>FastAPI: Roadmap: POST /invocations
     FastAPI-->>AgentArts: {"response": "..."}
     AgentArts-->>OC: 返回结果
     OC-->>FS: 发送回复
@@ -375,7 +428,7 @@ sequenceDiagram
 | 维度 | 说明 |
 |------|------|
 | **协议** | AgentArts `/invocations` (JSON-in/JSON-out) |
-| **认证** | AgentArts IAM / API Key |
+| **认证** | 待实现 channel identity adapter；不能直接使用无 JWT `sub` 的 IAM/API Key |
 | **路由** | `/invocations`（AgentArts 平台调用） |
 | **优势** | 零代码接飞书/微信，不需要公网回调 URL |
 | **代价** | 需要 Windows PC 常驻运行 OfficeClaw，不能自定义飞书交互 |
@@ -400,6 +453,8 @@ sequenceDiagram
 
 ## 4. 渠道选择指南
 
+图类型：**Decision Flowchart（决策流程图）**。用于说明渠道选择条件。
+
 ```mermaid
 flowchart TD
     Start["选择前端渠道"] --> Q1{"需要 OAuth 登录<br/>和 SSE 流式？"}
@@ -416,6 +471,8 @@ flowchart TD
 ## 5. 跨渠道 Memory 共享
 
 同一用户从不同渠道发起对话，通过统一的 `user_id` 关联到同一 Memory Space：
+
+图类型：**Data Flow Diagram（数据流图）**。用于说明跨渠道 Memory 关联。
 
 ```mermaid
 flowchart LR
@@ -445,6 +502,8 @@ Runtime path。详见
 
 Production URL：`https://agentarts-personal-assistant.pages.dev`
 
+图类型：**Deployment Diagram（部署图）**。用于说明 Web Chat production topology。
+
 ```mermaid
 flowchart LR
     Browser["Browser"] -->|"Load SPA"| Pages["Cloudflare Pages"]
@@ -465,6 +524,8 @@ flowchart LR
 Web Chat 独立部署于 Cloudflare Pages，不打包进 FastAPI container。Vite
 production build 由 Pages 托管，Pages Function 接收 same-origin
 `POST /invocations` 并转发到 AgentArts Gateway。
+
+图类型：**Sequence Diagram（时序图）**。用于说明 production request path。
 
 ```mermaid
 flowchart LR
@@ -501,6 +562,8 @@ FastAPI 容器内仅保留 Chainlit Playground（`/invocations/playground`）作
 #### 聊天式健康检查
 
 传统 `/health` 或 `/ping` 端点只验证"进程存活"，无法探测 AI Agent 核心链路。Chainlit Playground 路径可以作为**深度健康检查**的入口：
+
+图类型：**Flowchart（流程图）**。用于说明 Playground 深度检查路径。
 
 ```mermaid
 sequenceDiagram

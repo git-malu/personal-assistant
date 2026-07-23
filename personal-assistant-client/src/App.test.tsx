@@ -38,12 +38,14 @@ function setupAuth(isAuthenticated: boolean, hydrated: boolean) {
 
 describe("App", () => {
   beforeEach(() => {
+    vi.stubEnv("VITE_ENTRA_CLIENT_ID", "test-client-id");
     window.history.pushState({}, "", "/");
   });
 
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     useAuthStore.getState().setHydrated(false);
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
@@ -91,6 +93,17 @@ describe("App", () => {
       expect(screen.getByTestId("chat-page")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("landing-page")).not.toBeInTheDocument();
+  });
+
+  it("shows ChatPage in local Vite dev without Entra configuration", async () => {
+    vi.stubEnv("VITE_ENTRA_CLIENT_ID", undefined as unknown as string);
+    setupAuth(false, true);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-page")).toBeInTheDocument();
+    });
   });
 
   it("shows LandingPage when MSAL is authenticated but idToken is missing", async () => {

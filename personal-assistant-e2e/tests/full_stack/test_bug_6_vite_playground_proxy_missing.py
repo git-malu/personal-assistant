@@ -219,7 +219,12 @@ class TestBug6VitePlaygroundProxyMissing:
         """Sanity: /invocations proxy still reaches the backend service."""
         resp = httpx.post(
             f"{dev_urls['vite_url']}/invocations",
-            json={"message": "", "stream": True},
+            json={
+                "conversation_id": "0190e9fe-82b4-7000-8000-000000000001",
+                "client_message_id": "0190e9fe-82b4-7000-8000-000000000002",
+                "message": "",
+                "stream": True,
+            },
             headers={
                 "Accept": "text/event-stream",
                 "x-hw-agentarts-session-id": "bug-6-proxy-session",

@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "pages:dev": "npm run build && wrangler pages dev dist",
-    "pages:dev:local": "npm run build && wrangler pages dev dist --ip localhost --port 5173 --binding AGENTARTS_INVOCATIONS_URL=http://localhost:8080/invocations --binding AGENTARTS_OAUTH_CALLBACK_URL=http://localhost:8080/auth/oauth2/callback/m365-calendar",
+    "pages:dev:local": "npm run build && wrangler pages dev dist --ip localhost --port 5173 --binding PA_ENV=local --binding AGENTARTS_INVOCATIONS_URL=http://localhost:8080 --binding AGENTARTS_OAUTH_CALLBACK_URL=http://localhost:8080/auth/oauth2/callback/m365-calendar",
     "pages:deploy": "npm run build && wrangler pages deploy dist --project-name=agentarts-personal-assistant --branch=main",
     "test": "vitest run",
     "test:watch": "vitest"
