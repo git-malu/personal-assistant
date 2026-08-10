@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from langgraph.config import get_stream_writer
 
+from app.identity import get_github_provider_name
 from app.mcp.github_activity_source import (
     GitHubActivityEvent,
     GitHubActivityResult,
@@ -21,9 +25,27 @@ from app.mcp.github_activity_source import (
     github_mcp_search_activity,
 )
 from app.settings import get_settings
-from app.tools.calendar_tools import list_calendar_events
-from app.tools.email_tools import list_emails
-from app.tools.github_tools import GitHubReportContext, get_github_report_context
+from app.tools.calendar_tools import (
+    CALENDAR_PROVIDER,
+    authorize_calendar_report_access,
+)
+from app.tools.calendar_tools import (
+    _list_calendar_events_for_report as list_calendar_events,
+)
+from app.tools.email_tools import (
+    EMAIL_PROVIDER,
+    authorize_email_report_access,
+)
+from app.tools.email_tools import (
+    _list_emails_authorized as list_emails,
+)
+from app.tools.github_tools import (
+    GitHubReportContext,
+    authorize_github_report_access,
+)
+from app.tools.github_tools import (
+    _get_github_report_context_authorized as get_github_report_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +54,16 @@ type ReportSource = Literal["email", "calendar", "github"]
 type ReportAudience = Literal["self", "team"]
 type ReportFormat = Literal["markdown"]
 type SourceCoverage = Literal["ok", "partial", "unavailable", "skipped"]
+type ReportProgressStage = Literal[
+    "preparing",
+    "github_context",
+    "activity_search",
+    "activity_detail",
+    "email_collection",
+    "calendar_collection",
+    "rendering",
+]
+type ReportProgressStatus = Literal["running", "complete", "failed", "skipped"]
 
 _DEFAULT_SOURCES: tuple[ReportSource, ...] = ("github", "email", "calendar")
 _SOURCE_LABELS: dict[ReportSource, str] = {
@@ -50,6 +82,7 @@ _EMAIL_LIMIT_PER_FOLDER = 50
 _CALENDAR_LIMIT = 50
 _GITHUB_LIMIT = 100
 _MAX_ITEMS_PER_SECTION = 12
+_PROGRESS_MIN_INTERVAL_SECONDS = 0.35
 _DATE_ONLY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _GITHUB_CREDENTIAL_PATTERN = re.compile(
     r"\bgh[pousr]_[A-Za-z0-9]{20,}\b",
@@ -180,11 +213,227 @@ def _push_report_ready(
 
 
 @dataclass(slots=True)
+class _ReportProgressEmitter:
+    """Emit ordered, throttled report progress without exposing source data."""
+
+    sequence: int = 0
+    _last_emitted_at: float = field(default=0.0, repr=False)
+    _writer_unavailable_logged: bool = field(default=False, repr=False)
+
+    def emit(
+        self,
+        *,
+        stage: ReportProgressStage,
+        status: ReportProgressStatus,
+        source: ReportSource | None = None,
+        current: int | None = None,
+        total: int | None = None,
+        discovered: int | None = None,
+        force: bool = False,
+    ) -> None:
+        now = time.monotonic()
+        if (
+            not force
+            and self._last_emitted_at
+            and now - self._last_emitted_at < _PROGRESS_MIN_INTERVAL_SECONDS
+        ):
+            return
+
+        self.sequence += 1
+        event: dict[str, Any] = {
+            "type": "report_progress",
+            "report_progress": True,
+            "sequence": self.sequence,
+            "stage": stage,
+            "status": status,
+        }
+        if source is not None:
+            event["source"] = source
+        if current is not None:
+            event["current"] = max(current, 0)
+        if total is not None:
+            event["total"] = max(total, 0)
+        if discovered is not None:
+            event["discovered"] = max(discovered, 0)
+
+        try:
+            writer = get_stream_writer()
+            writer(event)
+            self._last_emitted_at = now
+        except Exception:
+            if not self._writer_unavailable_logged:
+                logger.warning(
+                    "get_stream_writer unavailable - report progress not streamed"
+                )
+                self._writer_unavailable_logged = True
+
+
+@dataclass(slots=True)
 class _SourceResult:
     evidence: list[ReportEvidence] = field(default_factory=list)
     warnings: list[ReportWarning] = field(default_factory=list)
     coverage: SourceCoverage = "ok"
     context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _ReportAuthorization:
+    """Results of the pre-collection authorization phase."""
+
+    access_tokens: dict[ReportSource, str] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    failures: dict[ReportSource, _SourceResult] = field(default_factory=dict)
+
+
+def _authorization_failure(source: ReportSource) -> _SourceResult:
+    warning_types: dict[ReportSource, str] = {
+        "github": "github_oauth_unavailable",
+        "email": "email_oauth_unavailable",
+        "calendar": "calendar_oauth_unavailable",
+    }
+    messages: dict[ReportSource, str] = {
+        "github": "GitHub OAuth 授权或账号上下文暂不可用。",
+        "email": "邮件 OAuth 授权暂不可用。",
+        "calendar": "日历 OAuth 授权暂不可用。",
+    }
+    return _SourceResult(
+        warnings=[
+            _warning(
+                source,
+                warning_types[source],
+                messages[source],
+                retryable=True,
+            )
+        ],
+        coverage="unavailable",
+    )
+
+
+def _push_report_auth_failed(source: ReportSource) -> None:
+    """Close a pending Report AuthCard without exposing failure details."""
+    messages: dict[ReportSource, str] = {
+        "github": "GitHub 授权未完成，请重试。",
+        "email": "邮件授权未完成，请重试。",
+        "calendar": "日历授权未完成，请重试。",
+    }
+    try:
+        if source == "github":
+            provider = get_github_provider_name()
+        elif source == "email":
+            provider = EMAIL_PROVIDER
+        else:
+            provider = CALENDAR_PROVIDER
+        event: dict[str, Any] = {
+            "type": "system_message",
+            "system_message": messages[source],
+            "auth_failed": True,
+            "provider": provider,
+        }
+    except Exception:
+        logger.warning(
+            "Report auth_failed event could not be prepared source=%s",
+            source,
+        )
+        return
+
+    if source == "calendar":
+        try:
+            oauth2_state = AgentArtsRuntimeContext.get_oauth2_custom_state()
+        except Exception:
+            oauth2_state = None
+            logger.warning("Calendar OAuth state unavailable for report auth_failed")
+        if oauth2_state:
+            event["oauth2_state"] = oauth2_state
+
+    try:
+        get_stream_writer()(event)
+    except Exception:
+        logger.warning("Report auth_failed event not streamed source=%s", source)
+
+
+def _github_disabled_result() -> _SourceResult:
+    return _SourceResult(
+        warnings=[
+            _warning(
+                "github",
+                "github_source_disabled",
+                "GitHub MCP 工程活动数据源未启用。",
+            )
+        ],
+        coverage="unavailable",
+    )
+
+
+def _source_progress_stage(source: ReportSource) -> ReportProgressStage:
+    if source == "github":
+        return "github_context"
+    if source == "email":
+        return "email_collection"
+    return "calendar_collection"
+
+
+def _collection_failure(source: ReportSource) -> _SourceResult:
+    messages: dict[ReportSource, str] = {
+        "github": "GitHub 工程活动数据源暂不可用。",
+        "email": "邮件数据源暂不可用。",
+        "calendar": "日历数据源暂不可用。",
+    }
+    return _SourceResult(
+        warnings=[
+            _warning(
+                source,
+                f"{source}_source_unavailable",
+                messages[source],
+                retryable=True,
+            )
+        ],
+        coverage="unavailable",
+    )
+
+
+async def _authorize_report_sources(
+    selected: tuple[ReportSource, ...],
+) -> _ReportAuthorization:
+    """Authorize selected sources in canonical order before any collection."""
+    result = _ReportAuthorization()
+    selected_set = set(selected)
+
+    for source in _DEFAULT_SOURCES:
+        if source not in selected_set:
+            continue
+        if source == "github" and not get_settings().github_mcp_enabled:
+            result.failures[source] = _github_disabled_result()
+            continue
+
+        try:
+            if source == "github":
+                access_token = await authorize_github_report_access()
+            elif source == "email":
+                access_token = await authorize_email_report_access()
+            else:
+                access_token = await authorize_calendar_report_access()
+        except Exception:
+            logger.warning(
+                "Report source authorization unavailable source=%s",
+                source,
+            )
+            _push_report_auth_failed(source)
+            result.failures[source] = _authorization_failure(source)
+            continue
+
+        if not isinstance(access_token, str) or not access_token:
+            logger.warning(
+                "Report source authorization returned no token source=%s",
+                source,
+            )
+            _push_report_auth_failed(source)
+            result.failures[source] = _authorization_failure(source)
+            continue
+        result.access_tokens[source] = access_token
+
+    return result
 
 
 def _timezone(value: str) -> ZoneInfo:
@@ -441,13 +690,32 @@ def _source_id(*parts: Any) -> str:
     return ":".join(_safe_text(part, limit=160) for part in parts if part is not None)
 
 
-async def _collect_email_evidence(window: ReportWindow) -> _SourceResult:
+async def _collect_email_evidence(
+    window: ReportWindow,
+    *,
+    access_token: str,
+    progress: _ReportProgressEmitter | None = None,
+) -> _SourceResult:
     result = _SourceResult()
     successful_folders = 0
+    if progress is not None:
+        progress.emit(
+            source="email",
+            stage="email_collection",
+            status="running",
+            current=0,
+            total=len(_EMAIL_FOLDERS),
+            discovered=0,
+            force=True,
+        )
 
-    for folder in _EMAIL_FOLDERS:
+    for folder_index, folder in enumerate(_EMAIL_FOLDERS, start=1):
         try:
-            response = await list_emails(folder=folder, limit=_EMAIL_LIMIT_PER_FOLDER)
+            response = await list_emails(
+                folder=folder,
+                limit=_EMAIL_LIMIT_PER_FOLDER,
+                access_token=access_token,
+            )
         except Exception:
             response = {"error": "unavailable"}
 
@@ -460,6 +728,16 @@ async def _collect_email_evidence(window: ReportWindow) -> _SourceResult:
                     retryable=True,
                 )
             )
+            if progress is not None:
+                progress.emit(
+                    source="email",
+                    stage="email_collection",
+                    status="running",
+                    current=folder_index,
+                    total=len(_EMAIL_FOLDERS),
+                    discovered=len(result.evidence),
+                    force=True,
+                )
             continue
 
         successful_folders += 1
@@ -507,24 +785,72 @@ async def _collect_email_evidence(window: ReportWindow) -> _SourceResult:
                 )
             )
 
+        if progress is not None:
+            progress.emit(
+                source="email",
+                stage="email_collection",
+                status="running",
+                current=folder_index,
+                total=len(_EMAIL_FOLDERS),
+                discovered=len(result.evidence),
+                force=True,
+            )
+
     if successful_folders == 0:
         result.coverage = "unavailable"
     elif result.warnings:
         result.coverage = "partial"
+    if progress is not None:
+        progress.emit(
+            source="email",
+            stage="email_collection",
+            status=("failed" if result.coverage == "unavailable" else "complete"),
+            current=len(_EMAIL_FOLDERS),
+            total=len(_EMAIL_FOLDERS),
+            discovered=len(result.evidence),
+            force=True,
+        )
     return result
 
 
-async def _collect_calendar_evidence(window: ReportWindow) -> _SourceResult:
+async def _collect_calendar_evidence(
+    window: ReportWindow,
+    *,
+    access_token: str,
+    progress: _ReportProgressEmitter | None = None,
+) -> _SourceResult:
+    if progress is not None:
+        progress.emit(
+            source="calendar",
+            stage="calendar_collection",
+            status="running",
+            current=0,
+            total=1,
+            discovered=0,
+            force=True,
+        )
     try:
         response = await list_calendar_events(
             start_time=window.start_at,
             end_time=window.end_at,
+            calendar_id="primary",
             limit=_CALENDAR_LIMIT,
+            access_token=access_token,
         )
     except Exception:
         response = {"error": "unavailable"}
 
     if not isinstance(response, dict) or response.get("error"):
+        if progress is not None:
+            progress.emit(
+                source="calendar",
+                stage="calendar_collection",
+                status="failed",
+                current=0,
+                total=1,
+                discovered=0,
+                force=True,
+            )
         return _SourceResult(
             warnings=[
                 _warning(
@@ -608,6 +934,16 @@ async def _collect_calendar_evidence(window: ReportWindow) -> _SourceResult:
             )
         )
         result.coverage = "partial"
+    if progress is not None:
+        progress.emit(
+            source="calendar",
+            stage="calendar_collection",
+            status="complete",
+            current=1,
+            total=1,
+            discovered=len(result.evidence),
+            force=True,
+        )
     return result
 
 
@@ -755,22 +1091,37 @@ async def _github_event_detail(
 
 async def _collect_github_evidence(
     window: ReportWindow,
+    *,
+    access_token: str,
+    progress: _ReportProgressEmitter | None = None,
 ) -> _SourceResult:
     if not get_settings().github_mcp_enabled:
-        return _SourceResult(
-            warnings=[
-                _warning(
-                    "github",
-                    "github_source_disabled",
-                    "GitHub MCP 工程活动数据源未启用。",
-                )
-            ],
-            coverage="unavailable",
-        )
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="github_context",
+                status="skipped",
+                force=True,
+            )
+        return _github_disabled_result()
 
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="github_context",
+            status="running",
+            force=True,
+        )
     try:
-        oauth_context = await get_github_report_context()
+        oauth_context = await get_github_report_context(access_token)
     except Exception:
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="github_context",
+                status="failed",
+                force=True,
+            )
         return _SourceResult(
             warnings=[
                 _warning(
@@ -784,6 +1135,13 @@ async def _collect_github_evidence(
         )
 
     if not isinstance(oauth_context, GitHubReportContext):
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="github_context",
+                status="failed",
+                force=True,
+            )
         return _SourceResult(
             warnings=[
                 _warning(
@@ -805,12 +1163,43 @@ async def _collect_github_evidence(
             "data_access_identity": "platform_mcp",
         }
     )
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="github_context",
+            status="complete",
+            current=len(oauth_context.repositories),
+            total=len(oauth_context.repositories),
+            discovered=len(oauth_context.repositories),
+            force=True,
+        )
     if not oauth_context.repositories:
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="activity_search",
+                status="complete",
+                current=0,
+                total=0,
+                discovered=0,
+                force=True,
+            )
         return result
 
     events_by_key: dict[tuple[str, str, str, str], GitHubActivityEvent] = {}
     cursor: str | None = None
     seen_cursors: set[str] = set()
+    page_count = 0
+    search_failed = False
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="activity_search",
+            status="running",
+            current=0,
+            discovered=0,
+            force=True,
+        )
     while True:
         try:
             response = await github_mcp_search_activity(
@@ -825,6 +1214,7 @@ async def _collect_github_evidence(
         except Exception:
             response = None
         if not isinstance(response, GitHubActivityResult):
+            search_failed = True
             result.warnings.append(
                 _warning(
                     "github",
@@ -834,6 +1224,7 @@ async def _collect_github_evidence(
                 )
             )
             break
+        page_count += 1
         for event in response.events:
             if (
                 event.actor is not None
@@ -854,6 +1245,14 @@ async def _collect_github_evidence(
                     retryable=warning.retryable,
                 )
             )
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="activity_search",
+                status="running",
+                current=page_count,
+                discovered=len(events_by_key),
+            )
         next_cursor = response.next_cursor
         if not next_cursor:
             break
@@ -869,6 +1268,17 @@ async def _collect_github_evidence(
             break
         seen_cursors.add(next_cursor)
         cursor = next_cursor
+
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="activity_search",
+            status="failed" if search_failed else "complete",
+            current=page_count,
+            total=None if search_failed else page_count,
+            discovered=len(events_by_key),
+            force=True,
+        )
 
     ordered_events = sorted(
         events_by_key.values(),
@@ -888,8 +1298,33 @@ async def _collect_github_evidence(
         )
         ordered_events = ordered_events[:_GITHUB_LIMIT]
 
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="activity_detail",
+            status="running",
+            current=0,
+            total=len(ordered_events),
+            discovered=len(ordered_events),
+            force=True,
+        )
+
+    def _detail_progress(current: int, total: int) -> None:
+        if progress is not None:
+            progress.emit(
+                source="github",
+                stage="activity_detail",
+                status="running",
+                current=current,
+                total=total,
+                discovered=len(ordered_events),
+            )
+
     try:
-        detail_results = await github_mcp_get_details(ordered_events)
+        detail_results = await github_mcp_get_details(
+            ordered_events,
+            on_progress=_detail_progress,
+        )
     except Exception:
         detail_results = []
     for index, event in enumerate(ordered_events):
@@ -914,6 +1349,16 @@ async def _collect_github_evidence(
 
     if result.warnings:
         result.coverage = "partial" if result.evidence else "unavailable"
+    if progress is not None:
+        progress.emit(
+            source="github",
+            stage="activity_detail",
+            status=("failed" if result.coverage == "unavailable" else "complete"),
+            current=len(ordered_events),
+            total=len(ordered_events),
+            discovered=len(result.evidence),
+            force=True,
+        )
     return result
 
 
@@ -1012,6 +1457,41 @@ def _build_markdown(
     return "\n".join(lines)
 
 
+async def _collect_authorized_source(
+    source: ReportSource,
+    window: ReportWindow,
+    access_token: str,
+    progress: _ReportProgressEmitter,
+) -> _SourceResult:
+    try:
+        if source == "email":
+            return await _collect_email_evidence(
+                window,
+                access_token=access_token,
+                progress=progress,
+            )
+        if source == "calendar":
+            return await _collect_calendar_evidence(
+                window,
+                access_token=access_token,
+                progress=progress,
+            )
+        return await _collect_github_evidence(
+            window,
+            access_token=access_token,
+            progress=progress,
+        )
+    except Exception:
+        logger.warning("Report source collection failed source=%s", source)
+        progress.emit(
+            source=source,
+            stage=_source_progress_stage(source),
+            status="failed",
+            force=True,
+        )
+        return _collection_failure(source)
+
+
 async def generate_report(
     report_type: ReportType = "daily",
     reference_date: str | None = None,
@@ -1029,10 +1509,12 @@ async def generate_report(
     GitHub activity authored by the current GitHub OAuth account across every
     repository that account can access. GitHub activity is read through the
     Feature 17 MCP source using the OAuth account as the fixed actor and the OAuth
-    repository list as an allowlist. Individual source failures are returned as
-    warnings while the remaining sources continue. When the user provides one
-    date, pass it as reference_date; when they provide a date range, pass start_at
-    and end_at. Explicit dates always override the current date.
+    repository list as an allowlist. Selected sources complete authorization in
+    GitHub, Email, Calendar order before any source starts collecting data.
+    Individual source failures are returned as warnings while the remaining
+    sources continue. When the user provides one date, pass it as reference_date;
+    when they provide a date range, pass start_at and end_at. Explicit dates always
+    override the current date.
     """
     if audience not in {"self", "team"}:
         raise ValueError(f"Unsupported audience: {audience}")
@@ -1054,20 +1536,54 @@ async def generate_report(
     evidence: list[ReportEvidence] = []
     warnings: list[ReportWarning] = []
     source_context: dict[ReportSource, dict[str, Any]] = {}
+    progress = _ReportProgressEmitter()
+    progress.emit(stage="preparing", status="running", force=True)
+    authorization = await _authorize_report_sources(selected)
+    progress.emit(stage="preparing", status="complete", force=True)
+
+    source_results = dict(authorization.failures)
+    collection_sources: list[ReportSource] = []
+    collection_coroutines = []
+    for source in selected:
+        if source in source_results:
+            disabled = any(
+                warning.warning_type == "github_source_disabled"
+                for warning in source_results[source].warnings
+            )
+            progress.emit(
+                source=source,
+                stage=_source_progress_stage(source),
+                status="skipped" if disabled else "failed",
+                force=True,
+            )
+            continue
+        access_token = authorization.access_tokens.get(source)
+        if access_token is None:
+            source_results[source] = _authorization_failure(source)
+            progress.emit(
+                source=source,
+                stage=_source_progress_stage(source),
+                status="failed",
+                force=True,
+            )
+            continue
+        collection_sources.append(source)
+        collection_coroutines.append(
+            _collect_authorized_source(source, window, access_token, progress)
+        )
+
+    collected_results = await asyncio.gather(*collection_coroutines)
+    source_results.update(zip(collection_sources, collected_results, strict=True))
 
     for source in selected:
-        if source == "email":
-            source_result = await _collect_email_evidence(window)
-        elif source == "calendar":
-            source_result = await _collect_calendar_evidence(window)
-        else:
-            source_result = await _collect_github_evidence(window)
+        source_result = source_results[source]
         evidence.extend(source_result.evidence)
         warnings.extend(source_result.warnings)
         coverage[source] = source_result.coverage
         if source_result.context:
             source_context[source] = source_result.context
 
+    progress.emit(stage="rendering", status="running", force=True)
     normalized_evidence = _deduplicate_evidence(evidence)
     normalized_warnings = _deduplicate_warnings(warnings)
     content = _build_markdown(
@@ -1088,6 +1604,7 @@ async def generate_report(
         source_coverage=coverage,
         source_context=source_context,
     ).to_dict()
+    progress.emit(stage="rendering", status="complete", force=True)
     _push_report_ready(
         content=content,
         filename=_report_filename(report_type, window),

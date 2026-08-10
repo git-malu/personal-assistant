@@ -229,6 +229,23 @@ def test_push_auth_complete_streams_matching_oauth2_state():
 
 
 @pytest.mark.asyncio
+async def test_calendar_report_authorization_gate_does_not_read_data():
+    raw_gate = ct._authorize_calendar_report_access
+    while hasattr(raw_gate, "__wrapped__"):
+        raw_gate = raw_gate.__wrapped__
+
+    with (
+        patch("app.tools.calendar_tools._get_client") as get_client,
+        patch("app.tools.calendar_tools._push_auth_complete") as auth_complete,
+    ):
+        result = await raw_gate(access_token="oauth-token")
+
+    assert result == "oauth-token"
+    get_client.assert_not_called()
+    auth_complete.assert_called_once_with()
+
+
+@pytest.mark.asyncio
 async def test_calendar_public_tool_schema_excludes_access_token():
     import inspect
 

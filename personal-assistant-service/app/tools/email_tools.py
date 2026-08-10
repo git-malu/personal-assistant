@@ -145,19 +145,30 @@ def _get_client() -> httpx.AsyncClient:
     auth_flow=EMAIL_AUTH_FLOW,
     on_auth_url=handle_auth_url,
 )
-async def _m365_email_request(
+async def authorize_email_report_access(
+    *,
+    access_token: str | None = None,
+) -> str:
+    """Complete the Report OAuth gate without reading mailbox data."""
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+    _push_auth_complete(EMAIL_PROVIDER)
+    return access_token
+
+
+async def _m365_email_request_authorized(
     method: str,
     path: str,
     *,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     json: dict[str, Any] | None = None,
-    access_token: str | None = None,
+    access_token: str,
 ) -> httpx.Response:
+    """Call Microsoft Graph with a token obtained during Report preflight."""
     if not access_token:
-        raise RuntimeError("access_token was not injected by require_access_token")
+        raise RuntimeError("Email report access token is required")
 
-    _push_auth_complete(EMAIL_PROVIDER)
     request_headers = {"Authorization": f"Bearer {access_token}"}
     if headers:
         request_headers.update(headers)
@@ -172,35 +183,65 @@ async def _m365_email_request(
     )
 
 
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _m365_email_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    json: dict[str, Any] | None = None,
+    access_token: str | None = None,
+) -> httpx.Response:
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _m365_email_request_authorized(
+        method,
+        path,
+        params=params,
+        headers=headers,
+        json=json,
+        access_token=access_token,
+    )
+
+
 # ── 1. list_emails ──
 
 
-async def list_emails(
+async def _list_emails_impl(
     folder: str = "inbox",
     limit: int = 10,
+    *,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
-    """列出指定文件夹中的邮件。
-
-    Args:
-        folder: 邮件文件夹名（inbox, sentitems, drafts 等），默认为 inbox
-        limit: 返回邮件数量上限，默认 10
-
-    Returns:
-        dict with keys: emails (list of {id, subject, from, receivedDateTime,
-        isRead, importance}), count (int), folder (str)
-    """
     try:
-        resp = await _m365_email_request(
-            "GET",
-            f"/mailFolders/{folder}/messages",
-            params={
-                "$top": limit,
-                "$select": (
-                    "id,subject,from,receivedDateTime,isRead,importance,bodyPreview"
-                ),
-                "$orderby": "receivedDateTime desc",
-            },
-        )
+        params = {
+            "$top": limit,
+            "$select": (
+                "id,subject,from,receivedDateTime,isRead,importance,bodyPreview"
+            ),
+            "$orderby": "receivedDateTime desc",
+        }
+        if access_token is None:
+            resp = await _m365_email_request(
+                "GET",
+                f"/mailFolders/{folder}/messages",
+                params=params,
+            )
+        else:
+            resp = await _m365_email_request_authorized(
+                "GET",
+                f"/mailFolders/{folder}/messages",
+                params=params,
+                access_token=access_token,
+            )
         resp.raise_for_status()
         data = resp.json()
         emails = [
@@ -221,6 +262,37 @@ async def list_emails(
     except Exception as e:
         logger.exception("list_emails failed")
         return _format_tool_error(e, "list_emails")
+
+
+async def _list_emails_authorized(
+    folder: str,
+    limit: int,
+    *,
+    access_token: str,
+) -> dict[str, Any]:
+    """List Report emails with a token obtained during authorization preflight."""
+    return await _list_emails_impl(
+        folder=folder,
+        limit=limit,
+        access_token=access_token,
+    )
+
+
+async def list_emails(
+    folder: str = "inbox",
+    limit: int = 10,
+) -> dict[str, Any]:
+    """列出指定文件夹中的邮件。
+
+    Args:
+        folder: 邮件文件夹名（inbox, sentitems, drafts 等），默认为 inbox
+        limit: 返回邮件数量上限，默认 10
+
+    Returns:
+        dict with keys: emails (list of {id, subject, from, receivedDateTime,
+        isRead, importance}), count (int), folder (str)
+    """
+    return await _list_emails_impl(folder=folder, limit=limit)
 
 
 # ── 2. get_email ──

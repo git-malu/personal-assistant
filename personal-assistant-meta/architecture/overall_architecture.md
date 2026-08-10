@@ -504,21 +504,31 @@ flowchart LR
     subgraph Orchestration["report_tools.py"]
         Report --> Window["Report window resolver"]
         Report --> Selection["Source selection<br/>default: github + email + calendar"]
+        Selection --> Auth["OAuth preflight<br/>GitHub -> Email -> Calendar"]
+        Auth --> Collection["Parallel authorized source collection<br/>asyncio.gather"]
+        Window --> Collection
+        Report --> Progress["Structured progress emitter<br/>sequence + stage + safe counts"]
+        Collection --> Progress
         Window --> Normalize["Evidence normalization"]
-        Selection --> Normalize
+        Collection --> Normalize
         Normalize --> Renderer["Deterministic Markdown renderer"]
-        Selection -. "source error" .-> Warnings["Warning aggregation"]
+        Auth -. "auth failure" .-> Warnings["Warning aggregation"]
+        Collection -. "source error" .-> Warnings
         Renderer --> Result["ReportResult"]
         Warnings --> Result
     end
 
-    Selection --> Email["email_tools.py<br/>inbox + sentitems"]
-    Selection --> Calendar["calendar_tools.py"]
-    Selection --> GitHubOAuth["github_tools.py<br/>OAuth /user + /user/repos"]
+    Auth -. "auth-only" .-> Email["email_tools.py<br/>OAuth + token-aware reader"]
+    Auth -. "auth-only" .-> Calendar["calendar_tools.py<br/>OAuth + token-aware reader"]
+    Auth -. "auth-only" .-> GitHubOAuth["github_tools.py<br/>OAuth + token-aware context"]
+    Collection --> Email
+    Collection --> Calendar
+    Collection --> GitHubOAuth
     GitHubOAuth --> GitHubMCP["github_activity_source.py<br/>Feature 17 MCP actor=A"]
     Email --> Normalize
     Calendar --> Normalize
     GitHubMCP --> Normalize
+    Progress -. "report_progress custom SSE" .-> WebProgress["Web Chat<br/>message-scoped progress panel"]
 ```
 
 编排契约：
@@ -526,11 +536,16 @@ flowchart LR
 - 用户给出单个日期时，将其规范化为 `reference_date` 并锚定对应自然日/周/月；给出
   起止日期时严格使用 `start_at` / `end_at`。显式日期始终优先于当前日期或当前周期。
 - `sources` 未传时固定启用 GitHub、Email、Calendar；显式传入时只调用指定 source。
+- 已选 source 先按 GitHub、Email、Calendar 的 canonical order 串行完成 OAuth preflight；
+  所有授权尝试结束前不执行任何业务数据请求。单项授权失败继续后续 provider，采集阶段
+  跳过失败 source。
+- 所有授权尝试结束后，已授权 source 使用 `asyncio.gather` 跨 source 并行采集；最终
+  evidence、warning、coverage 和 context 仍按用户选择的 source 顺序确定性合并。
 - Email source 复用现有 async functions，默认读取 `inbox` 和 `sentitems`，并在
   Report 层按规范化时间窗口过滤。
-- GitHub source 先调用现有 GitHub OAuth auth gate 获取 `subject_login=A`，并全分页枚举
-  A 可访问仓库作为 `repository_scope=oauth_accessible`；随后直接调用 Feature 17 typed
-  internal source contract，传入 `actor=A` 与仓库 allowlist，不经过 Agent-facing
+- GitHub auth-only gate 仅取得内部 token；所有授权尝试结束后，GitHub collector 才解析
+  `subject_login=A` 并全分页枚举 A 可访问仓库作为 `repository_scope=oauth_accessible`，
+  随后直接调用 Feature 17 typed internal source contract，传入 `actor=A` 与仓库 allowlist，不经过 Agent-facing
   `github_search_activity`，也不回退到 platform actor / repository discovery。
 - GitHub MCP credential 只表示 `data_access_identity=platform_mcp` 的读取通道。
   Report 对外主体始终是 OAuth 账号 A；选中活动全局最多 100 条，并尽量补充 detail。
@@ -541,6 +556,12 @@ flowchart LR
 - `generate_report` 在 renderer 完成后通过 LangGraph custom stream 发送 `report_ready`，
   Web Chat 将原始 Markdown artifact 按 assistant message 保存到 runtime store，并在报告
   正文下方显示下载卡；支持原生“另存为”和标准 `.md` fallback。
+- 长耗时采集通过结构化 `report_progress` custom SSE 持续上报 stage、status 和非负安全
+  计数。Web Chat 按 assistant message 保存 global/source snapshot，拒绝倒退 sequence；
+  `report_ready` 或 stream 终止后以 terminal tombstone 防止迟到进度复活。进度面板位于
+  Auth Card 下方的普通文档流中，不进入正文或 Conversation history。
+- Web Chat 对同一 assistant message 使用有序 Auth Card 列表；GitHub、Email、Calendar
+  授权卡在正常文档流中并存，状态更新、单卡关闭和下载卡都不覆盖既有授权 UI。
 - Report artifact 暂不进入 Conversation history；专用卡只随实时 SSE 生命周期存在。
   Infra 无新增组件，GitHub MCP Gateway / Target 继续复用 Feature 17 的平台配置。
 

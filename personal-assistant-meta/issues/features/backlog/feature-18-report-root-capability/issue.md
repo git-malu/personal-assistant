@@ -62,6 +62,8 @@ flowchart LR
 - 首期使用 deterministic Markdown renderer 生成正文，不在 tool 内发起额外 LLM 调用。
 - 报告生成完成后通过 custom SSE 发送原始 Markdown artifact，Web Chat 在报告正文下方
   展示与 OAuth Auth Card 状态语言一致的下载卡片。
+- 授权结束后通过结构化 `report_progress` custom SSE 持续展示采集阶段与安全计数；
+  GitHub 长耗时分页和详情补充期间不得出现无可见反馈的静默阶段。
 - 用户点击下载后，支持浏览器原生“另存为”选择文件名与本机目录；不支持 File System
   Access API 的浏览器回退为标准 `.md` 下载。
 - 支持 source partial failure：单个 source 失败时返回 warning，并继续生成部分报表。
@@ -79,10 +81,16 @@ flowchart LR
   - evidence normalization；
   - warning aggregation。
 - 复用现有 `email_tools.py` / `calendar_tools.py` 中的 async functions。
+- 为 GitHub、Email、Calendar 增加仅供 Report 内部使用的 OAuth preflight；所有选中
+  source 完成授权判定后才进入数据采集阶段。
 - 接入 Feature 17 的 `github_mcp_search_activity` / `github_mcp_get_detail`。
 - 新增 `ReportEvidence` / `ReportResult` 类型。
 - 新增 `report_ready` SSE event、按 assistant message 隔离的 Report Download Store、
   Markdown 保存 helper 与 `ReportDownloadCard`。
+- 新增 `report_progress` SSE event、按 assistant message 隔离且防乱序的 Report Progress
+  Store 与普通文档流 `ReportProgressCard`；`report_ready` 到达后由下载卡接管。
+- Auth Card Store 支持同一 assistant message 下多个 provider card 按到达顺序并存，
+  后续授权事件不得覆盖先前 card。
 - 更新 `SYSTEM_PROMPT` 的报表工具选择规则。
 - 单元测试、集成测试和 E2E 覆盖日/周/月报、partial failure 和 GitHub source 可选接入。
 
@@ -126,6 +134,15 @@ flowchart LR
 - [ ] GitHub source 以 `actor=A` 读取 A 自己的活动，不回退到 platform actor 或 platform repository discovery。
 - [ ] GitHub source 在分页 cursor 翻完后再按全局最多 100 条截断，并为选中活动补充 detail。
 
+### AC3A：授权阶段先于采集阶段
+
+- [ ] 默认 sources 按 `GitHub -> Email -> Calendar` 串行完成 OAuth preflight；第三项完成
+  或失败前，不得发起任何 GitHub API/MCP、Email Graph 或 Calendar Graph 数据请求。
+- [ ] 显式 `sources` 只授权被选中的 source，但授权顺序始终取上述 canonical order 的子集。
+- [ ] 单个 source 授权失败或超时后继续检查后续 provider；全部授权尝试结束后，仅采集
+  已授权 source，并为失败项返回脱敏 warning 与 `unavailable` coverage。
+- [ ] Report 内部 access token 不进入 public tool schema、结果、SSE、日志或 dataclass repr。
+
 ### AC4：工具选择边界清晰
 
 - [ ] 生成日/周/月报、工作总结、研发进展总结时，Agent 优先使用 `generate_report`。
@@ -146,11 +163,28 @@ flowchart LR
   renderer 生成的原始 Markdown、报告类型、时间窗口和安全的 `.md` 建议文件名。
 - [ ] Web Chat 仅在对应 assistant message 的报告正文下方显示专用下载卡，不影响普通
   assistant message、Feature 17 GitHub activity tools 或 OAuth Auth Card。
+- [ ] 同一 assistant message 的 GitHub、Email、Calendar Auth Card 按到达顺序纵向并存；
+  新 card、完成/失败事件、单卡关闭或 `report_ready` 均不得替换或清除其他 card。
 - [ ] 下载卡的 pending / saved / failed 状态与 GitHub、Email、Calendar OAuth Card 的
   蓝 / 绿 / 红视觉语义一致。
 - [ ] 支持原生“另存为”；用户取消时不产生 fallback 文件，浏览器不支持原生 picker 时
   回退为标准 `.md` 下载。
 - [ ] 保存内容与 `ReportResult.content` 完全一致，并使用 UTF-8 Markdown MIME type。
+
+### AC7：长耗时采集具有实时进度
+
+- [ ] 授权阶段仍按 `GitHub -> Email -> Calendar` 串行完成；全部授权尝试结束后，已授权
+  source 使用 `asyncio.gather` 跨 source 并行采集，结果仍按用户选择顺序确定性合并。
+- [ ] 最后一个授权尝试结束后立即发送可见进度；GitHub context、活动分页、详情补充、
+  Email、Calendar 和 Markdown rendering 均有明确 stage，详情阶段显示真实 `current / total`。
+- [ ] GitHub 搜索总量未知时使用 indeterminate 状态和已发现数量，不展示伪百分比；进度
+  更新进行 300-500ms 节流，stage 切换与 terminal 状态不得被节流丢弃。
+- [ ] `report_progress` 仅包含单调递增 `sequence`、枚举字段和非负计数，不包含
+  `system_message`、token、cursor、仓库名、邮件主题或原始异常。
+- [ ] 进度面板按 `assistantMessageId` 隔离，位于 Auth Card 下方的普通文档流中；桌面和移动端
+  均不得覆盖授权 UI、正文或下载卡，也不得造成横向滚动。
+- [ ] `report_ready` 或 stream error 将进度状态置为 terminal；迟到或重复 sequence 不得让
+  进度面板重新出现，进度事件不得进入正文或 Conversation history。
 
 ## 依赖
 

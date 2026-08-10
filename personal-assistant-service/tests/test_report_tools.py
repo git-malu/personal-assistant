@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from datetime import datetime
@@ -22,6 +23,36 @@ from app.tools.report_tools import (
     resolve_report_window,
     select_report_sources,
 )
+
+
+@pytest.fixture(autouse=True)
+def authorize_report_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Report tests isolated from AgentArts OAuth network calls."""
+
+    async def authorize_github() -> str:
+        return "github-report-token"
+
+    async def authorize_email() -> str:
+        return "email-report-token"
+
+    async def authorize_calendar() -> str:
+        return "calendar-report-token"
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorize_github,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_email_report_access",
+        authorize_email,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorize_calendar,
+    )
 
 
 @pytest.mark.parametrize(
@@ -195,7 +226,13 @@ async def test_generate_report_combines_default_sources_and_internal_github(
     email_calls: list[tuple[str, int]] = []
     github_kwargs: dict[str, object] = {}
 
-    async def fake_list_emails(folder: str, limit: int) -> dict[str, object]:
+    async def fake_list_emails(
+        folder: str,
+        limit: int,
+        *,
+        access_token: str,
+    ) -> dict[str, object]:
+        assert access_token == "email-report-token"
         email_calls.append((folder, limit))
         if folder == "inbox":
             emails = [
@@ -291,14 +328,19 @@ async def test_generate_report_combines_default_sources_and_internal_github(
             ]
         )
 
-    async def fake_github_context() -> GitHubReportContext:
+    async def fake_github_context(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         return GitHubReportContext(
             login="oauth-user",
             user_id=1001,
             repositories=("owner/repo",),
         )
 
-    async def fake_github_details(events) -> list[GitHubActivityEvent]:
+    async def fake_github_details(
+        events,
+        *,
+        on_progress=None,
+    ) -> list[GitHubActivityEvent]:
         assert [
             (
                 event.event_type,
@@ -308,7 +350,7 @@ async def test_generate_report_combines_default_sources_and_internal_github(
             )
             for event in events
         ] == [("commit", "owner/repo", "abc123", None)]
-        return [
+        details = [
             GitHubActivityEvent(
                 provider="github",
                 event_type="commit",
@@ -322,6 +364,9 @@ async def test_generate_report_combines_default_sources_and_internal_github(
                 details={"files": [{"filename": "app/report.py"}]},
             )
         ]
+        if on_progress is not None:
+            on_progress(1, 1)
+        return details
 
     async def fail_agent_facade(*args, **kwargs):
         pytest.fail("Report must not call the Agent-facing GitHub facade")
@@ -460,16 +505,21 @@ async def test_generate_report_follows_all_github_pages_before_truncating(
             next_cursor="cursor-2" if page == 1 else None,
         )
 
-    async def fake_github_context() -> GitHubReportContext:
+    async def fake_github_context(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         return GitHubReportContext(
             login="oauth-user",
             user_id=1001,
             repositories=("owner/repo",),
         )
 
-    async def fake_github_details(events) -> list[GitHubActivityEvent]:
+    async def fake_github_details(
+        events,
+        *,
+        on_progress=None,
+    ) -> list[GitHubActivityEvent]:
         details: list[GitHubActivityEvent] = []
-        for event in events:
+        for index, event in enumerate(events, start=1):
             detail_calls.append(event.external_id)
             prefix = "old" if event.external_id.startswith("old-") else "new"
             details.append(
@@ -491,6 +541,8 @@ async def test_generate_report_follows_all_github_pages_before_truncating(
                     details=large_detail,
                 )
             )
+            if on_progress is not None:
+                on_progress(index, len(events))
         return details
 
     monkeypatch.setattr(report_tools, "github_mcp_search_activity", fake_github_search)
@@ -561,7 +613,8 @@ async def test_generate_report_degrades_each_failed_source_without_secret_leak(
             ],
         )
 
-    async def fake_github_context() -> GitHubReportContext:
+    async def fake_github_context(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         return GitHubReportContext(
             login="oauth-user",
             user_id=1001,
@@ -621,7 +674,8 @@ async def test_generate_report_degrades_each_failed_source_without_secret_leak(
 async def test_generate_report_github_oauth_failure_never_calls_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def failed_oauth() -> GitHubReportContext:
+    async def failed_oauth(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         raise RuntimeError("oauth unavailable")
 
     async def unexpected_mcp(**kwargs):
@@ -650,7 +704,8 @@ async def test_generate_report_github_oauth_failure_never_calls_mcp(
 async def test_generate_report_empty_oauth_repository_allowlist_skips_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def empty_context() -> GitHubReportContext:
+    async def empty_context(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         return GitHubReportContext(
             login="oauth-user",
             user_id=1001,
@@ -698,10 +753,18 @@ async def test_generate_report_marks_disabled_github_source_unavailable(
     async def fail_github_context() -> GitHubReportContext:
         pytest.fail("Disabled GitHub source must not resolve OAuth context")
 
+    async def fail_github_auth() -> str:
+        pytest.fail("Disabled GitHub source must not request OAuth authorization")
+
     monkeypatch.setattr(report_tools, "list_emails", empty_email)
     monkeypatch.setattr(report_tools, "list_calendar_events", empty_calendar)
     monkeypatch.setattr(report_tools, "github_mcp_search_activity", fail_github)
     monkeypatch.setattr(report_tools, "get_github_report_context", fail_github_context)
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        fail_github_auth,
+    )
     monkeypatch.setattr(
         report_tools,
         "get_settings",
@@ -753,6 +816,463 @@ async def test_generate_report_respects_explicit_source_selection(
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sources", "expected_trace"),
+    [
+        (
+            None,
+            [
+                "auth:github",
+                "auth:email",
+                "auth:calendar",
+                "collect:github",
+                "collect:email",
+                "collect:calendar",
+            ],
+        ),
+        (
+            ["calendar", "github"],
+            [
+                "auth:github",
+                "auth:calendar",
+                "collect:calendar",
+                "collect:github",
+            ],
+        ),
+    ],
+)
+async def test_generate_report_authorizes_selected_sources_before_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    sources: list[str] | None,
+    expected_trace: list[str],
+) -> None:
+    trace: list[str] = []
+
+    def authorization(source: str):
+        async def run() -> str:
+            trace.append(f"auth:{source}")
+            return f"{source}-token"
+
+        return run
+
+    def collector(source: str):
+        async def run(window, *, access_token: str, progress=None):
+            del window
+            assert progress is not None
+            assert access_token == f"{source}-token"
+            trace.append(f"collect:{source}")
+            return report_tools._SourceResult()
+
+        return run
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorization("github"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_email_report_access",
+        authorization("email"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorization("calendar"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        collector("github"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_email_evidence",
+        collector("email"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_calendar_evidence",
+        collector("calendar"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+
+    await generate_report(
+        report_type="custom",
+        start_at="2026-07-21",
+        end_at="2026-07-21",
+        sources=sources,  # type: ignore[arg-type]
+    )
+
+    assert trace == expected_trace
+
+
+@pytest.mark.asyncio
+async def test_generate_report_collects_authorized_sources_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorization_complete = False
+    started = {source: asyncio.Event() for source in ("github", "email", "calendar")}
+    release_collection = asyncio.Event()
+
+    def authorization(source: str):
+        async def run() -> str:
+            nonlocal authorization_complete
+            if source == "calendar":
+                authorization_complete = True
+            return f"{source}-token"
+
+        return run
+
+    def collector(source: str):
+        async def run(window, *, access_token: str, progress=None):
+            del window
+            assert authorization_complete is True
+            assert access_token == f"{source}-token"
+            assert progress is not None
+            started[source].set()
+            await release_collection.wait()
+            return report_tools._SourceResult()
+
+        return run
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorization("github"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_email_report_access",
+        authorization("email"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorization("calendar"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        collector("github"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_email_evidence",
+        collector("email"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_calendar_evidence",
+        collector("calendar"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+
+    report_task = asyncio.create_task(
+        generate_report(
+            report_type="custom",
+            start_at="2026-07-21",
+            end_at="2026-07-21",
+        )
+    )
+    await asyncio.wait_for(
+        asyncio.gather(*(event.wait() for event in started.values())),
+        timeout=1,
+    )
+    assert report_task.done() is False
+
+    release_collection.set()
+    result = await report_task
+
+    assert result["source_coverage"] == {
+        "github": "ok",
+        "email": "ok",
+        "calendar": "ok",
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_report_finishes_later_auth_after_one_source_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace: list[str] = []
+
+    async def authorize_github() -> str:
+        trace.append("auth:github")
+        return "github-token"
+
+    async def authorize_email() -> str:
+        trace.append("auth:email")
+        raise RuntimeError("authorization unavailable")
+
+    async def authorize_calendar() -> str:
+        trace.append("auth:calendar")
+        return "calendar-token"
+
+    def collector(source: str):
+        async def run(window, *, access_token: str, progress=None):
+            del window
+            assert progress is not None
+            assert access_token == f"{source}-token"
+            trace.append(f"collect:{source}")
+            return report_tools._SourceResult()
+
+        return run
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorize_github,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_email_report_access",
+        authorize_email,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorize_calendar,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        collector("github"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_email_evidence",
+        collector("email"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_calendar_evidence",
+        collector("calendar"),
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+
+    result = await generate_report(
+        report_type="custom",
+        start_at="2026-07-21",
+        end_at="2026-07-21",
+    )
+
+    assert trace == [
+        "auth:github",
+        "auth:email",
+        "auth:calendar",
+        "collect:github",
+        "collect:calendar",
+    ]
+    assert result["source_coverage"] == {
+        "github": "ok",
+        "email": "unavailable",
+        "calendar": "ok",
+    }
+    assert result["warnings"] == [
+        {
+            "source": "email",
+            "warning_type": "email_oauth_unavailable",
+            "message": "邮件 OAuth 授权暂不可用。",
+            "retryable": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_report_closes_auth_card_after_authorization_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    events: list[dict[str, object]] = []
+    secret_sentinel = "authorization-secret-must-not-leak"
+
+    async def authorize_github() -> str:
+        report_tools.get_stream_writer()(
+            {
+                "type": "system_message",
+                "system_message": "GitHub authorization required",
+                "auth_url": "https://auth.example.com/github",
+                "auth_required": True,
+                "provider": "github-provider",
+            }
+        )
+        raise RuntimeError(secret_sentinel)
+
+    async def fail_collection(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("Authorization failure must prevent GitHub collection")
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorize_github,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        fail_collection,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_github_provider_name",
+        lambda: "github-provider",
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: events.append)
+
+    result = await generate_report(
+        report_type="custom",
+        start_at="2026-07-21",
+        end_at="2026-07-21",
+        sources=["github"],
+    )
+
+    lifecycle_events = [
+        event
+        for event in events
+        if event.get("auth_required")
+        or event.get("auth_failed")
+        or event.get("report_ready")
+    ]
+    assert [
+        "auth_required"
+        if event.get("auth_required")
+        else "auth_failed"
+        if event.get("auth_failed")
+        else "report_ready"
+        for event in lifecycle_events
+    ] == ["auth_required", "auth_failed", "report_ready"]
+    assert lifecycle_events[1] == {
+        "type": "system_message",
+        "system_message": "GitHub 授权未完成，请重试。",
+        "auth_failed": True,
+        "provider": "github-provider",
+    }
+    assert result["source_coverage"]["github"] == "unavailable"
+    assert secret_sentinel not in json.dumps(events, ensure_ascii=False)
+    assert secret_sentinel not in json.dumps(result, ensure_ascii=False)
+    assert secret_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_empty_calendar_token_emits_auth_failed_with_oauth_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    async def authorize_calendar() -> str:
+        return ""
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorize_calendar,
+    )
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: events.append)
+    monkeypatch.setattr(
+        report_tools.AgentArtsRuntimeContext,
+        "get_oauth2_custom_state",
+        lambda: "signed-calendar-state",
+    )
+
+    authorization = await report_tools._authorize_report_sources(("calendar",))
+
+    assert authorization.access_tokens == {}
+    assert authorization.failures["calendar"].coverage == "unavailable"
+    assert events == [
+        {
+            "type": "system_message",
+            "system_message": "日历授权未完成，请重试。",
+            "auth_failed": True,
+            "provider": report_tools.CALENDAR_PROVIDER,
+            "oauth2_state": "signed-calendar-state",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_report_sanitizes_unexpected_collector_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_sentinel = "collector-secret-must-not-leak"
+
+    async def fail_github(window, *, access_token: str, progress=None):
+        del window, access_token, progress
+        raise RuntimeError(secret_sentinel)
+
+    async def collect_calendar(window, *, access_token: str, progress=None):
+        del window, access_token, progress
+        return report_tools._SourceResult()
+
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        fail_github,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_calendar_evidence",
+        collect_calendar,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+
+    result = await generate_report(
+        report_type="custom",
+        start_at="2026-07-21",
+        end_at="2026-07-21",
+        sources=["github", "calendar"],
+    )
+
+    assert result["source_coverage"] == {
+        "github": "unavailable",
+        "email": "skipped",
+        "calendar": "ok",
+    }
+    assert result["warnings"] == [
+        {
+            "source": "github",
+            "warning_type": "github_source_unavailable",
+            "message": "GitHub 工程活动数据源暂不可用。",
+            "retryable": True,
+        }
+    ]
+    assert secret_sentinel not in json.dumps(result, ensure_ascii=False)
+    assert secret_sentinel not in caplog.text
+
+
+def test_report_authorization_repr_hides_access_tokens() -> None:
+    secret_sentinel = "report-preflight-secret"
+    authorization = report_tools._ReportAuthorization(
+        access_tokens={"github": secret_sentinel}
+    )
+
+    assert secret_sentinel not in repr(authorization)
+    assert "access_tokens" not in repr(authorization)
+
+
 def test_generate_report_public_schema_is_secret_free() -> None:
     credential_names = {
         "access_token",
@@ -771,6 +1291,58 @@ def test_generate_report_public_schema_is_secret_free() -> None:
 
     assert params.isdisjoint(credential_names)
     assert "reference_date" in params
+
+
+def test_report_progress_emitter_uses_safe_monotonic_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict[str, object]] = []
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: events.append)
+    emitter = report_tools._ReportProgressEmitter()
+
+    emitter.emit(stage="preparing", status="running", force=True)
+    emitter.emit(
+        source="github",
+        stage="activity_detail",
+        status="running",
+        current=18,
+        total=37,
+        discovered=37,
+        force=True,
+    )
+
+    assert [event["sequence"] for event in events] == [1, 2]
+    assert events[1] == {
+        "type": "report_progress",
+        "report_progress": True,
+        "sequence": 2,
+        "source": "github",
+        "stage": "activity_detail",
+        "status": "running",
+        "current": 18,
+        "total": 37,
+        "discovered": 37,
+    }
+    assert all("system_message" not in event for event in events)
+
+
+def test_report_progress_emitter_ignores_writer_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def broken_writer(event: dict[str, object]) -> None:
+        nonlocal calls
+        del event
+        calls += 1
+        raise ValueError("writer unavailable")
+
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: broken_writer)
+    emitter = report_tools._ReportProgressEmitter()
+
+    emitter.emit(stage="preparing", status="running", force=True)
+
+    assert calls == 1
 
 
 @pytest.mark.asyncio
@@ -822,8 +1394,17 @@ async def test_generate_report_streams_original_markdown_download_event(
         sources=["calendar"],
     )
 
-    assert len(events) == 1
-    assert events[0] == {
+    progress_events = [
+        event for event in events if event.get("type") == "report_progress"
+    ]
+    ready_events = [event for event in events if event.get("type") == "report_ready"]
+    assert progress_events
+    assert [event["sequence"] for event in progress_events] == list(
+        range(1, len(progress_events) + 1)
+    )
+    assert all("system_message" not in event for event in progress_events)
+    assert len(ready_events) == 1
+    assert ready_events[0] == {
         "type": "report_ready",
         "report_ready": True,
         "report_format": "markdown",
@@ -841,7 +1422,13 @@ async def test_generate_report_redacts_credentials_inside_evidence(
     secret_sentinel = "feature18-secret-sentinel"
     github_token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
 
-    async def credential_email(folder: str, limit: int) -> dict[str, object]:
+    async def credential_email(
+        folder: str,
+        limit: int,
+        *,
+        access_token: str,
+    ) -> dict[str, object]:
+        assert access_token == "email-report-token"
         del limit
         if folder == "sentitems":
             return {"emails": [], "count": 0}
@@ -881,7 +1468,8 @@ async def test_generate_report_redacts_credentials_inside_evidence(
             ]
         )
 
-    async def fake_github_context() -> GitHubReportContext:
+    async def fake_github_context(access_token: str) -> GitHubReportContext:
+        assert access_token == "github-report-token"
         return GitHubReportContext(
             login="oauth-user",
             user_id=1001,

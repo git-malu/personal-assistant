@@ -7,6 +7,8 @@ import {
 } from "@/lib/chat/cancellation-coordinator";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useReportDownloadStore } from "@/stores/report-download-store";
+import { useReportProgressStore } from "@/stores/report-progress-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 
 type RunMessage = ChatModelRunOptions["messages"][number];
@@ -110,6 +112,8 @@ describe("chatAdapter", () => {
     // Reset auth store to clean state before each test
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
+    useReportDownloadStore.getState().clearReport();
+    useReportProgressStore.getState().clearProgress();
     resetInvocationCancellations();
     mockAcquireIdTokenSilently.mockReset();
     mockClearInboundAuthSession.mockReset();
@@ -372,7 +376,11 @@ describe("chatAdapter", () => {
         "https://auth.example.com",
         "请完成授权",
       );
-      authStore.setAuthComplete("m365-provider-common", "授权已完成 ✅");
+      authStore.setAuthComplete(
+        "auth-message",
+        "m365-provider-common",
+        "授权已完成 ✅",
+      );
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([
@@ -408,16 +416,20 @@ describe("chatAdapter", () => {
       );
 
       expect(useAuthCardStore.getState().cardsByMessageId).toMatchObject({
-        "auth-message-1": {
-          authUrl: "https://auth-1.example.com",
-          message: "请先完成日历授权",
-          authComplete: false,
-        },
-        "auth-message-2": {
-          authUrl: "https://auth-2.example.com",
-          message: "请再完成邮件授权",
-          authComplete: false,
-        },
+        "auth-message-1": [
+          {
+            authUrl: "https://auth-1.example.com",
+            message: "请先完成日历授权",
+            authComplete: false,
+          },
+        ],
+        "auth-message-2": [
+          {
+            authUrl: "https://auth-2.example.com",
+            message: "请再完成邮件授权",
+            authComplete: false,
+          },
+        ],
       });
       expect(useAuthCardStore.getState()).toMatchObject({
         messageId: "auth-message-2",
@@ -556,6 +568,111 @@ describe("chatAdapter", () => {
       });
     });
 
+    it("keeps all provider Auth Cards from one SSE response", async () => {
+      const events = [
+        {
+          system_message: "请完成 GitHub 授权",
+          auth_required: true,
+          auth_url: "https://auth.example.com/github",
+          provider: "github-provider",
+        },
+        {
+          system_message: "GitHub 授权已完成",
+          auth_complete: true,
+          provider: "github-provider",
+        },
+        {
+          system_message: "请完成邮件授权",
+          auth_required: true,
+          auth_url: "https://auth.example.com/email",
+          provider: "m365-email-provider",
+        },
+        {
+          system_message: "邮件授权已完成",
+          auth_complete: true,
+          provider: "m365-email-provider",
+        },
+        {
+          system_message: "请完成日历授权",
+          auth_required: true,
+          auth_url: "https://auth.example.com/calendar",
+          oauth2_state: "calendar-state",
+          provider: "m365-calendar-provider",
+        },
+        {
+          system_message: "日历授权已完成",
+          auth_complete: true,
+          oauth2_state: "calendar-state",
+          provider: "m365-calendar-provider",
+        },
+        {
+          type: "report_progress",
+          report_progress: true,
+          sequence: 2,
+          source: "github",
+          stage: "activity_detail",
+          status: "running",
+          current: 18,
+          total: 37,
+          system_message: "进度事件不得进入正文",
+        },
+        {
+          type: "report_progress",
+          report_progress: true,
+          sequence: 1,
+          source: "github",
+          stage: "activity_detail",
+          status: "running",
+          current: 1,
+          total: 37,
+        },
+        {
+          type: "report_ready",
+          report_ready: true,
+          report_format: "markdown",
+          report_filename: "日报.md",
+          report_content: "# 日报",
+        },
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(
+          events.map((event) =>
+            encoder.encode(`data: ${JSON.stringify(event)}\n`),
+          ),
+        ),
+      }) as unknown as typeof fetch;
+
+      const results = await collectResults("生成日报");
+      const cards = Object.values(
+        useAuthCardStore.getState().cardsByMessageId,
+      ).flat();
+
+      expect(results[results.length - 1]?.content?.[0]).toEqual({
+        type: "text",
+        text: "",
+      });
+      expect(cards).toMatchObject([
+        { provider: "github-provider", authComplete: true },
+        { provider: "m365-email-provider", authComplete: true },
+        {
+          provider: "m365-calendar-provider",
+          oauth2State: "calendar-state",
+          authComplete: true,
+        },
+      ]);
+      expect(
+        useReportProgressStore.getState().progressByMessageId.unknown,
+      ).toMatchObject({ sequence: 2, terminal: true });
+      expect(
+        useReportDownloadStore.getState().reportsByMessageId.unknown,
+      ).toEqual({
+        content: "# 日报",
+        filename: "日报.md",
+        format: "markdown",
+      });
+    });
+
     it("ignores auth_complete when no matching pending Auth Card exists", async () => {
       const chunks = [
         encoder.encode(
@@ -654,6 +771,47 @@ describe("chatAdapter", () => {
       await expect(collectResults("error SSE")).rejects.toThrow(
         "Backend failure",
       );
+    });
+
+    it("finishes report progress when the SSE stream is interrupted", async () => {
+      useReportProgressStore.getState().setProgress("unknown", {
+        sequence: 1,
+        source: "github",
+        stage: "activity_detail",
+        status: "running",
+        current: 2,
+        total: 10,
+      });
+      const interruptedStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: "report_progress",
+                report_progress: true,
+                sequence: 2,
+                source: "github",
+                stage: "activity_detail",
+                status: "running",
+                current: 3,
+                total: 10,
+              })}\n\n`,
+            ),
+          );
+          controller.error(new Error("stream interrupted"));
+        },
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: interruptedStream,
+      }) as unknown as typeof fetch;
+
+      await expect(collectResults("interrupted report")).rejects.toThrow(
+        "stream interrupted",
+      );
+      expect(
+        useReportProgressStore.getState().progressByMessageId.unknown,
+      ).toMatchObject({ terminal: true, sequence: 1 });
     });
 
     it("skips non-data lines gracefully", async () => {

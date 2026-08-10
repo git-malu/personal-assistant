@@ -1,6 +1,34 @@
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useReportDownloadStore } from "@/stores/report-download-store";
-import type { SSEEvent } from "@/types/chat";
+import { useReportProgressStore } from "@/stores/report-progress-store";
+import type {
+  ReportProgressPayload,
+  ReportProgressSource,
+  ReportProgressStage,
+  ReportProgressStatus,
+  SSEEvent,
+} from "@/types/chat";
+
+const REPORT_PROGRESS_SOURCES = new Set<ReportProgressSource>([
+  "github",
+  "email",
+  "calendar",
+]);
+const REPORT_PROGRESS_STAGES = new Set<ReportProgressStage>([
+  "preparing",
+  "github_context",
+  "activity_search",
+  "activity_detail",
+  "email_collection",
+  "calendar_collection",
+  "rendering",
+]);
+const REPORT_PROGRESS_STATUSES = new Set<ReportProgressStatus>([
+  "running",
+  "complete",
+  "failed",
+  "skipped",
+]);
 
 interface ChatEventContext {
   assistantMessageId: string;
@@ -13,11 +41,40 @@ interface ChatEventResult {
   done: boolean;
 }
 
+function reportProgressPayload(event: SSEEvent): ReportProgressPayload | null {
+  const isProgressEvent =
+    event.report_progress === true || event.type === "report_progress";
+  if (
+    !isProgressEvent ||
+    typeof event.sequence !== "number" ||
+    !Number.isInteger(event.sequence) ||
+    typeof event.stage !== "string" ||
+    !REPORT_PROGRESS_STAGES.has(event.stage) ||
+    typeof event.status !== "string" ||
+    !REPORT_PROGRESS_STATUSES.has(event.status) ||
+    (event.source !== undefined && !REPORT_PROGRESS_SOURCES.has(event.source))
+  ) {
+    return null;
+  }
+  return {
+    sequence: event.sequence,
+    source: event.source,
+    stage: event.stage,
+    status: event.status,
+    current: event.current,
+    total: event.total,
+    discovered: event.discovered,
+  };
+}
+
 export function handleChatEvent(
   event: SSEEvent,
   context: ChatEventContext,
 ): ChatEventResult {
   if (event.error) {
+    useReportProgressStore
+      .getState()
+      .finishProgress(context.assistantMessageId);
     throw new Error(event.error);
   }
 
@@ -35,6 +92,17 @@ export function handleChatEvent(
     event.auth_required === true ||
     event.auth_complete === true ||
     event.auth_failed === true;
+  const isReportProgressEvent =
+    event.report_progress === true || event.type === "report_progress";
+  const isReportReadyEvent =
+    event.report_ready === true || event.type === "report_ready";
+
+  const progress = reportProgressPayload(event);
+  if (progress) {
+    useReportProgressStore
+      .getState()
+      .setProgress(context.assistantMessageId, progress);
+  }
 
   if (
     event.auth_required &&
@@ -55,6 +123,7 @@ export function handleChatEvent(
     useAuthCardStore
       .getState()
       .setAuthComplete(
+        context.assistantMessageId,
         event.provider,
         systemMessage || undefined,
         event.oauth2_state,
@@ -65,14 +134,23 @@ export function handleChatEvent(
     useAuthCardStore
       .getState()
       .setAuthFailed(
+        context.assistantMessageId,
         event.provider,
         systemMessage || undefined,
         event.oauth2_state,
       );
   }
 
+  if (isReportReadyEvent) {
+    useReportProgressStore
+      .getState()
+      .finishProgress(context.assistantMessageId, event.sequence, {
+        createIfMissing: true,
+      });
+  }
+
   if (
-    event.report_ready === true &&
+    isReportReadyEvent &&
     event.report_format === "markdown" &&
     typeof event.report_content === "string" &&
     event.report_content.trim()
@@ -88,9 +166,20 @@ export function handleChatEvent(
     });
   }
 
-  if (!isAuthEvent && systemMessage.trim()) {
+  if (
+    !isAuthEvent &&
+    !isReportProgressEvent &&
+    !isReportReadyEvent &&
+    systemMessage.trim()
+  ) {
     fullText += systemMessage;
     contentUpdates.push(fullText);
+  }
+
+  if (event.done === true) {
+    useReportProgressStore
+      .getState()
+      .finishProgress(context.assistantMessageId);
   }
 
   return {

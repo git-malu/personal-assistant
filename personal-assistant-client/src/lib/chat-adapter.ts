@@ -5,6 +5,7 @@ import type {
 } from "@assistant-ui/react";
 import { handleChatEvent } from "@/lib/chat/chat-event-handler";
 import { ChatApiError, invokeChat } from "@/lib/chat/chat-api-client";
+import { useReportProgressStore } from "@/stores/report-progress-store";
 import {
   startInvocationCancellation,
   waitForInvocationCancellation,
@@ -98,6 +99,9 @@ async function* runChat(
       }
     } finally {
       abortSignal.removeEventListener("abort", handleAbort);
+      if (!completed) {
+        useReportProgressStore.getState().finishProgress(assistantMessageId);
+      }
     }
 
     if (!completed) {

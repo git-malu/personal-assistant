@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { AuthCard } from "./AuthCard";
@@ -30,6 +37,63 @@ describe("AuthCard", () => {
       "href",
       "https://auth-1.example.com",
     );
+  });
+
+  it("renders and dismisses same-message provider cards independently", () => {
+    const authStore = useAuthCardStore.getState();
+    authStore.setAuth(
+      "report-message",
+      "github-provider",
+      "https://auth.example.com/github",
+      "请完成 GitHub 授权",
+    );
+    authStore.setAuth(
+      "report-message",
+      "m365-email-provider",
+      "https://auth.example.com/email",
+      "请完成邮件授权",
+    );
+    authStore.setAuth(
+      "report-message",
+      "m365-calendar-provider",
+      "https://auth.example.com/calendar",
+      "请完成日历授权",
+      "calendar-state",
+    );
+    authStore.setAuthComplete(
+      "report-message",
+      "github-provider",
+      "GitHub 授权已完成",
+    );
+    authStore.setAuthFailed(
+      "report-message",
+      "m365-email-provider",
+      "邮件授权失败",
+    );
+
+    const { container } = render(<AuthCard messageId="report-message" />);
+    const cards = container.querySelectorAll('[data-slot="auth-card"]');
+
+    expect(cards).toHaveLength(3);
+    expect(within(cards[0] as HTMLElement).getByText("GitHub 授权已完成"))
+      .toBeInTheDocument();
+    expect(within(cards[1] as HTMLElement).getByText("邮件授权失败"))
+      .toBeInTheDocument();
+    expect(within(cards[2] as HTMLElement).getByText("请完成日历授权"))
+      .toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "关闭 m365-email-provider 授权卡片",
+      }),
+    );
+
+    expect(container.querySelectorAll('[data-slot="auth-card"]')).toHaveLength(
+      2,
+    );
+    expect(screen.getByText("GitHub 授权已完成")).toBeInTheDocument();
+    expect(screen.queryByText("邮件授权失败")).not.toBeInTheDocument();
+    expect(screen.getByText("请完成日历授权")).toBeInTheDocument();
   });
 
   it("updates the latest card when a same-origin opener message arrives", async () => {

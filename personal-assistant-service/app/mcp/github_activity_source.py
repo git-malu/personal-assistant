@@ -6,6 +6,8 @@ import asyncio
 import base64
 import hashlib
 import json
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -1999,6 +2001,7 @@ async def github_mcp_get_details(
     events: list[GitHubActivityEvent],
     *,
     max_concurrency: int = _MAX_CONCURRENT_DETAIL_CALLS,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[GitHubActivityEvent | GitHubMCPWarning]:
     """Fetch multiple activity details in one bounded MCP session."""
     if not events:
@@ -2011,17 +2014,27 @@ async def github_mcp_get_details(
     ) -> list[GitHubActivityEvent | GitHubMCPWarning]:
         tools = await _tool_index(client)
         semaphore = asyncio.Semaphore(concurrency)
+        completed = 0
+
+        def _notify_progress() -> None:
+            nonlocal completed
+            completed += 1
+            if on_progress is None:
+                return
+            with suppress(Exception):
+                # Observability must never change the collection result.
+                on_progress(completed, len(events))
 
         async def _fetch(
             event: GitHubActivityEvent,
         ) -> GitHubActivityEvent | GitHubMCPWarning:
-            parent_number, validation_warning = _detail_parent_number(
-                event.event_type,
-                event.parent_external_id,
-            )
-            if validation_warning is not None:
-                return validation_warning
             try:
+                parent_number, validation_warning = _detail_parent_number(
+                    event.event_type,
+                    event.parent_external_id,
+                )
+                if validation_warning is not None:
+                    return validation_warning
                 async with semaphore:
                     return await _github_mcp_get_detail_with_tools(
                         client,
@@ -2033,6 +2046,8 @@ async def github_mcp_get_details(
                     )
             except Exception as exc:
                 return _warning_from_error(exc)
+            finally:
+                _notify_progress()
 
         return list(await asyncio.gather(*(_fetch(event) for event in events)))
 

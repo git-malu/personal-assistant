@@ -6,6 +6,33 @@ export interface Message {
   isStreaming?: boolean;
 }
 
+export type ReportProgressSource = "github" | "email" | "calendar";
+
+export type ReportProgressStage =
+  | "preparing"
+  | "github_context"
+  | "activity_search"
+  | "activity_detail"
+  | "email_collection"
+  | "calendar_collection"
+  | "rendering";
+
+export type ReportProgressStatus =
+  | "running"
+  | "complete"
+  | "failed"
+  | "skipped";
+
+export interface ReportProgressPayload {
+  sequence: number;
+  source?: ReportProgressSource;
+  stage: ReportProgressStage;
+  status: ReportProgressStatus;
+  current?: number;
+  total?: number;
+  discovered?: number;
+}
+
 export interface SSEEvent {
   type?: string;
   token?: string;
@@ -18,6 +45,14 @@ export interface SSEEvent {
   auth_failed?: boolean;
   provider?: string;
   oauth2_state?: string;
+  report_progress?: boolean;
+  sequence?: number;
+  source?: ReportProgressSource;
+  stage?: ReportProgressStage;
+  status?: ReportProgressStatus;
+  current?: number;
+  total?: number;
+  discovered?: number;
   report_ready?: boolean;
   report_format?: 'markdown';
   report_filename?: string;

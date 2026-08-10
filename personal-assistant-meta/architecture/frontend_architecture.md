@@ -79,7 +79,7 @@ sequenceDiagram
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
 | **技术栈** | Vite + React 19 + TypeScript + Tailwind CSS + assistant-ui + Zustand。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
-| **SSE 事件类型** | `token`、`done`、`error`、`system_message`、`auth_required`、`auth_complete`、`report_ready`。详见 §2.1.4 |
+| **SSE 事件类型** | `token`、`done`、`error`、`system_message`、`auth_required`、`auth_complete`、`report_progress`、`report_ready`。详见 §2.1.4 |
 
 **Inbound Auth 与 Outbound Auth 分离**：
 
@@ -279,7 +279,14 @@ AgentArts Gateway 返回的 SSE `ReadableStream` 透明传回 Browser。Service 
 | `auth_url` | `string` | Outbound OAuth2 授权 URL | `"https://..."` |
 | `auth_required` | `boolean` | 标记需要显示 pending Auth Card | `true` |
 | `auth_complete` | `boolean` | 标记 provider 的凭据当前可用；仅更新匹配的 pending Auth Card | `true` |
-| `provider` | `string` | Auth Card 与完成事件的关联键 | `"m365-provider-common"` |
+| `provider` | `string` | Auth Card 与完成事件的 provider 关联键 | `"m365-provider-common"` |
+| `oauth2_state` | `string` | 可选的授权尝试关联键；Calendar callback 必须精确匹配 | `"signed-state"` |
+| `report_progress` | `boolean` | 标记 Feature 18 结构化进度事件；不得写入正文 | `true` |
+| `sequence` | `number` | 单次 Report 内严格递增的进度序号，用于拒绝重复或迟到更新 | `4` |
+| `source` | `"github" \| "email" \| "calendar"` | 可选的数据源进度归属 | `"github"` |
+| `stage` | `string enum` | 当前 `preparing` / context / search / detail / collection / rendering 阶段 | `"activity_detail"` |
+| `status` | `"running" \| "complete" \| "failed" \| "skipped"` | 当前 stage 状态 | `"running"` |
+| `current` / `total` / `discovered` | `number` | 可选的非负安全计数；未知总量时省略 `total` | `18 / 37 / 37` |
 | `report_ready` | `boolean` | 标记 Feature 18 原始 Markdown artifact 已生成 | `true` |
 | `report_format` | `"markdown"` | 当前唯一支持的报告下载格式 | `"markdown"` |
 | `report_content` | `string` | deterministic renderer 生成的原始 Markdown | `"# 日报\n..."` |
@@ -304,18 +311,54 @@ sequenceDiagram
     Tool->>Stream: auth_required + auth_url + provider
     Stream->>Adapter: named auth_card SSE
     Adapter->>Store: setAuth(messageId, provider, URL, message)
-    Note over Store: pending Auth Card 显示
+    Note over Store: append/upsert 到 messageId 对应的有序 Card 列表
 
     Tool->>Stream: auth_complete + provider
     Stream->>Adapter: named auth_card SSE
-    Adapter->>Store: setAuthComplete(provider)
-    Note over Store: provider 匹配时 Card 转为绿色
+    Adapter->>Store: setAuthComplete(provider, oauth2_state)
+    Note over Store: 仅匹配 Card 转为绿色，其他 Card 保留
 ```
 
 Auth 事件拥有专用 UI channel，因此其 `system_message` **不得**追加到普通
 assistant message text。普通非 auth `system_message` 仍追加到聊天正文。Service
 可以在每次取得 access token 后发送 `auth_complete`；若 Client 没有相同
 `provider` 的 pending Card，Store 会幂等忽略该事件。
+
+Auth Card Store 使用 `assistantMessageId -> AuthCardEntry[]` 保存同一 Invocation 的多个
+provider card。`setAuth` 按 `provider + oauth2_state/auth_url` upsert，并保持首次到达顺序；
+`auth_complete`、`auth_failed` 和关闭操作只更新或删除匹配 card。`AuthCard` 在 assistant
+message 的正常文档流中纵向渲染整个列表，因此 Email/Calendar 授权不会覆盖先前 GitHub
+授权 UI，`report_ready` 也不会改变该列表。
+
+**Report progress 事件流**：
+
+图类型：**Sequence Diagram（时序图）**。用于说明长耗时采集进度与对应 message UI 的生命周期。
+
+```mermaid
+sequenceDiagram
+    participant Report as generate_report
+    participant Handler as chat-event-handler
+    participant ProgressStore as Report Progress Store
+    participant ProgressCard as ReportProgressCard
+    participant DownloadStore as Report Download Store
+
+    Report-->>Handler: report_progress(sequence, source, stage, status, counts)
+    Handler->>ProgressStore: setProgress(assistantMessageId, payload)
+    ProgressStore-->>ProgressCard: global/source snapshots
+    Note over ProgressCard: Auth Card 下方普通文档流<br/>未知 total 不显示伪百分比
+    Report-->>Handler: report_ready(content, filename)
+    Handler->>ProgressStore: finishProgress(messageId)
+    Handler->>DownloadStore: setReport(messageId, artifact)
+    ProgressStore-->>ProgressCard: terminal tombstone，停止渲染
+```
+
+Report Progress Store 以 `assistantMessageId` 隔离状态，并同时保留 global snapshot 与固定
+GitHub、Email、Calendar source snapshot。只有严格大于已见 `sequence` 的事件可以更新；
+`report_ready`、stream error 或 stream done 将 entry 置为 terminal，任何迟到进度均不能让
+面板重新出现。`ReportProgressCard` 紧跟 `AuthCard`、位于 message parts 之前，不使用
+absolute / fixed / z-index / 负 margin；桌面与移动端均保持纵向流，不覆盖授权 UI、正文或
+下载卡。进度事件即使误带 `system_message` 也会被结构化 channel 拦截，不进入 assistant
+正文或 Conversation history。
 
 **Report artifact 事件流**：
 

@@ -15,6 +15,12 @@
 - 新增 Agent 可见的 `generate_report` high-level tool。
 - `generate_report` 内部确定性编排 Email、Calendar、GitHub activity source，而不是依赖 LLM 自行串联多个 low-level tools。
 - `sources` 为空时默认启用 `github`、`email`、`calendar`；用户显式指定时仅调用指定 source。
+- 对已选 source 先按 `GitHub -> Email -> Calendar` 的 canonical order 串行完成 OAuth
+  preflight，所有授权尝试结束后才开始任何远端数据采集。
+- 授权成功的 source 在 preflight 全部结束后通过 `asyncio.gather` 跨 source 并行采集，
+  采集完成顺序不改变 evidence、warning、coverage 和 context 的确定性合并顺序。
+- 通过结构化 `report_progress` custom SSE 实时展示 GitHub context / search / detail、
+  Email、Calendar 与 rendering 进度，`report_ready` 到达后由下载卡接管。
 - Email source 默认读取 `inbox` 和 `sentitems`，再按规范化 report window 过滤证据。
 - GitHub source 默认先通过当前 Web Chat 用户的 GitHub OAuth `/user` 确认主体账号 A，
   再全分页枚举 `/user/repos` 作为 A 可访问仓库 allowlist。
@@ -32,9 +38,9 @@ Agent 可见 root tool:
   generate_report(...)
 
 generate_report 内部复用:
-  - email_tools.py: list_emails / search_emails / get_email
-  - calendar_tools.py: list_calendar_events / search_calendar_events / get_calendar_event
-  - tools/github_tools.py: get_github_report_context (internal OAuth subject + repo allowlist)
+  - email_tools.py: Report auth-only helper + token-aware email reader
+  - calendar_tools.py: Report auth-only helper + token-aware calendar reader
+  - tools/github_tools.py: Report auth-only helper + OAuth subject / repo allowlist reader
   - app/mcp/github_activity_source.py: github_mcp_search_activity / github_mcp_get_details
 ```
 
@@ -44,6 +50,10 @@ generate_report 内部复用:
 - 单独查询指定 repository 和时间窗口内的工程活动时，Agent 使用 Feature 17 的 `github_search_activity`。
 - `generate_report` 负责 report type、时间窗口、timezone、source selection、部分失败降级、数据归一化和去重。
 - 默认 source selection 固定为 GitHub + Email + Calendar；该默认值不随 report type 隐式变化。
+- 授权与采集是两个独立阶段：授权阶段按 canonical order 串行处理所有已选 source；
+  采集阶段只能使用 preflight 返回的内部 token，不能重新进入 OAuth decorator。
+- 单项授权失败不提前启动采集，也不阻断后续 provider 的授权尝试；全部授权判定结束后，
+  失败 source 降级为 warning，成功 source 才并行进入采集。
 - Email 默认读取 `inbox` 和 `sentitems`，以覆盖收到和发出的工作沟通。
 - `generate_report` 先解析 GitHub OAuth subject / repository allowlist，再直接调用
   Feature 17 internal source contract，不调用 Feature 17 的 Agent-facing tool object。
@@ -83,22 +93,33 @@ flowchart TB
     Service["personal-assistant-service"]
     Agent["Agent"]
     ReportTool["tools/report_tools.py<br/>generate_report"]
-    EmailTools["tools/email_tools.py"]
-    CalendarTools["tools/calendar_tools.py"]
-    GitHubOAuth["tools/github_tools.py<br/>OAuth /user + /user/repos"]
+    AuthPhase["OAuth preflight<br/>GitHub -> Email -> Calendar"]
+    CollectionPhase["Authorized source collection<br/>asyncio.gather"]
+    EmailTools["tools/email_tools.py<br/>OAuth + token-aware reader"]
+    CalendarTools["tools/calendar_tools.py<br/>OAuth + token-aware reader"]
+    GitHubOAuth["tools/github_tools.py<br/>OAuth + token-aware context"]
     GitHubSource["mcp/github_activity_source.py<br/>Feature 17 internal source<br/>actor=A"]
     ReportResult["ReportResult"]
+    ProgressStream["custom SSE<br/>report_progress"]
+    ProgressCard["ReportProgressCard<br/>message-scoped"]
     ReportStream["custom SSE<br/>report_ready"]
     ReportCard["ReportDownloadCard<br/>Markdown 另存为"]
 
     Client --> Service
     Service --> Agent
     Agent --> ReportTool
-    ReportTool --> EmailTools
-    ReportTool --> CalendarTools
-    ReportTool --> GitHubOAuth
+    ReportTool --> AuthPhase
+    AuthPhase -. "auth-only" .-> GitHubOAuth
+    AuthPhase -. "auth-only" .-> EmailTools
+    AuthPhase -. "auth-only" .-> CalendarTools
+    AuthPhase --> CollectionPhase
+    CollectionPhase --> GitHubOAuth
+    CollectionPhase --> EmailTools
+    CollectionPhase --> CalendarTools
     GitHubOAuth -. "subject + allowlist" .-> GitHubSource
-    ReportTool --> GitHubSource
+    CollectionPhase --> GitHubSource
+    CollectionPhase --> ProgressStream
+    ProgressStream --> ProgressCard
     ReportTool --> ReportResult
     ReportTool --> ReportStream
     ReportStream --> ReportCard
@@ -123,15 +144,27 @@ sequenceDiagram
     Client->>Agent: /invocations
     Agent->>Report: generate_report(report_type=weekly)
     Report->>Report: resolve_report_window()
-    Report->>GitHubOAuth: get_github_report_context()
+    Note over Report,Calendar: Phase 1: 只授权，不读取业务数据
+    Report->>GitHubOAuth: authorize_github_report_access()
     alt GitHub 尚未授权
         GitHubOAuth-->>Agent: auth_required Auth Card
         Agent-->>User: 展示 GitHub 授权入口
         User-->>GitHubOAuth: 完成 OAuth
-        GitHubOAuth-->>Agent: auth_complete
     end
-    GitHubOAuth-->>Report: subject_login=A + repo allowlist or failure/timeout warning
-    alt GitHub OAuth context available
+    GitHubOAuth-->>Agent: auth_complete
+    GitHubOAuth-->>Report: token available or failure/timeout
+    Report->>Email: authorize_email_report_access()
+    Email-->>Agent: auth_required / auth_complete when needed
+    Email-->>Report: token available or failure/timeout
+    Report->>Calendar: authorize_calendar_report_access()
+    Calendar-->>Agent: auth_required / auth_complete when needed
+    Calendar-->>Report: token available or failure/timeout
+
+    Note over Report,Calendar: Phase 2: 所有授权尝试结束后跨 source 并行采集
+    par GitHub authorized collector
+        Report-->>Stream: report_progress(github_context)
+        Report->>GitHubOAuth: get_github_report_context(token)
+        GitHubOAuth-->>Report: subject_login=A + repo allowlist
         loop until MCP cursor exhausted
             Report->>GitHubMCP: github_mcp_search_activity(actor=A, repositories=allowlist, cursor)
             GitHubMCP-->>Report: GitHubActivityEvent list + next_cursor or warning
@@ -139,14 +172,19 @@ sequenceDiagram
         Report->>Report: global sort + cap 100
         Report->>GitHubMCP: github_mcp_get_details(selected events, max concurrency 5)
         GitHubMCP-->>Report: ordered details or per-event warnings
-    else GitHub OAuth unavailable
-        Report->>Report: mark GitHub coverage unavailable
+        Report-->>Stream: report_progress(activity_detail, current/total)
+    and Email authorized collector
+        Report-->>Stream: report_progress(email_collection)
+        Report->>Email: list emails with preflight token
+        Email-->>Report: email evidence
+    and Calendar authorized collector
+        Report-->>Stream: report_progress(calendar_collection)
+        Report->>Calendar: list events with preflight token
+        Calendar-->>Report: calendar evidence
     end
-    Report->>Email: list/search emails
-    Email-->>Report: email evidence
-    Report->>Calendar: list/search calendar events
-    Calendar-->>Report: calendar evidence
-    Report->>Report: normalize + merge + summarize
+    Stream-->>Client: message-scoped progress updates
+    Report->>Report: selected-order merge + normalize + summarize
+    Report-->>Stream: report_progress(rendering)
     Report-->>Stream: report_ready<br/>原始 Markdown + 建议文件名
     Stream-->>Client: custom SSE event
     Report-->>Agent: ReportResult
@@ -267,7 +305,21 @@ GitHub source 不暴露 `repositories` 输入。仓库范围由 Report 内部通
 - 通过 typed internal source contract 接入，不调用 `github_search_activity` / `github_get_activity_detail` Agent tool object。
 - 将各 source 原始数据归一化为 `ReportEvidence`。
 - 对 source error 做 warning aggregation。
-- 三个默认 source 相互隔离执行；任一 source 失败只改变对应 `source_coverage` 并追加 warning，不阻断其他 source 或 Markdown 渲染。
+- 在任何远端数据调用前，按 GitHub、Email、Calendar 顺序对已选 source 执行 auth-only
+  preflight；token 仅保存在本次 Report 内部上下文且不进入 repr。
+- 采集使用 preflight token-aware helper，不重新进入 OAuth decorator，也不重复发送
+  `auth_complete`。
+- 三个默认 source 相互隔离执行；任一授权或采集失败只改变对应 `source_coverage` 并追加
+  warning，不阻断后续授权、其他 source 或 Markdown 渲染。
+- 所有 auth preflight 完成后，通过 `asyncio.gather` 启动已授权 source 的 collector；
+  collector completion 可乱序，但最终结果严格按 selected source order 合并。
+- 每次 Report 使用独立 `_ReportProgressEmitter` 发送单调递增 `sequence`。事件 stage 固定为
+  `preparing`、`github_context`、`activity_search`、`activity_detail`、`email_collection`、
+  `calendar_collection`、`rendering`，只携带 status 与非负计数。
+- GitHub search 更新页数与 `discovered`，detail batch callback 更新真实 `current / total`；
+  高频更新以 350ms 为最小间隔，stage 切换和完成 / 失败状态强制发送。
+- `report_progress` 不携带 `system_message`、credential、cursor、仓库 / 活动内容或原始异常；
+  progress writer 不可用时不得改变 collector 结果。
 - Markdown 渲染完成后通过 `get_stream_writer()` 发送 `report_ready` custom event；event
   携带原始 `content`、日期化 `.md` 文件名、`report_type` 和 `window`，不依赖 Agent
   最终文本识别报告。
@@ -287,12 +339,19 @@ GitHub source 不暴露 `repositories` 输入。仓库范围由 Report 内部通
 
 - 扩展 `SSEEvent` 和 `chat-event-handler.ts`，识别 `report_ready` 并按当前
   `assistantMessageId` 写入独立 Report Download Store；event 不拼入可见聊天正文。
+- `chat-event-handler.ts` 将合法 `report_progress` 写入独立 Report Progress Store；Store
+  按 message 保存 global/source snapshot，拒绝重复或倒退 sequence，并以 terminal
+  tombstone 防止 `report_ready` 后迟到事件复活面板。
+- `ReportProgressCard` 紧跟 `AuthCard`、位于 message parts 前，以普通文档流展示固定顺序的
+  GitHub / Email / Calendar 行；未知总量只显示 spinner 与 discovered count，不伪造百分比。
 - 在 `AssistantMessage` 正文后挂载 `ReportDownloadCard`；只有对应 message 存在 report
   artifact 时渲染，视觉状态复用 OAuth Auth Card 的蓝 / 绿 / 红语义。
 - 保存 helper 优先调用 `window.showSaveFilePicker`，允许用户选择本机目录和文件名；用户
   取消时静默返回，API 不可用或非取消错误时使用 Blob + `<a download>` fallback。
 - artifact 仅保存在当前 Browser runtime 的 Zustand store；Conversation history artifact
   持久化不在本期范围。
+- Auth Card Store 以 `assistantMessageId -> AuthCardEntry[]` 保存同一响应中的多 provider
+  授权卡；按 `provider + oauth2_state/auth_url` upsert，完成、失败和关闭只作用于匹配卡片。
 - Infra 无新增资源；Feature 17 已负责 MCP Gateway / Target 手动配置要求。
 
 ## 8. 测试计划
@@ -303,6 +362,10 @@ GitHub source 不暴露 `repositories` 输入。仓库范围由 Report 内部通
 - `generate_report` 能复用 Email / Calendar functions。
 - `generate_report` 在单个 source 失败时返回 `warnings` 而非整体失败。
 - `generate_report` schema 不包含 `access_token`、`api_key`、`secret` 等 credential 参数。
+- 默认 source 的调用轨迹必须先完成 `auth:github -> auth:email -> auth:calendar`，之后才允许
+  出现任意 `collect:*`；显式 sources 使用 canonical order 子集。
+- 使用 barrier 证明已授权 collectors 可并行启动，并验证逆序完成不改变最终结果顺序。
+- 单项授权失败后继续后续 provider 授权，采集阶段跳过失败 source 并返回 warning。
 - GitHub OAuth context 先于 MCP source 解析；未授权时先触发 `auth_required` 并等待授权，
   只有授权失败或超时才将 GitHub 降级为 warning，且不调用 MCP。
 - OAuth repository allowlist 为空时，Report 不触发 platform repository discovery。
@@ -317,10 +380,16 @@ GitHub source 不暴露 `repositories` 输入。仓库范围由 Report 内部通
 - deterministic Markdown renderer 对相同 evidence 生成稳定章节结构。
 - `generate_report` 发送的 `report_ready.report_content` 与 `ReportResult.content` 完全一致，
   且建议文件名严格使用 resolved report window。
+- `report_progress.sequence` 严格递增且 event 不包含 secret、业务内容或 `system_message`；
+  GitHub detail callback 对成功、单项失败都推进真实完成计数且不改变结果位置。
 - Client event handler 只更新匹配 message 的 Report Download Store，不修改 token 文本或
   OAuth Auth Card state。
+- 同一 assistant message 连续收到 GitHub、Email、Calendar 授权事件时保留三张卡；
+  provider/state 状态更新和单卡关闭不影响其他卡。
 - Markdown save helper 覆盖原生 picker 成功、用户取消、文件名清洗和 anchor fallback。
 - `ReportDownloadCard` 覆盖 idle、saved、failed 及多 message 隔离状态。
+- Report Progress Store / Card 覆盖 message 隔离、source 固定顺序、已知 / 未知总量、
+  stale sequence、terminal 防复活与不写入 assistant 正文。
 
 ### 8.2 集成测试
 
@@ -340,6 +409,8 @@ GitHub source 不暴露 `repositories` 输入。仓库范围由 Report 内部通
 - 当 GitHub source 故障时，输出包含 warning 且仍返回 Email / Calendar 报表。
 - 报告正文下方显示专用下载卡；下载文件扩展名为 `.md`，内容包含用户给定日期及已采集的
   GitHub、Email、Calendar 章节。
+- Browser SSE double 先停在采集中间态，桌面 / 移动端验证三张 Auth Card 与进度面板纵向
+  并存且无横向滚动；释放 `report_ready` 后验证进度面板消失、下载卡接管、Auth Card 保留。
 - 验证 token 不进入 SSE、日志、tool result 或 LLM-visible error。
 
 ## 9. 预期项目文件目录

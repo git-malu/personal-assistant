@@ -205,6 +205,24 @@ async def test_github_request_without_token_is_programming_error():
 
 
 @pytest.mark.asyncio
+async def test_github_report_authorization_gate_does_not_read_data(monkeypatch):
+    async def unexpected_request(*args, **kwargs):
+        pytest.fail("Authorization preflight must not call the GitHub API")
+
+    auth_complete = []
+    monkeypatch.setattr(gh, "_raw_github_request", unexpected_request)
+    monkeypatch.setattr(gh, "_push_auth_complete", lambda: auth_complete.append(True))
+    raw_gate = gh.authorize_github_report_access
+    while hasattr(raw_gate, "__wrapped__"):
+        raw_gate = raw_gate.__wrapped__
+
+    result = await raw_gate(access_token="oauth-token")
+
+    assert result == "oauth-token"
+    assert auth_complete == [True]
+
+
+@pytest.mark.asyncio
 async def test_github_report_context_uses_oauth_identity_and_paginates_all_repos(
     monkeypatch,
 ):

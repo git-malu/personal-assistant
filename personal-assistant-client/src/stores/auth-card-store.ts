@@ -19,7 +19,7 @@ export interface AuthCardEntry {
 
 interface AuthCardState extends AuthCardEntry {
   /** Auth cards keyed by their assistant message ID. */
-  cardsByMessageId: Record<string, AuthCardEntry>;
+  cardsByMessageId: Record<string, AuthCardEntry[]>;
   setAuth: (
     messageId: string,
     provider: string,
@@ -28,16 +28,23 @@ interface AuthCardState extends AuthCardEntry {
     oauth2State?: string | null,
   ) => void;
   setAuthComplete: (
+    messageId: string,
     provider: string,
     message?: string,
     oauth2State?: string | null,
   ) => void;
   setAuthFailed: (
+    messageId: string,
     provider: string,
     message?: string,
     oauth2State?: string | null,
   ) => void;
-  clearAuth: (messageId?: string) => void;
+  clearAuth: (
+    messageId?: string,
+    provider?: string,
+    oauth2State?: string | null,
+    authUrl?: string | null,
+  ) => void;
 }
 
 const emptyAuthCard: AuthCardEntry = {
@@ -51,28 +58,69 @@ const emptyAuthCard: AuthCardEntry = {
 };
 
 function pickLatestCard(
-  cardsByMessageId: Record<string, AuthCardEntry>,
+  cardsByMessageId: Record<string, AuthCardEntry[]>,
 ): AuthCardEntry {
-  const cards = Object.values(cardsByMessageId);
-  return cards[cards.length - 1] ?? emptyAuthCard;
+  const cardGroups = Object.values(cardsByMessageId);
+  for (let index = cardGroups.length - 1; index >= 0; index -= 1) {
+    const cards = cardGroups[index];
+    if (cards?.length) {
+      return cards[cards.length - 1] ?? emptyAuthCard;
+    }
+  }
+  return emptyAuthCard;
 }
 
-function findLatestProviderMessageId(
-  cardsByMessageId: Record<string, AuthCardEntry>,
+function normalizeOAuth2State(oauth2State?: string | null): string | null {
+  return oauth2State || null;
+}
+
+function matchesAuthRequest(
+  card: AuthCardEntry,
+  provider: string,
+  authUrl: string,
+  oauth2State?: string | null,
+): boolean {
+  if (card.provider !== provider) return false;
+  const normalizedState = normalizeOAuth2State(oauth2State);
+  if (normalizedState) return card.oauth2State === normalizedState;
+  return !card.oauth2State && card.authUrl === authUrl;
+}
+
+function matchesAuthStatus(
+  card: AuthCardEntry,
   provider: string,
   oauth2State?: string | null,
-): string | undefined {
-  return (
-    Object.values(cardsByMessageId)
-      .reverse()
-      .find(
-        (card) =>
-          card.authUrl &&
-          card.provider === provider &&
-          (!oauth2State || card.oauth2State === oauth2State),
-      )?.messageId ??
-    undefined
-  );
+): boolean {
+  if (!card.authUrl || card.provider !== provider) return false;
+  const normalizedState = normalizeOAuth2State(oauth2State);
+  return !normalizedState || card.oauth2State === normalizedState;
+}
+
+function matchesAuthIdentity(
+  card: AuthCardEntry,
+  provider: string,
+  oauth2State?: string | null,
+  authUrl?: string | null,
+): boolean {
+  if (card.provider !== provider) return false;
+  const normalizedState = normalizeOAuth2State(oauth2State);
+  if (normalizedState) return card.oauth2State === normalizedState;
+  if (authUrl) return !card.oauth2State && card.authUrl === authUrl;
+  return true;
+}
+
+function findLatestProviderCard(
+  cards: AuthCardEntry[],
+  provider: string,
+  oauth2State?: string | null,
+): number | undefined {
+  for (let cardIndex = cards.length - 1; cardIndex >= 0; cardIndex -= 1) {
+    const card = cards[cardIndex];
+    if (card && matchesAuthStatus(card, provider, oauth2State)) {
+      return cardIndex;
+    }
+  }
+  return undefined;
 }
 
 export const useAuthCardStore = create<AuthCardState>((set) => ({
@@ -80,35 +128,50 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
   cardsByMessageId: {},
   setAuth: (messageId, provider, url, message, oauth2State) =>
     set((state) => {
+      const normalizedState = normalizeOAuth2State(oauth2State);
       const card: AuthCardEntry = {
         messageId,
         provider,
         authUrl: url,
         message,
-        oauth2State: oauth2State ?? null,
+        oauth2State: normalizedState,
         authComplete: false,
         authFailed: false,
       };
+      const currentCards = state.cardsByMessageId[messageId] ?? [];
+      const existingIndex = currentCards.findIndex((currentCard) =>
+        matchesAuthRequest(currentCard, provider, url, normalizedState),
+      );
+      const messageCards = [...currentCards];
+      if (existingIndex >= 0) {
+        messageCards[existingIndex] = card;
+      } else {
+        messageCards.push(card);
+      }
       return {
         ...card,
         cardsByMessageId: {
           ...state.cardsByMessageId,
-          [messageId]: card,
+          [messageId]: messageCards,
         },
       };
     }),
-  setAuthComplete: (provider, message, oauth2State) =>
+  setAuthComplete: (messageId, provider, message, oauth2State) =>
     set((state) => {
-      const messageId = findLatestProviderMessageId(
-        state.cardsByMessageId,
+      const messageCards = state.cardsByMessageId[messageId];
+      if (!messageCards) {
+        return state;
+      }
+      const cardIndex = findLatestProviderCard(
+        messageCards,
         provider,
         oauth2State,
       );
-      if (!messageId) {
+      if (cardIndex === undefined) {
         return state;
       }
 
-      const currentCard = state.cardsByMessageId[messageId];
+      const currentCard = messageCards[cardIndex];
       if (!currentCard) {
         return state;
       }
@@ -119,31 +182,33 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
         authFailed: false,
         message: message ?? currentCard.message,
       };
+      const updatedMessageCards = [...messageCards];
+      updatedMessageCards[cardIndex] = updatedCard;
       const cardsByMessageId = {
         ...state.cardsByMessageId,
-        [messageId]: updatedCard,
+        [messageId]: updatedMessageCards,
       };
-      const latestCard =
-        state.messageId === messageId
-          ? updatedCard
-          : pickLatestCard(cardsByMessageId);
       return {
-        ...latestCard,
+        ...pickLatestCard(cardsByMessageId),
         cardsByMessageId,
       };
     }),
-  setAuthFailed: (provider, message, oauth2State) =>
+  setAuthFailed: (messageId, provider, message, oauth2State) =>
     set((state) => {
-      const messageId = findLatestProviderMessageId(
-        state.cardsByMessageId,
+      const messageCards = state.cardsByMessageId[messageId];
+      if (!messageCards) {
+        return state;
+      }
+      const cardIndex = findLatestProviderCard(
+        messageCards,
         provider,
         oauth2State,
       );
-      if (!messageId) {
+      if (cardIndex === undefined) {
         return state;
       }
 
-      const currentCard = state.cardsByMessageId[messageId];
+      const currentCard = messageCards[cardIndex];
       if (!currentCard) {
         return state;
       }
@@ -154,20 +219,18 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
         authFailed: true,
         message: message ?? currentCard.message,
       };
+      const updatedMessageCards = [...messageCards];
+      updatedMessageCards[cardIndex] = updatedCard;
       const cardsByMessageId = {
         ...state.cardsByMessageId,
-        [messageId]: updatedCard,
+        [messageId]: updatedMessageCards,
       };
-      const latestCard =
-        state.messageId === messageId
-          ? updatedCard
-          : pickLatestCard(cardsByMessageId);
       return {
-        ...latestCard,
+        ...pickLatestCard(cardsByMessageId),
         cardsByMessageId,
       };
     }),
-  clearAuth: (messageId) =>
+  clearAuth: (messageId, provider, oauth2State, authUrl) =>
     set((state) => {
       if (!messageId) {
         return {
@@ -177,7 +240,32 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
       }
 
       const cardsByMessageId = { ...state.cardsByMessageId };
-      delete cardsByMessageId[messageId];
+      if (!provider) {
+        delete cardsByMessageId[messageId];
+      } else {
+        const messageCards = cardsByMessageId[messageId];
+        if (!messageCards) return state;
+        let cardIndex = -1;
+        for (let index = messageCards.length - 1; index >= 0; index -= 1) {
+          const card = messageCards[index];
+          if (
+            card &&
+            matchesAuthIdentity(card, provider, oauth2State, authUrl)
+          ) {
+            cardIndex = index;
+            break;
+          }
+        }
+        if (cardIndex < 0) return state;
+
+        const remainingCards = [...messageCards];
+        remainingCards.splice(cardIndex, 1);
+        if (remainingCards.length) {
+          cardsByMessageId[messageId] = remainingCards;
+        } else {
+          delete cardsByMessageId[messageId];
+        }
+      }
       const latestCard = pickLatestCard(cardsByMessageId);
       return {
         ...latestCard,

@@ -639,33 +639,57 @@ sequenceDiagram
     Agent->>Report: generate_report(report_type, window args)
     Report->>Report: resolve window and sources<br/>default github + email + calendar
 
-    Report->>GitHubOAuth: get_github_report_context()
+    Note over Report,Calendar: Phase 1: authorization preflight, no source data access
+    Report->>GitHubOAuth: authorize_github_report_access()
     alt GitHub 尚未授权
         GitHubOAuth-->>AuthStream: auth_required + GitHub Auth Card
         AuthStream-->>User: 展示授权入口
         User-->>GitHubOAuth: 完成 OAuth
-        GitHubOAuth-->>AuthStream: auth_complete
     end
-    GitHubOAuth-->>Report: subject_login=A + repo allowlist<br/>或授权失败/超时 warning
-    alt GitHub OAuth context available
-        loop until MCP cursor exhausted
-            Report->>GitHubMCP: github_mcp_search_activity(repositories=allowlist, actor=A, cursor)
-            GitHubMCP-->>Report: events + warnings + next_cursor
+    GitHubOAuth-->>AuthStream: auth_complete
+    GitHubOAuth-->>Report: token available or failure/timeout
+    Report->>Email: authorize_email_report_access()
+    Email-->>AuthStream: auth_required / auth_complete when needed
+    Email-->>Report: token available or failure/timeout
+    Report->>Calendar: authorize_calendar_report_access()
+    Calendar-->>AuthStream: auth_required / auth_complete when needed
+    Calendar-->>Report: token available or failure/timeout
+
+    Note over Report,Calendar: Phase 2: collect concurrently only after every auth attempt is terminal
+    Report-->>AuthStream: report_progress(preparing)
+    par GitHub collector
+        alt GitHub authorized
+            Report-->>AuthStream: report_progress(github_context)
+            Report->>GitHubOAuth: get_github_report_context(preflight token)
+            GitHubOAuth-->>Report: subject_login=A + repo allowlist
+            loop until MCP cursor exhausted
+                Report->>GitHubMCP: github_mcp_search_activity(repositories=allowlist, actor=A, cursor)
+                GitHubMCP-->>Report: events + warnings + next_cursor
+                Report-->>AuthStream: report_progress(activity_search, discovered)
+            end
+            Report->>Report: global sort + cap 100
+            Report->>GitHubMCP: github_mcp_get_details(selected events, max concurrency 5)
+            GitHubMCP-->>Report: ordered detail events or per-event typed warnings
+            Report-->>AuthStream: report_progress(activity_detail, current/total)
+        else GitHub authorization unavailable
+            Report->>Report: GitHub coverage unavailable<br/>Email/Calendar continue
         end
-        Report->>Report: global sort + cap 100
-        Report->>GitHubMCP: github_mcp_get_details(selected events, max concurrency 5)
-        GitHubMCP-->>Report: ordered detail events or per-event typed warnings
-    else GitHub OAuth unavailable
-        Report->>Report: GitHub coverage unavailable<br/>Email/Calendar continue
+    and Email collector
+        opt Email authorized
+            Report->>Email: list inbox + sentitems with preflight token
+            Email-->>Report: messages or source error
+            Report-->>AuthStream: report_progress(email_collection)
+        end
+    and Calendar collector
+        opt Calendar authorized
+            Report->>Calendar: list events with preflight token
+            Calendar-->>Report: events or source error
+            Report-->>AuthStream: report_progress(calendar_collection)
+        end
     end
-    Report->>Email: list_emails(folder=inbox)
-    Email-->>Report: messages or source error
-    Report->>Email: list_emails(folder=sentitems)
-    Email-->>Report: messages or source error
-    Report->>Calendar: list_calendar_events(start_at, end_at)
-    Calendar-->>Report: events or source error
 
     Report->>Report: normalize ReportEvidence<br/>aggregate warnings and coverage
+    Report-->>AuthStream: report_progress(rendering)
     Report->>Renderer: stable evidence + coverage + warnings
     Renderer-->>Report: deterministic Markdown
     Report-->>AuthStream: report_ready<br/>content + filename + window
@@ -681,11 +705,27 @@ sequenceDiagram
   `custom` 要求显式提供完整范围。
 - `sources` 未传时固定选择 `github`、`email`、`calendar`；显式传入时只执行
   指定 source，不根据 report type 隐式增删。
+- 已选 source 先按 GitHub、Email、Calendar 的 canonical order 完成 auth-only preflight；
+  任一 source 数据请求只能在所有授权尝试结束后执行。授权失败项产生 warning，但不阻断
+  后续 provider 的授权或成功 source 的采集。
+- preflight token 仅保存在本次 Report 内部授权上下文并从 repr 排除；token-aware collector
+  不重新进入 `@require_access_token`，因此每个 provider 只发送一次 `auth_complete`。
+- 所有 auth preflight 结束后，已授权 source 通过 `asyncio.gather` 跨 source 并行采集；
+  collector 可以按真实耗时乱序完成，但 evidence、warning、coverage 和 context 始终按用户
+  选择的 source 顺序合并，确保结果确定性。
+- 每份 Report 使用独立 `_ReportProgressEmitter` 发送 `report_progress` custom event。
+  `sequence` 单调递增，stage 固定为 `preparing`、`github_context`、`activity_search`、
+  `activity_detail`、`email_collection`、`calendar_collection`、`rendering`；事件只包含枚举
+  字段和非负计数，不包含 `system_message`、credential、cursor、业务内容或原始异常。
+- GitHub search 上报已扫描页数与 `discovered`；detail batch 在保持输入结果顺序的同时通过
+  callback 上报真实 `current / total`。高频 running 更新以 350ms 为最小间隔，stage 切换和
+  complete / failed / skipped 终态强制发送。
 - Email source 固定覆盖 `inbox` 与 `sentitems`，原始邮件在 Report 层按 window
   过滤；现有 Email public tool schema 保持不变。
-- Calendar source 直接复用 `list_calendar_events` 的时间窗口查询。
-- GitHub source 先调用 GitHub OAuth auth gate，通过 `/user` 确认报表主体账号 A，
-  再全分页读取 `/user/repos` 作为 `repository_scope=oauth_accessible`。尚未授权时由
+- Calendar public tool schema 保持不变；Report collector 使用 preflight token 调用内部
+  token-aware calendar reader 执行时间窗口查询。
+- GitHub source 在 preflight 完成后通过 `/user` 确认报表主体账号 A，再全分页读取
+  `/user/repos` 作为 `repository_scope=oauth_accessible`。尚未授权时由
   `@require_access_token` 先发出 `auth_required` Auth Card 并等待用户完成授权；只有授权
   失败或超时后才将 GitHub source 降级为 warning。
 - GitHub source 随后调用 `github_mcp_search_activity` typed internal contract，传入

@@ -750,6 +750,23 @@ class TestHandleAuthUrl:
 # access token boundary tests
 
 
+@pytest.mark.asyncio
+async def test_email_report_authorization_gate_does_not_read_data():
+    raw_gate = et.authorize_email_report_access
+    while hasattr(raw_gate, "__wrapped__"):
+        raw_gate = raw_gate.__wrapped__
+
+    with (
+        patch("app.tools.email_tools._get_client") as get_client,
+        patch("app.tools.email_tools._push_auth_complete") as auth_complete,
+    ):
+        result = await raw_gate(access_token="oauth-token")
+
+    assert result == "oauth-token"
+    get_client.assert_not_called()
+    auth_complete.assert_called_once_with(et.EMAIL_PROVIDER)
+
+
 class TestM365EmailRequestBoundary:
     """Tests for the single M365 email token boundary."""
 

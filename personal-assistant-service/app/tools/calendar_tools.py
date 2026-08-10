@@ -161,6 +161,29 @@ def _format_event(event: dict[str, Any]) -> dict[str, Any]:
     on_auth_url=handle_auth_url,
     callback_url=CALENDAR_CALLBACK_URL,
 )
+async def _authorize_calendar_report_access(
+    *,
+    access_token: str | None = None,
+) -> str:
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+    _push_auth_complete()
+    return access_token
+
+
+async def authorize_calendar_report_access() -> str:
+    """Complete the Report OAuth gate without reading calendar data."""
+    _require_calendar_jwt_workload_context()
+    return await _authorize_calendar_report_access()
+
+
+@require_access_token(
+    provider_name=CALENDAR_PROVIDER,
+    scopes=CALENDAR_SCOPES,
+    auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
+    callback_url=CALENDAR_CALLBACK_URL,
+)
 async def _list_calendar_events_authorized(
     *,
     start_time: str,
@@ -234,6 +257,26 @@ async def _list_calendar_events_impl(
         }
     except Exception as e:
         return _format_tool_error(e, "list_calendar_events")
+
+
+async def _list_calendar_events_for_report(
+    *,
+    start_time: str,
+    end_time: str,
+    calendar_id: str,
+    limit: int,
+    access_token: str,
+) -> dict[str, Any]:
+    """List Report events with a token obtained during authorization preflight."""
+    if not access_token:
+        raise RuntimeError("Calendar report access token is required")
+    return await _list_calendar_events_impl(
+        start_time=start_time,
+        end_time=end_time,
+        calendar_id=calendar_id,
+        limit=limit,
+        access_token=access_token,
+    )
 
 
 @require_access_token(

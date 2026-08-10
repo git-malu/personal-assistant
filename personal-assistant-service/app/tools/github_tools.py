@@ -229,13 +229,23 @@ def _report_repository_names(payload: Any) -> list[str]:
     on_auth_url=_handle_auth_url,
     auth_flow="USER_FEDERATION",
 )
-async def get_github_report_context(
+async def authorize_github_report_access(
     *,
     access_token: str | None = None,
-) -> GitHubReportContext:
-    """Resolve OAuth account A and fully paginate its repository allowlist."""
+) -> str:
+    """Complete the Report OAuth gate without reading GitHub data."""
     if not access_token:
         raise RuntimeError("access_token was not injected by require_access_token")
+    _push_auth_complete()
+    return access_token
+
+
+async def _get_github_report_context_authorized(
+    access_token: str,
+) -> GitHubReportContext:
+    """Resolve the Report subject and allowlist with a pre-authorized token."""
+    if not access_token:
+        raise RuntimeError("GitHub report access token is required")
 
     identity = await _raw_github_request(access_token, "GET", "/user")
     login, user_id = _report_identity(identity)
@@ -260,12 +270,29 @@ async def get_github_report_context(
             break
         page += 1
 
-    _push_auth_complete()
     return GitHubReportContext(
         login=login,
         user_id=user_id,
         repositories=tuple(sorted(repositories, key=str.casefold)),
     )
+
+
+@require_access_token(
+    provider_name=get_github_provider_name(),
+    scopes=get_github_scopes_list(),
+    on_auth_url=_handle_auth_url,
+    auth_flow="USER_FEDERATION",
+)
+async def get_github_report_context(
+    *,
+    access_token: str | None = None,
+) -> GitHubReportContext:
+    """Resolve OAuth account A and fully paginate its repository allowlist."""
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+    context = await _get_github_report_context_authorized(access_token)
+    _push_auth_complete()
+    return context
 
 
 # ---------------------------------------------------------------------------

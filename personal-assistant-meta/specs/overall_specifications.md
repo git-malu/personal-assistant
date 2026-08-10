@@ -201,6 +201,12 @@ Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口�
   不得替换为当前日期或当前周期。`custom` 必须使用显式范围。
 - **默认 sources**：未传 `sources` 时固定启用 `github`、`email`、`calendar`；用户
   显式传入时仅采集指定 source。
+- **授权先于采集**：Report 对已选 source 先按 `GitHub -> Email -> Calendar` 顺序完成
+  OAuth preflight；所有授权尝试结束前不读取任何 GitHub、Email 或 Calendar 业务数据。
+  单项授权失败不阻断后续 provider，采集阶段只处理已授权 source。
+- **并行采集**：全部授权尝试结束后，已授权 source 可并行采集以缩短总等待时间；完成
+  顺序不影响输出，evidence、warning、coverage 与 context 仍按用户选择的 source 顺序
+  确定性合并。
 - **Email 范围**：默认读取 `inbox` 与 `sentitems`，并在 Report 层按规范化时间窗口
   过滤邮件证据，不改变 Email public tool schema。
 - **GitHub 身份与范围**：Report 先通过当前 Web Chat 用户的 GitHub OAuth
@@ -222,6 +228,13 @@ Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口�
   `skipped`。
 - **结果契约**：`ReportResult` 包含 `report_type`、`window`、`content`、
   `ReportEvidence[]`、`warnings`、`source_coverage` 和可选 `source_context`。
+- **授权界面**：同一次 Report 响应产生的 GitHub、Email、Calendar Auth Card 在原
+  assistant message 内按到达顺序并存；后续授权状态和 Report Download Card 不覆盖先前 UI。
+- **实时进度**：授权检查完成后，Web Chat 持续显示 GitHub context、活动检索、详情补充、
+  Email、Calendar 与 Markdown rendering 的结构化进度。已知总量显示真实
+  `current / total`，未知总量只显示 indeterminate 状态和已发现数量。进度面板位于同一
+  assistant message 的 Auth Card 下方，不覆盖既有 UI；`report_ready` 或 stream 终止后
+  面板消失，进度内容不进入对话正文或 Conversation history。
 - **安全边界**：public tool schema、warning、SSE、日志和 tool result 均不得包含
   access token、PAT、API key、AK/SK、STS credential 或签名 header。
 

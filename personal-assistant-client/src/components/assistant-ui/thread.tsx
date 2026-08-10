@@ -19,6 +19,7 @@ import {
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { AuthCard } from "@/components/chat/AuthCard";
 import { ReportDownloadCard } from "@/components/chat/ReportDownloadCard";
+import { ReportProgressCard } from "@/components/chat/ReportProgressCard";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -304,6 +305,7 @@ const AssistantMessage: FC = () => {
         className="text-foreground px-2 leading-relaxed wrap-break-word [contain-intrinsic-size:auto_24px] [content-visibility:auto]"
       >
         <AuthCard messageId={messageId} />
+        <ReportProgressCard messageId={messageId} />
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
             reasoning: ["group-chainOfThought", "group-reasoning"],

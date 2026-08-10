@@ -1549,7 +1549,12 @@ async def test_get_details_reuses_one_operation_with_bounded_concurrency(monkeyp
         for index in range(8)
     ]
 
-    results = await gmt.github_mcp_get_details(events, max_concurrency=3)
+    progress_updates: list[tuple[int, int]] = []
+    results = await gmt.github_mcp_get_details(
+        events,
+        max_concurrency=3,
+        on_progress=lambda current, total: progress_updates.append((current, total)),
+    )
 
     assert operation_calls == 1
     assert client.list_tools_calls == 1
@@ -1558,6 +1563,7 @@ async def test_get_details_reuses_one_operation_with_bounded_concurrency(monkeyp
         event.external_id for event in events
     ]
     assert all(isinstance(result, gmt.GitHubActivityEvent) for result in results)
+    assert progress_updates == [(index, len(events)) for index in range(1, 9)]
 
 
 @pytest.mark.parametrize(
