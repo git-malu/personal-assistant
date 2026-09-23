@@ -435,7 +435,7 @@ Implementation 完成时至少更新：
 | `architecture/backend_architecture.md` | 增加 Calendar Tool、OAuth2 complete endpoint、state/session binding diagram |
 | `architecture/frontend_architecture.md` | 增加 AuthCard callback page / BroadcastChannel relay flow |
 | `architecture/overall_architecture.md` | 更新 Microsoft 365 Tools 总览 |
-| `architecture/cloud-service/huaweicloud/` | AgentArts OAuth2 complete flow、Allowed Resource OAuth2 Return URL、Gateway proxy path |
+| `architecture/external-systems/huaweicloud/` | AgentArts OAuth2 complete flow、Allowed Resource OAuth2 Return URL、Gateway proxy path |
 | `personal-assistant-service/README.md` | 本地 env 与 Calendar OAuth2 调试说明 |
 | `personal-assistant-client/README.md` | callback URL 与 Cloudflare Pages Function proxy 说明 |
 

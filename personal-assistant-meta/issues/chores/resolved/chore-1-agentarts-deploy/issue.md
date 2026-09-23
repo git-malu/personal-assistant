@@ -261,7 +261,7 @@ status: backlog
 
 | 文档 | 路径 |
 |------|------|
-| AgentArts 平台架构 | `architecture/cloud-service/agentarts.md` |
+| AgentArts 平台架构 | `architecture/external-systems/agentarts.md` |
 | 总体架构 | `architecture/overall_architecture.md` |
 | CI/CD 部署策略 | `architecture/devops/cicd.md` |
 | 部署配置 | `personal-assistant-service/.agentarts_config.yaml` |

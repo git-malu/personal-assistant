@@ -19,5 +19,5 @@
 | Bugs 概览 | `../bugs/README.md` |
 | 总体功能规格 | `../../specs/overall_specifications.md` |
 | 架构设计 | `../../architecture/overall_architecture.md` |
-| AgentArts 平台架构 | `../../architecture/cloud-service/agentarts.md` |
+| AgentArts 平台架构 | `../../architecture/external-systems/agentarts.md` |
 | CI/CD 部署策略 | `../../architecture/devops/cicd.md` |

@@ -130,7 +130,7 @@ sequenceDiagram
 | terminal SSE 被截断、缺少换行或 JSON 损坏 | Client parser 会忽略 malformed JSON，EOF 时也不消费 residual buffer | 保存原始 SSE bytes、响应 `Content-Type`、最后一个完整 event 和 decoder residual |
 | Tool 已完成后的 LLM、assistant message 持久化或传输失败 | `done: true` 只在回复持久化成功后发送 | 记录最后一个业务 event；若已出现 `report_ready`，优先检查 post-tool LLM、数据库 commit 和后续传输 |
 
-仓库内的 [AgentArts API 参考](../../../architecture/cloud-service/huaweicloud/agentarts-api-pdf.pdf)
+仓库内的 [AgentArts API 参考](../../../architecture/external-systems/huaweicloud/agentarts-api-pdf.pdf)
 未给出当前托管 Gateway 的具体流式 timeout 阈值，不能用通用 APIG 默认值替代生产配置。
 [通用 APIG 配置文档](https://support.huaweicloud.com/usermanual-apig/apig_03_0039.html)
 中的 backend timeout 与 SSE strategy 只能用于设计排查实验，不能证明当前托管 Runtime 的

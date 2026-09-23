@@ -181,8 +181,8 @@ AGIG / AgentArts Gateway 的 `CUSTOM_JWT` 需要支持：
 Implementation 完成后至少更新：
 
 - `personal-assistant-meta/architecture/auth/inbound-auth-lifecycle.md`
-- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts.md`
-- `personal-assistant-meta/architecture/cloud-service/azure/microsoft-entra-id-setup.md`
+- `personal-assistant-meta/architecture/external-systems/huaweicloud/agentarts.md`
+- `personal-assistant-meta/architecture/external-systems/azure/microsoft-entra-id-setup.md`
 - `personal-assistant-meta/architecture/devops/agentarts-deploy-runbook.md`
 - `personal-assistant-client/README.md`
 
@@ -191,5 +191,5 @@ Implementation 完成后至少更新：
 - Microsoft identity platform token validation:
   `https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-the-issuer`
 - `personal-assistant-meta/issues/features/resolved/feature-4-inbound-identity/issue.md`
-- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts.md`
+- `personal-assistant-meta/architecture/external-systems/huaweicloud/agentarts.md`
 - `personal-assistant-meta/issues/bugs/resolved/bug-14-email-tool-b2b-guest-401/issue.md`

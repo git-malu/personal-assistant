@@ -92,5 +92,5 @@ function base64UrlDecode(str: string): string {
 
 - `personal-assistant-client/src/lib/chat-adapter.ts:14-55` — 受影响代码
 - `personal-assistant-service/app/auth.py:4-21` — App 层 401 逻辑
-- `personal-assistant-meta/architecture/cloud-service/agentarts.md:712-767` — CUSTOM_JWT 认证层次与 header 来源
+- `personal-assistant-meta/architecture/external-systems/agentarts.md:712-767` — CUSTOM_JWT 认证层次与 header 来源
 - Feature 4: `personal-assistant-meta/issues/features/resolved/feature-4-inbound-identity/plan.md`

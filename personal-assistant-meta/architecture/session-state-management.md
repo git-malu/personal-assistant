@@ -278,6 +278,6 @@ Memory 不能替代 Message history，Runtime Session 也不能作为 Memory nam
 ## 13. 参考
 
 - [`api.md`](./api.md)
-- [`cloud-service/cloudflare/pages.md`](./cloud-service/cloudflare/pages.md)
+- [`external-systems/cloudflare/pages.md`](./external-systems/cloudflare/pages.md)
 - [`auth/feature-15-calendar-oauth2-architecture.md`](./auth/feature-15-calendar-oauth2-architecture.md)
 - [`../issues/features/feature-14-multi-session-runtime-prewarm/issue.md`](../issues/features/feature-14-multi-session-runtime-prewarm/issue.md)

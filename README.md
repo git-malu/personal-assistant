@@ -206,7 +206,7 @@ Chat：`https://agentarts-personal-assistant.pages.dev`。
 Frontend merge 到 `main` 后由
 `.github/workflows/deploy-frontend-to-cloudflare.yml` 自动测试并部署。手动
 运维命令见
-`personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`。
+`personal-assistant-meta/architecture/external-systems/cloudflare/pages.md`。
 
 ## 开发工作流
 

@@ -261,7 +261,7 @@ async def invocations(request: Request):
     # ...existing JSON parse, message/stream extraction...
 
     # User ID: ExecuteRuntime spec header → alternative → legacy → default
-    # X-Hw-Agentgateway-User-Id is the official header per cloud-service/agentarts.md §7.3.1
+    # X-Hw-Agentgateway-User-Id is the official header per external-systems/agentarts.md §7.3.1
     user_id = (
         request.headers.get("x-hw-agentgateway-user-id")     # ExecuteRuntime spec (official)
         or request.headers.get("x-hw-agentarts-user-id")      # alternative (may also be injected)
@@ -319,7 +319,7 @@ async def invocations(request: Request):
 **关键点**:
 - **Header 双读模式**: 
   - **Session ID**: AgentArts 官方 API 规范使用 `x-hw-agentarts-session-id`（小写，`hw` 前缀）。同时向后兼容 `X-AgentArts-Session-Id`（旧版非标 header）。
-  - **User ID**: ExecuteRuntime (high-code) 官方规范（`cloud-service/agentarts.md` §7.3.1）使用 `X-Hw-Agentgateway-User-Id`（注意 `Agentgateway` 非 `Agentarts`）。Header 优先级：`x-hw-agentgateway-user-id` → `x-hw-agentarts-user-id` → `X-AgentArts-User-Id` → `"anonymous"`。
+  - **User ID**: ExecuteRuntime (high-code) 官方规范（`external-systems/agentarts.md` §7.3.1）使用 `X-Hw-Agentgateway-User-Id`（注意 `Agentgateway` 非 `Agentarts`）。Header 优先级：`x-hw-agentgateway-user-id` → `x-hw-agentarts-user-id` → `X-AgentArts-User-Id` → `"anonymous"`。
 - **⚠️ 用户 ID header 风险**: ExecuteRuntime §7.3.1 标注该 header 为**非必填（optional）**。Personal Assistant 使用 ExecuteRuntime 路径（非 InvokeRuntime），因此应信任 `agentarts.md` 文档。但需上线后验证该 header 确实由 Gateway 注入；若缺失则 `user_id` fallback 到 `"anonymous"` → 所有用户共享 `thread_id` namespace → AC4 跨用户隔离失效。
 - Cookie 名称: `x-anonymous-session-id` — 前缀 `x-` 表示自定义 header/cookie
 - `HttpOnly` 防止 JS 读取；`SameSite=Lax` 允许同站请求携带
@@ -411,7 +411,7 @@ result = await handler.agent.ainvoke(
 - Headers（生产环境由 AgentArts Gateway 注入）:
   - `x-hw-agentarts-session-id` — 官方 session header（AgentArts InvokeRuntime API 规范，[ref](https://support.huaweicloud.com/api-agentarts/agentarts_07_0045.html)）
   - `X-AgentArts-Session-Id` — 向后兼容（旧版非标 header，仍支持）
-  - `x-hw-agentgateway-user-id` — 官方 user ID header（AgentArts ExecuteRuntime 规范，[`cloud-service/agentarts.md`](../../../architecture/cloud-service/agentarts.md) §7.3.1；标注为 optional）
+  - `x-hw-agentgateway-user-id` — 官方 user ID header（AgentArts ExecuteRuntime 规范，[`external-systems/agentarts.md`](../../../architecture/external-systems/agentarts.md) §7.3.1；标注为 optional）
   - `x-hw-agentarts-user-id` — 备选 user ID header
   - `X-AgentArts-User-Id` — 向后兼容，默认 `"anonymous"`
 - 客户端**不发送** session header — 让后端 cookie fallback 在本地开发中自动管理 session
@@ -457,7 +457,7 @@ result = await handler.agent.ainvoke(
 ### 5.3 不直接受影响
 
 - `session-state-management.md` — 设计不变，Checkpointer 实现即文档所述
-- `cloud-service/agentarts.md` — Gateway 注入 header 的行为不变，但 header 名称确认为官方 `x-hw-agentarts-session-id`（此前文档可能使用旧名）
+- `external-systems/agentarts.md` — Gateway 注入 header 的行为不变，但 header 名称确认为官方 `x-hw-agentarts-session-id`（此前文档可能使用旧名）
 - ADR 文件 — 无需更新（ADR-009 已记录 deepagents 选型）
 
 ---
@@ -590,7 +590,7 @@ S6/S7 之后，`main.py` 将调用 `handler.handle_stream(message=..., user_id=.
 | **Playground 多 tab 共享状态** | Medium | Low | `cl.user_session.get("id")` 是 Chainlit 内置 ID，每窗口独立。验证：两标签页分别打开 playground，确认互不干扰。 |
 | **Checkpoint 存储膨胀** | Low | Low | `InMemorySaver` 在进程内存中，重启清零。`AsyncSqliteSaver` 文件增长极缓（短期数据量极小）。明确记录需后续引入 TTL 清理。 |
 | **Header 名称与 AgentArts 官方 spec 不匹配** | **High** | **High** | 官方 API 规范使用 `x-hw-agentarts-session-id`（含 `hw` 前缀），此前代码读取 `X-AgentArts-Session-Id`（无 `hw` 前缀）— **生产环境 Gateway 注入官方 header 名，旧名完全收不到** → session checkpointing 在生产中不工作。**缓解**: 实现双读模式（`x-hw-agentarts-session-id` or `X-AgentArts-Session-Id`）。上线后必须验证官方 header 确实到达后端。 |
-| **User ID header 为 optional** | Low | High | `X-Hw-Agentgateway-User-Id` 在 ExecuteRuntime spec（`cloud-service/agentarts.md` §7.3.1）中标注为**非必填**。若生产环境 Gateway 不注入此 header，所有 `user_id` fallback 到 `"anonymous"` → 跨用户隔离（AC4）完全失效。**缓解**: 上线后立即验证 AC4；若 header 缺失，回退到 AgentArts Identity SDK 提取 user identity（Feature 4 scope）。 |
+| **User ID header 为 optional** | Low | High | `X-Hw-Agentgateway-User-Id` 在 ExecuteRuntime spec（`external-systems/agentarts.md` §7.3.1）中标注为**非必填**。若生产环境 Gateway 不注入此 header，所有 `user_id` fallback 到 `"anonymous"` → 跨用户隔离（AC4）完全失效。**缓解**: 上线后立即验证 AC4；若 header 缺失，回退到 AgentArts Identity SDK 提取 user identity（Feature 4 scope）。 |
 
 ---
 

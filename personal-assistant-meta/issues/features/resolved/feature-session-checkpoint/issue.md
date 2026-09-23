@@ -197,7 +197,7 @@ Cookie 降级本地开发    Memory 管长期        三层解耦，独立替换
 
 ### 不直接受影响
 
-- `architecture/cloud-service/agentarts.md` — AgentArts Gateway 注入 `X-AgentArts-Session-Id` 的行为不变
+- `architecture/external-systems/agentarts.md` — AgentArts Gateway 注入 `X-AgentArts-Session-Id` 的行为不变
 - `architecture/devops/agentarts-deploy-runbook.md` — 部署流程不变（Checkpointer 后端切换不涉及容器/部署变更）
 
 ---

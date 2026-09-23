@@ -28,7 +28,7 @@
 - **目标**：将 Personal Assistant 服务首次部署到 AgentArts Runtime（`cn-southwest-2`），同时将 Web Chat 前端部署到 OBS 静态托管。打通 **容器构建 → SWR 推送 → Runtime 启动** + **前端构建 → OBS 上传 → CORS 验证** 的完整链路
 - **参考架构**：
   - `architecture/devops/cicd.md` — Layer 1 AgentArts 部署策略、Layer 3 OBS 触发时机
-  - `architecture/cloud-service/agentarts.md` — AgentArts 平台参考
+  - `architecture/external-systems/agentarts.md` — AgentArts 平台参考
   - `architecture/overall_architecture.md` — 总体架构（前后端分离、CORS 跨域）
   - `architecture/ADR/ADR-004-fastapi-over-agentarts-runtime-app.md` — FastAPI 替代 AgentArtsRuntimeApp 的决策
   - `personal-assistant-infra/AGENTS.md` — OBS 基础设施即代码规范

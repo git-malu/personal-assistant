@@ -198,7 +198,7 @@ npx wrangler pages deployment tail \
 ```
 
 详细说明见
-[`cloud-service/cloudflare/pages.md`](../personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md)。
+[`external-systems/cloudflare/pages.md`](../personal-assistant-meta/architecture/external-systems/cloudflare/pages.md)。
 
 ## 测试
 

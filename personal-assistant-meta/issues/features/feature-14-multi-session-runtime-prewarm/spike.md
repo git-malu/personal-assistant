@@ -34,7 +34,7 @@
 ## AgentArts API Evidence
 
 来源：
-`personal-assistant-meta/architecture/cloud-service/agentarts-api-pdf.pdf`
+`personal-assistant-meta/architecture/external-systems/agentarts-api-pdf.pdf`
 （文档版本 03，2026-06-11）。
 
 ### `StartRuntimeSession`

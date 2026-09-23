@@ -351,7 +351,7 @@ Implementation 完成后至少更新：
 - `personal-assistant-meta/specs/overall_specifications.md`；
 - `personal-assistant-meta/specs/dictionary.md`；
 - `personal-assistant-meta/architecture/backend_architecture.md`；
-- `personal-assistant-meta/architecture/cloud-service/huaweicloud/` 下 AgentArts 相关文档；
+- `personal-assistant-meta/architecture/external-systems/huaweicloud/` 下 AgentArts 相关文档；
 - `personal-assistant-service/README.md`；
 - `personal-assistant-client/README.md`（若 AuthCard / callback UX 有变化）。
 

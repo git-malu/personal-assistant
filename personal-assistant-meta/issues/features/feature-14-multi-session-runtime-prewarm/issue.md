@@ -512,8 +512,8 @@ stream-before-commit 故障窗口，换取不引入 Run ledger、reconciliation 
 - `personal-assistant-meta/architecture/api.md`
 - `personal-assistant-meta/architecture/session-state-management.md`
 - `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md`
-- `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`
-- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts.md`
+- `personal-assistant-meta/architecture/external-systems/cloudflare/pages.md`
+- `personal-assistant-meta/architecture/external-systems/huaweicloud/agentarts.md`
 
 ## 参考
 

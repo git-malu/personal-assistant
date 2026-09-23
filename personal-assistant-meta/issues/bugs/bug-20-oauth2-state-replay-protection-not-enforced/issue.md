@@ -83,7 +83,7 @@ sequenceDiagram
 |------|------|
 | `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md` | 记录 BFF callback、Service-owned complete、PostgreSQL replay store |
 | `personal-assistant-meta/architecture/backend_architecture.md` | 补充 callback route 的 BFF / replay / idempotency 语义 |
-| `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md` | 新增 `/auth/callback/m365-calendar` Pages Function |
+| `personal-assistant-meta/architecture/external-systems/cloudflare/pages.md` | 新增 `/auth/callback/m365-calendar` Pages Function |
 | `personal-assistant-meta/architecture/devops/local-development.md` | 记录 local Vite fallback 与 production BFF 差异 |
 
 ## 参考实现

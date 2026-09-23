@@ -193,5 +193,5 @@ X-HW-AgentGateway-Workload-Access-Token
 
 - [plan.md](./plan.md)
 - [backend_architecture.md §2.3 AgentArts Gateway Header 注入](../../../../architecture/backend_architecture.md#23-agentarts-gateway-header-注入)
-- [cloud-service/huaweicloud/agent-identity.md](../../../../architecture/cloud-service/huaweicloud/agent-identity.md)
+- [external-systems/huaweicloud/agent-identity.md](../../../../architecture/external-systems/huaweicloud/agent-identity.md)
 - [ADR-016: Secretless Credential Injection via AgentArts Identity](../../../../architecture/ADR/ADR-016-secretless-credential-injection.md)

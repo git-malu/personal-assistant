@@ -59,11 +59,11 @@ flowchart TB
 | 层 | 负责 | 详细文档 |
 |----|------|----------|
 | **前端** | Cloudflare Pages 静态站点、Pages Function Proxy、消息通道 | `frontend_architecture.md` |
-| **API Gateway** | JWT 认证、`PREFIX_MATCH` 路由转发（`/invocations` 及其子路径） | `cloud-service/agentarts.md` §9 |
+| **API Gateway** | JWT 认证、`PREFIX_MATCH` 路由转发（`/invocations` 及其子路径） | `external-systems/agentarts.md` §9 |
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
 | **Conversation 状态** | PostgreSQL Conversation/Message + per-Conversation Checkpoint；Runtime Session 仅路由 | `session-state-management.md` |
-| **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
-| **Cloudflare Pages** | Production hosting、Pages Function Proxy、Wrangler CLI | [`cloud-service/cloudflare/pages.md`](cloud-service/cloudflare/pages.md) |
+| **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `external-systems/agentarts.md` |
+| **Cloudflare Pages** | Production hosting、Pages Function Proxy、Wrangler CLI | [`external-systems/cloudflare/pages.md`](external-systems/cloudflare/pages.md) |
 
 ### 1.2 技术选型
 
@@ -699,7 +699,7 @@ class PersonalAssistantMemory:
 > Backend 部署见
 > [agentarts-deploy-runbook.md](devops/agentarts-deploy-runbook.md)；Frontend
 > Cloudflare deployment 见
-> [cloudflare/pages.md](cloud-service/cloudflare/pages.md)。
+> [cloudflare/pages.md](external-systems/cloudflare/pages.md)。
 
 ## 8. 部署配置
 
@@ -864,9 +864,9 @@ personal-assistant/
 | **测试分层与 E2E 策略** | `architecture/devops/test/test-strategy.md` |
 | **前端架构** | `architecture/frontend_architecture.md` |
 | **后端架构** | `architecture/backend_architecture.md` |
-| **Cloudflare Pages 运维** | `architecture/cloud-service/cloudflare/pages.md` |
-| AgentArts 平台参考 | `architecture/cloud-service/agentarts.md` |
-| AgentCore 对比参考 | `architecture/cloud-service/agentcore.md` |
+| **Cloudflare Pages 运维** | `architecture/external-systems/cloudflare/pages.md` |
+| AgentArts 平台参考 | `architecture/external-systems/agentarts.md` |
+| AgentCore 对比参考 | `architecture/external-systems/agentcore.md` |
 | Identity SDK 文档 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_044.html` |
 | Runtime 部署文档 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_028.html` |
 | 认证鉴权 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_047.html` |

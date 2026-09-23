@@ -64,7 +64,7 @@ Required repository secrets：
 
 API Token 只授予目标 Account 的 `Cloudflare Pages: Edit`。Production URL
 为 `https://agentarts-personal-assistant.pages.dev`。CLI 运维见
-[`cloud-service/cloudflare/pages.md`](../cloud-service/cloudflare/pages.md)。
+[`external-systems/cloudflare/pages.md`](../external-systems/cloudflare/pages.md)。
 
 ---
 

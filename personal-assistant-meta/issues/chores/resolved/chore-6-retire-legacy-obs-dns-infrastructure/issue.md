@@ -152,8 +152,8 @@ flowchart TD
 ## 关联文档
 
 - `personal-assistant-meta/architecture/ADR/ADR-017-cloudflare-pages-proxy.md`
-- `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`
-- `personal-assistant-meta/architecture/cloud-service/domain.md`
+- `personal-assistant-meta/architecture/external-systems/cloudflare/pages.md`
+- `personal-assistant-meta/architecture/external-systems/domain.md`
 - `personal-assistant-meta/architecture/devops/cicd.md`
 - `personal-assistant-infra/README.md`
 

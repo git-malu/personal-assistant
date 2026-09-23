@@ -80,8 +80,8 @@ sequenceDiagram
 | `architecture/session-state-management.md` | 明确显式 cancellation command 与 active execution registry |
 | `architecture/frontend_architecture.md` | 明确 Stop 与下一次发送的 sequencing |
 | `architecture/backend_architecture.md` | 增加 Conversation-scoped cancellation route 与 Service registry |
-| `architecture/cloud-service/cloudflare/pages.md` | 记录显式 Pages Function 与 local/production 映射 |
-| `architecture/cloud-service/huaweicloud/agentarts.md` | 记录 AgentArts Runtime suffix 到 FastAPI path 的精确映射 |
+| `architecture/external-systems/cloudflare/pages.md` | 记录显式 Pages Function 与 local/production 映射 |
+| `architecture/external-systems/huaweicloud/agentarts.md` | 记录 AgentArts Runtime suffix 到 FastAPI path 的精确映射 |
 | `architecture/devops/test/test-strategy.md` | 增加 Stop/cancel/continue full-stack regression |
 | `issues/features/feature-14-multi-session-runtime-prewarm/plan.md` | 已定义 disconnect/cancel 释放 lock，本 Bug 补齐实现与测试 |
 

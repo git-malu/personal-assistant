@@ -141,7 +141,7 @@ Update current facts in:
 - `architecture/overall_architecture.md`
 - `architecture/session-state-management.md`
 - `architecture/devops/local-development.md`
-- `architecture/cloud-service/agentarts.md`
+- `architecture/external-systems/agentarts.md`
 - ADR-011 amendment
 
 Historical resolved issues remain historical; current documentation must contain no active guidance

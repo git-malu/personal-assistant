@@ -86,7 +86,7 @@ personal-assistant-client/functions/
 
 - [ ] 更新 `personal-assistant-meta/architecture/api.md`，移除
       `functions/invocations/[[path]].js` 相关 route matching 说明。
-- [ ] 更新 `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`，
+- [ ] 更新 `personal-assistant-meta/architecture/external-systems/cloudflare/pages.md`，
       明确生产 Pages routes 只有 `/invocations` 和 `/auth/callback/m365-calendar`。
 - [ ] 检查 `frontend_architecture.md`、`backend_architecture.md`、AgentArts docs 中是否仍把
       Cloudflare `/invocations/*` 描述为 production public route。
@@ -165,7 +165,7 @@ personal-assistant-client/functions/
 ## 参考
 
 - [`personal-assistant-meta/architecture/api.md`](../../../../architecture/api.md)
-- [`personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`](../../../../architecture/cloud-service/cloudflare/pages.md)
+- [`personal-assistant-meta/architecture/external-systems/cloudflare/pages.md`](../../../../architecture/external-systems/cloudflare/pages.md)
 - [`personal-assistant-client/functions/invocations.js`](../../../../../personal-assistant-client/functions/invocations.js)
 - [`personal-assistant-client/functions/invocations/[[path]].js`](../../../../../personal-assistant-client/functions/invocations/[[path]].js)
 - [`personal-assistant-client/functions/auth/callback/m365-calendar.js`](../../../../../personal-assistant-client/functions/auth/callback/m365-calendar.js)

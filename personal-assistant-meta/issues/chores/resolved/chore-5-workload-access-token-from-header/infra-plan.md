@@ -16,7 +16,7 @@
 
 ### 2.1 Gateway Header Injection Is a Platform Feature
 
-The AgentArts Gateway automatically injects the `X-HW-AgentGateway-Workload-Access-Token` header on every request it forwards to the Runtime container. This is **built-in behavior of the AgentArts platform** — it is enabled by default, requires no configuration toggle, and is documented in the [AgentArts API reference PDF](../../../../architecture/cloud-service/agentarts-api-pdf.pdf) (pp. 859–868).
+The AgentArts Gateway automatically injects the `X-HW-AgentGateway-Workload-Access-Token` header on every request it forwards to the Runtime container. This is **built-in behavior of the AgentArts platform** — it is enabled by default, requires no configuration toggle, and is documented in the [AgentArts API reference PDF](../../../../architecture/external-systems/agentarts-api-pdf.pdf) (pp. 859–868).
 
 It is **not something configured in OpenTofu/HCL, `.agentarts_config.yaml`, or any Huawei Cloud IAM policy**. The platform simply does it.
 

@@ -282,7 +282,7 @@ architecture 引用。
 - [ ] 更新 `architecture/overall_architecture.md`
 - [ ] 更新 `architecture/session-state-management.md`
 - [ ] 更新 `architecture/devops/local-development.md`
-- [ ] 更新 `architecture/cloud-service/agentarts.md`
+- [ ] 更新 `architecture/external-systems/agentarts.md`
 - [ ] amend `ADR-011`，记录根目录 `config.yaml` 和 legacy env 已退出最终架构
 - [ ] 审计其他 ADR、runbook、README 和 issue plan 中仍被当作当前事实的旧配置
 - [ ] 历史 issue 可保留历史记录，但必须明确其状态，不得被 current architecture

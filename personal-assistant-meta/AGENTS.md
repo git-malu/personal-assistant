@@ -30,7 +30,7 @@ personal-assistant-meta/
 
 描述系统如何从技术层面实现 specs。入口文件是 `architecture/overall_architecture.md`，目录内所有 architecture 文件必须被该入口直接或间接引用。
 
-`architecture/cloud-service/huaweicloud/` 是涉及 AgentArts Runtime、HuaweiCloud 基础服务、部署约束、domain/routing、认证、可观测性或云端集成方案时的首要参考目录；其他云厂商目录仅作为对比参考。
+`architecture/external-systems/huaweicloud/` 是涉及 AgentArts Runtime、HuaweiCloud 基础服务、部署约束、domain/routing、认证、可观测性或云端集成方案时的首要参考目录；其他云厂商目录仅作为对比参考。
 
 ### `issues/`
 
@@ -40,7 +40,7 @@ personal-assistant-meta/
 
 - 本目录主要由 Markdown 和 Mermaid 图表组成，无传统编译构建命令。
 - 修改 Mermaid 图表后，应使用 GitHub Preview、IDE Preview 或 Mermaid renderer 验证语法。
-- 涉及 AgentArts API PDF 时，必须使用 PDF skill 阅读 `architecture/cloud-service/agentarts-api-pdf.pdf`，不要凭记忆改 API 细节。
+- 涉及 AgentArts API PDF 时，必须使用 PDF skill 阅读 `architecture/external-systems/agentarts-api-pdf.pdf`，不要凭记忆改 API 细节。
 
 ## Code Style Guidelines
 
@@ -112,4 +112,4 @@ personal-assistant-meta/
 
 ## AgentArts API Reference
 
-`architecture/cloud-service/agentarts-api-pdf.pdf` 是 AgentArts 平台官方 API 参考文档（PDF）。所有与 AgentArts Runtime 交互的接口定义、参数说明、错误码等均以此 PDF 为准。需要阅读或检索其中内容时，必须使用 PDF skill。
+`architecture/external-systems/agentarts-api-pdf.pdf` 是 AgentArts 平台官方 API 参考文档（PDF）。所有与 AgentArts Runtime 交互的接口定义、参数说明、错误码等均以此 PDF 为准。需要阅读或检索其中内容时，必须使用 PDF skill。

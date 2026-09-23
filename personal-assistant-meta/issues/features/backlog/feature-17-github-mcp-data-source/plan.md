@@ -145,7 +145,7 @@ Production Runtime：
 
 - 没有 `X-HW-AgentGateway-Workload-Access-Token` header 时，沿用现有 SDK fallback。
 - SDK 从 `.agent_identity.json` / customer-owned local workload 获取 WAT，再向 AgentArts Identity 换取 STS 临时凭据。
-- 真实连云调试前，先按 `personal-assistant-meta/architecture/cloud-service/huaweicloud/agent-identity.md` 创建或验证 `pa-local-jwt-workload`。
+- 真实连云调试前，先按 `personal-assistant-meta/architecture/external-systems/huaweicloud/agent-identity.md` 创建或验证 `pa-local-jwt-workload`。
 
 禁止事项：
 

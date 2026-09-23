@@ -65,4 +65,4 @@ AgentArts Gateway 在转发请求到 runtime 容器时，会通过 `X-HW-AgentGa
 - SDK 源码 `agentarts/sdk/runtime/app.py:234-267` — `_build_request_context()` 参考实现
 - SDK 源码 `agentarts/sdk/runtime/context.py:136-150` — `AgentArtsRuntimeContext` workload_access_token 存取方法
 - SDK 源码 `agentarts/sdk/identity/auth.py:232-240` — `_get_workload_access_token()` 读取优先级
-- AgentArts API 文档 PDF：`architecture/cloud-service/agentarts-api-pdf.pdf` — pp. 859-868 Runtime 调用 header 参数说明
+- AgentArts API 文档 PDF：`architecture/external-systems/agentarts-api-pdf.pdf` — pp. 859-868 Runtime 调用 header 参数说明

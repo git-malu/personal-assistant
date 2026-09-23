@@ -1,6 +1,6 @@
 # ADR-019: Web Chat BFF 边界与 Full BFF 演进
 
-> 状态：Accepted | 日期：2026-06-29 | 关联文档：[`ADR-017`](./ADR-017-cloudflare-pages-proxy.md)、[`frontend_architecture.md`](../frontend_architecture.md)、[`cloud-service/cloudflare/pages.md`](../cloud-service/cloudflare/pages.md)
+> 状态：Accepted | 日期：2026-06-29 | 关联文档：[`ADR-017`](./ADR-017-cloudflare-pages-proxy.md)、[`frontend_architecture.md`](../frontend_architecture.md)、[`external-systems/cloudflare/pages.md`](../external-systems/cloudflare/pages.md)
 
 ## 背景
 

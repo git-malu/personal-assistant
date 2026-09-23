@@ -90,4 +90,4 @@ async def _call_llm(self, messages):
 - Feature 1 Issue: `../features/feature-1-agent-skeleton/issue.md`
 - ADR-005: MaaS
 - ADR-009: deepagents
-- AgentArts 文档: `../../architecture/cloud-service/agentarts.md`
+- AgentArts 文档: `../../architecture/external-systems/agentarts.md`
