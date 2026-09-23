@@ -6,7 +6,10 @@
 
 ## 1. 本地开发模式
 
-Personal Assistant 的本地开发不需要任何本地服务 Mock。所有后端能力（Memory、Identity、MaaS、Sandbox、MCP Gateway）均为 AgentArts 云端 API，通过 `agentarts-sdk` 网络调用。普通 Service 开发只需启动 FastAPI；Calendar OAuth2 full flow 需要额外启动本地 Cloudflare Pages Functions，详见 [2.2 首次使用 OAuth2 Provider 的授权](#22-首次使用-oauth2-provider-的授权)。
+本地开发使用 FastAPI、PostgreSQL 与当前需要的 AgentArts 服务。当前集成包括 Identity、MaaS
+与 GitHub activity MCP Gateway；Memory 和 Sandbox 未接入。测试 Web Chat 还需要启动 Client
+dev server；Calendar OAuth2 full flow 需要本地 Cloudflare Pages Functions，详见
+[2.2 首次使用 OAuth2 Provider 的授权](#22-首次使用-oauth2-provider-的授权)。
 
 ### 1.1 依赖关系
 
@@ -15,32 +18,30 @@ flowchart LR
     DevMachine["开发机<br/>uvicorn main:app :8080"]
     
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
-        Memory["Memory Service<br/>语义/偏好/情景记忆"]
         Identity["Identity Service<br/>OAuth2 / M2M / STS"]
         MaaS["MaaS<br/>LLM 推理"]
-        Sandbox["Sandbox Service"]
-        Gateway["MCP Gateway"]
+        Gateway["MCP Gateway<br/>GitHub activity"]
+        PostgreSQL["PostgreSQL<br/>Conversation / Message / Checkpoint"]
     end
     
-    DevMachine -->|"agentarts-sdk"| Memory
     DevMachine -->|"agentarts-sdk"| Identity
     DevMachine -->|"langchain-openai"| MaaS
-    DevMachine -.->|"暂不使用"| Sandbox
     DevMachine -->|"HTTP"| Gateway
+    DevMachine --> PostgreSQL
 ```
 
 ### 1.2 网络要求
 
-**核心前提：AgentArts 平台服务（Memory、Identity、Sandbox）必须在华为内网环境。**
+**核心前提：本地环境需要能访问配置的 PostgreSQL 与当前使用的外部服务。Memory / Sandbox 不需要配置。**
 
 LLM Provider 网络要求因 provider 而异：
 
-| 环境 | Memory / Identity / Sandbox | MaaS LLM | DeepSeek 官方 LLM |
-|------|---------------------------|----------|-------------------|
-| 办公室有线网络 | ✅ | ✅ | ✅ |
-| 办公室 Wi-Fi (Huawei-Internal) | ✅ | ✅ | ✅ |
-| VPN (AnyConnect / SecoClient) | ✅ | ✅ | ✅ |
-| 家庭网络（无 VPN） | ❌ | ❌ | ✅ |
+| 环境 | Identity / MCP Gateway | MaaS LLM | DeepSeek 官方 LLM | PostgreSQL |
+|------|----------------------|----------|-------------------|------------|
+| 办公室有线网络 | ✅ | ✅ | ✅ | 按 DSN 可达性 |
+| 办公室 Wi-Fi (Huawei-Internal) | ✅ | ✅ | ✅ | 按 DSN 可达性 |
+| VPN (AnyConnect / SecoClient) | ✅ | ✅ | ✅ | 按 DSN 可达性 |
+| 家庭网络（无 VPN） | 按服务出口策略 | 按 Provider 可达性 | ✅ | 按 DSN 可达性 |
 
 > 这不是平台绑定问题。所有云服务（AWS/GCP/Azure）都要求网络可达。AgentArts 服务的特殊性仅在于它们部署在华为云内网而非公网。
 
@@ -51,9 +52,9 @@ LLM Provider 网络要求因 provider 而异：
 cd personal-assistant-service
 cp .env.example .env
 
-# 2. 按需编辑 .env；真实 API Key 不写入 .env
-# 在 AgentArts Identity 创建 API Key provider，名称与
-# LLM_CREDENTIAL_PROVIDER 一致。
+# 2. 配置 PostgreSQL。Conversation API / Invocation 需要 POSTGRES_DSN。
+#    SQLITE_DB_PATH 只配置 LangGraph Checkpointer，不能替代应用 PostgreSQL。
+#    API Key 等真实凭据存放在 AgentArts Identity，不写入 .env。
 
 # 3. 启动
 uv run uvicorn app.main:app --port 8080 --reload
@@ -68,12 +69,9 @@ uv run uvicorn app.main:app --port 8080 --reload
 curl http://localhost:8080/ping
 # → {"status": "ok"}
 
-# 调用 Agent（非流式）
-curl -X POST http://localhost:8080/invocations \
-  -H "Content-Type: application/json" \
-  -H "X-AgentArts-User-Id: dev-user" \
-  -d '{"message": "你好"}'
-# → {"response": "..."}
+# 直接访问 /invocations 需要有效 Bearer JWT（JWT payload 中有 sub）、
+# conversation_id、client_message_id 和可用 PostgreSQL。
+# 日常本地 Web Chat 请启动 Client dev server，由 Vite proxy 注入 local-only JWT。
 ```
 
 ---
@@ -199,25 +197,16 @@ Wrangler local Pages Functions 注入同名 secret。
 production 配置 `POSTGRES_DSN` 后，Service 会把 OAuth2 callback nonce 的
 active/completed 状态写入 PostgreSQL；未配置时仅使用进程内 fallback，适合本地开发。
 
-> 开发阶段可用 API Key（`key_auth`）方式绕过 OAuth，直接在 `agentarts_config.yaml` 中配置。
+Inbound `key_auth` 不是当前 Service 的本地认证替代方式：Conversation / Invocation ownership
+要求 Bearer JWT 的 `sub`。AgentArts Identity 中的 API Key provider 用于 LLM 等 Outbound
+凭据，不是 Inbound 用户身份。
 
 ---
 
-## 3. Memory 开发说明
+## 3. Memory 状态
 
-### 3.1 Memory Space 创建
-
-```bash
-# 在 AgentArts 控制台创建 Memory Space，获取 Space ID
-# Space ID 格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-export MEMORY_SPACE_ID="<your-space-id>"
-```
-
-一个 Personal Assistant 实例对应一个 Memory Space。开发环境和生产环境可以使用不同的 Space。
-
-### 3.2 记忆生成延迟
-
-AgentArts Memory 的记忆抽取是异步的。文档示例中使用 **30s 等待** 确保记忆生成完成。开发时如果发现刚保存的记忆查不到，这是正常行为。
+当前 Service 未集成 AgentArts Memory，不需要创建 Memory Space、设置 `MEMORY_SPACE_ID`
+或等待记忆抽取。
 
 ---
 
@@ -228,8 +217,8 @@ AgentArts Memory 的记忆抽取是异步的。文档示例中使用 **30s 等�
 | `LLM_PROVIDER` | 否 | internal Provider catalog key | `.env.example` |
 | `LLM_MODEL` | 否 | 模型名称 | `.env.example` |
 | `LLM_CREDENTIAL_PROVIDER` | 否 | AgentArts Identity provider name（不是 Secret） | `.env.example` |
-| `SQLITE_DB_PATH` | 否 | 本地 Checkpointer | `.env.example` |
-| `POSTGRES_DSN` | 否 | 生产 Checkpointer，与 SQLite 二选一 | `.env.example` |
+| `SQLITE_DB_PATH` | 否 | LangGraph Checkpointer 的本地 SQLite 路径；不能替代应用数据库 | `.env.example` |
+| `POSTGRES_DSN` | Web Chat 必需 | Conversation / Message 应用数据库；也可作为 Checkpointer | `.env.example` |
 
 真实 API Key 只配置在 AgentArts Identity。应用配置的完整列表以
 `personal-assistant-service/.env.example` 为准。

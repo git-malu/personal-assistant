@@ -6,29 +6,30 @@
 
 ## 1. 概述
 
-Personal Assistant 前端采用**多客户端架构**，所有客户端通过统一协议与 FastAPI 后端通信，共享同一套 Agent 处理逻辑和 Memory 空间。
+Personal Assistant 当前只有 Web Chat 一个产品客户端。Web Chat 通过 Cloudflare Pages
+Functions BFF 连接 AgentArts Gateway 与 FastAPI Service。跨 Conversation 的长期
+Memory 尚未接入。
 
-图类型：**Component Diagram（组件图）**。用于说明当前与 roadmap 客户端渠道。
+图类型：**Component Diagram（组件图）**。只展示当前已实现的组件与连接。
 
 ```mermaid
 flowchart LR
-    subgraph Clients["🖥️ 前端（消息通道）"]
-        direction TB
-        WebChat["Web Chat<br/>浏览器"]
-        FeishuDirect["飞书直连<br/>自定义 Bot"]
-        OfficeClaw["OfficeClaw<br/>桌面客户端"]
-    end
+    Browser["React Web Chat<br/>Microsoft Entra ID"]
+    Pages["Cloudflare Pages<br/>SPA + Pages Functions BFF"]
+    Gateway["AgentArts Gateway<br/>CUSTOM_JWT"]
+    Service["FastAPI Service<br/>Invocation + Conversation API"]
+    PostgreSQL["PostgreSQL<br/>Conversation / Message / Checkpoint"]
+    Identity["AgentArts Identity<br/>Outbound credentials"]
+    MCP["AgentArts MCP Gateway<br/>GitHub activity source"]
 
-    subgraph Backend["☁️ FastAPI 后端"]
-        Agent["Agent 处理逻辑<br/>（三端共享）"]
-    end
-
-    WebChat -->|"SSE / OAuth"| Backend
-    FeishuDirect -->|"事件回调"| Backend
-    OfficeClaw -->|"AgentArts 转发"| Backend
+    Browser --> Pages --> Gateway --> Service
+    Service --> PostgreSQL
+    Service --> Identity
+    Service --> MCP
 ```
 
-**核心原则**：前端只负责消息通道和协议适配，不做 Agent 逻辑。所有 Agent 推理、Memory、Tool 调用都在后端。
+**核心原则**：前端只负责 Web Chat UI 和请求协议；Agent 推理、当前已注册的工具及会话
+持久化由 Service 负责。飞书、OfficeClaw、长期 Memory 和 Sandbox 不属于当前实现。
 
 ---
 
@@ -211,8 +212,8 @@ stateDiagram-v2
   `acquireIdTokenSilently()`；成功则用新 token 发送请求。
 - silent refresh 返回 `null` 时，不再发送旧 token；Client 清理 Zustand token
   与 MSAL cache/account，并进入 signed-out 状态。
-- `/invocations` 返回 401/403 时最多触发一次 silent refresh + retry；retry
-  仍失败后执行同一 signed-out 清理路径，防止旧 token 请求循环。
+- `/invocations` 返回 401/403 时清理 inbound auth 并进入 signed-out 状态；不会重放
+  Invocation POST。Silent refresh 只在请求发送前用于更新即将过期的 token。
 - `clearToken()` 只清除 token，不把 hydration 状态回滚为未初始化，避免认证失效后
   UI 卡在 LoadingState。
 
@@ -448,35 +449,8 @@ sidebar 中显示空 item。旧消息清空、welcome state 和已聚焦 Compose
 
 ### 2.2 飞书直连
 
-**接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`
-
-图类型：**Sequence Diagram（时序图）**。用于说明飞书直连 roadmap 流程。
-
-```mermaid
-sequenceDiagram
-    actor User as 飞书用户
-    participant FS as 飞书服务器
-    participant FastAPI as FastAPI :8080
-
-    Note over User,FastAPI: === 首次验证 ===
-    FS->>FastAPI: URL 验证 (Challenge)
-    FastAPI-->>FS: 返回 challenge
-
-    Note over User,FastAPI: === 对话 ===
-    User->>FS: @Bot 帮我查日程
-    FS->>FastAPI: POST /feishu/webhook
-    Note right of FastAPI: 验证 Token<br/>解析消息内容<br/>调用 Agent 处理逻辑
-    FastAPI-->>FS: 消息回复 API
-    FS-->>User: 展示回复
-```
-
-| 维度 | 说明 |
-|------|------|
-| **协议** | 飞书 Webhook 事件回调 |
-| **认证** | 飞书 Token 验证 + API Key |
-| **路由** | `/feishu/webhook` |
-| **优势** | 完全自主可控，支持飞书卡片等高级交互 |
-| **代价** | 需要公网回调 URL，需要写飞书消息解析代码 |
+飞书直连尚未实现。当前 Service 没有 `/feishu/webhook` 路由或飞书 adapter，不属于当前
+系统架构。
 
 ### 2.3 OfficeClaw
 
@@ -484,40 +458,12 @@ sequenceDiagram
 > JWT。OfficeClaw 的 IAM/API Key 调用没有 canonical user claim，尚不能直接使用 Feature 14
 > Conversation API；接入前必须增加可信 channel identity adapter。
 
-**目标接入方式**：OfficeClaw 桌面客户端作为飞书/微信桥接器，通过 AgentArts 调用后端
-`/invocations`。
-
-图类型：**Sequence Diagram（时序图）**。用于说明 OfficeClaw roadmap 流程。
-
-```mermaid
-sequenceDiagram
-    actor User as 飞书用户
-    participant FS as 飞书服务器
-    participant OC as OfficeClaw<br/>(Windows PC)
-    participant AgentArts as AgentArts 平台
-    participant FastAPI as FastAPI :8080
-
-    User->>FS: @Agent 查日程
-    FS->>OC: WebSocket 推送
-    OC-->>AgentArts: Roadmap: 携带可信 channel identity 调用 Agent
-    AgentArts-->>FastAPI: Roadmap: POST /invocations
-    FastAPI-->>AgentArts: {"response": "..."}
-    AgentArts-->>OC: 返回结果
-    OC-->>FS: 发送回复
-    FS-->>User: 看到回复
-```
-
-| 维度 | 说明 |
-|------|------|
-| **协议** | AgentArts `/invocations` (JSON-in/JSON-out) |
-| **认证** | 待实现 channel identity adapter；不能直接使用无 JWT `sub` 的 IAM/API Key |
-| **路由** | `/invocations`（AgentArts 平台调用） |
-| **优势** | 零代码接飞书/微信，不需要公网回调 URL |
-| **代价** | 需要 Windows PC 常驻运行 OfficeClaw，不能自定义飞书交互 |
+OfficeClaw client 与 channel identity adapter 均未实现；当前没有可用的 OfficeClaw
+接入流程。
 
 ---
 
-## 3. 渠道对比
+## 3. Roadmap 渠道对比（非当前实现）
 
 | | Web Chat | 飞书直连 | OfficeClaw |
 |---|---|---|---|
@@ -533,40 +479,19 @@ sequenceDiagram
 
 ---
 
-## 4. 渠道选择指南
+## 4. 当前客户端范围
 
-图类型：**Decision Flowchart（决策流程图）**。用于说明渠道选择条件。
-
-```mermaid
-flowchart TD
-    Start["选择前端渠道"] --> Q1{"需要 OAuth 登录<br/>和 SSE 流式？"}
-    Q1 -->|"是"| WebChat["✅ Web Chat"]
-    Q1 -->|"否"| Q2{"需要飞书卡片/<br/>高级交互？"}
-    Q2 -->|"是"| FeishuDirect["✅ 飞书直连"]
-    Q2 -->|"否"| Q3{"想零代码接飞书/<br/>微信？"}
-    Q3 -->|"是"| OC["✅ OfficeClaw"]
-    Q3 -->|"否"| WebChat2["✅ Web Chat<br/>（最通用）"]
-```
+当前唯一支持的产品客户端是 Web Chat。飞书直连与 OfficeClaw 尚无实现，不属于可选的
+生产接入渠道。
 
 ---
 
-## 5. 跨渠道 Memory 共享
+## 5. Memory 状态
 
-同一用户从不同渠道发起对话，通过统一的 `user_id` 关联到同一 Memory Space：
-
-图类型：**Data Flow Diagram（数据流图）**。用于说明跨渠道 Memory 关联。
-
-```mermaid
-flowchart LR
-    FS["飞书<br/>feishu_user_id=ou_abc"] -->|"映射"| UID["user_id<br/>= user@example.com"]
-    Web["Web Chat<br/>Microsoft=user@example.com"] -->|"OAuth 身份"| UID
-    OC["OfficeClaw<br/>飞书=ou_abc"] -->|"映射"| UID
-    UID --> Memory["AgentArts Memory Space<br/>偏好 / 事实 / 对话历史"]
-```
-
-- **Web Chat**：OAuth 登录后直接获得 `user_id`（Microsoft account email）
-- **飞书直连**：`feishu_user_id` → 查绑定表映射到 `user_id`
-- **OfficeClaw**：同飞书直连，OfficeClaw 传递飞书用户身份
+当前没有 AgentArts Memory 调用或跨渠道 Memory 共享。Service 的用户 ownership 来自已验证
+JWT 的 `sub`；Conversation、Message 与 LangGraph Checkpoint 使用 PostgreSQL 持久化。
+详见 [总体架构](overall_architecture.md) 与
+[Session 状态管理](session-state-management.md)。
 
 ---
 

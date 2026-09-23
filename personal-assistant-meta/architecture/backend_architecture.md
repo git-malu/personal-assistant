@@ -8,7 +8,7 @@
 
 后端统一使用 **FastAPI** 应用，部署在 AgentArts 容器中（`:8080`）。不依赖 `AgentArtsRuntimeApp`，而是直接以标准 HTTP Server 方式暴露路由，通过 `agentarts-sdk` 调用平台能力。
 
-图类型：**Component Diagram（组件图）**。用于说明 FastAPI、Agent 编排与平台服务边界。
+图类型：**Component Diagram（组件图）**。只展示当前 FastAPI、持久化与已使用的平台集成。
 
 ```mermaid
 flowchart TB
@@ -20,32 +20,27 @@ flowchart TB
             Playground["GET /invocations/playground<br/>Chainlit 调试 UI"]
         end
 
-        subgraph Handler["Agent 处理逻辑"]
-            direction LR
-            Parse["消息解析<br/>统一格式"]
-            Orchestrate["deepagents 编排<br/>内置 ReAct loop"]
-            Memory["Memory<br/>上下文注入 + 持久化"]
-        end
-
-        subgraph SDK["agentarts-sdk"]
-            MemSDK["Memory SDK"]
-            IdentitySDK["Identity SDK"]
-            SandboxSDK["Sandbox SDK"]
-        end
+        Invocation["Invocation Service"]
+        Conversations["Conversation API"]
+        Agent["deepagents / LangGraph"]
+        Tools["Registered tools<br/>GitHub · Gitee · Email · Calendar · IAM · Report"]
+        Database["PostgreSQL<br/>Conversation / Message / Checkpoint"]
     end
 
     subgraph Platform["AgentArts 平台"]
-        MemSvc["Memory Service"]
         IdSvc["Identity Service"]
-        SandSvc["Sandbox Service"]
+        MCP["MCP Gateway<br/>GitHub activity source"]
     end
 
-    Routes --> Parse
-    Parse --> Orchestrate
-    Orchestrate <--> Memory
-    Memory --> MemSDK --> MemSvc
-    Orchestrate --> IdentitySDK --> IdSvc
-    Orchestrate --> SandboxSDK --> SandSvc
+    Routes --> Invocation
+    Routes --> Conversations
+    Invocation --> Agent
+    Agent --> Tools
+    Invocation --> Database
+    Conversations --> Database
+    Agent --> Database
+    Tools --> IdSvc
+    Tools --> MCP
 ```
 
 ---
@@ -83,7 +78,7 @@ flowchart LR
   `GET /auth/callback/m365-calendar`；BFF server-side 转发 callback query 到 FastAPI
   `GET /auth/oauth2/callback/m365-calendar`，并可注入
   `X-PA-OAuth2-Callback-Secret` 做 BFF-to-Service trust。
-- `/invocations/playground` 可通过 Gateway 的完整 Runtime 子路径访问，但 Cloudflare Pages Function 当前不代理该路径。
+- `/invocations/playground` 是调试 UI，不属于 Cloudflare BFF 支持的 production API entrypoint。
 
 > **Inbound authentication**：Gateway 使用 `authorizer_type: CUSTOM_JWT`。
 > Browser 将 Microsoft JWT 发送到 same-origin Cloudflare Pages Function，
@@ -109,7 +104,7 @@ from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
-# ── AgentArts 平台协议（AgentArts / OfficeClaw 调用入口）──
+# ── AgentArts Gateway / Web Chat invocation ──
 
 @app.get("/ping")
 async def ping():
@@ -118,7 +113,7 @@ async def ping():
 
 @app.post("/invocations")
 async def agent_arts_invoke(request: Request):
-    """AgentArts Runtime / OfficeClaw / Web Chat 统一调用入口"""
+    """Web Chat 经 AgentArts Gateway 调用的入口"""
     payload = await request.json()
 
     invocation = InvocationRequest.model_validate(payload)
@@ -131,35 +126,6 @@ async def agent_arts_invoke(request: Request):
     if invocation.stream:
         return StreamingResponse(execution.stream_sse(), media_type="text/event-stream")
     return await execution.run_sync()
-
-# ── 飞书直连 ──
-
-@app.post("/feishu/webhook")
-async def feishu_webhook(request: Request):
-    """飞书事件回调 — 处理消息、卡片交互、URL 验证"""
-    body = await request.json()
-    # URL 验证
-    if body.get("type") == "url_verification":
-        return {"challenge": body["challenge"]}
-    # 消息处理
-    msg = parse_feishu_message(body)
-    reply = await agent_handler.handle(
-        message=msg["text"],
-        user_id=msg["user_id"],
-        conversation_id=resolve_channel_conversation(msg),
-    )
-    await send_feishu_reply(body, reply)
-    return {"code": 0}
-
-# ── Web Chat OAuth callback（浏览器 redirect page 承接，不通过 Gateway 暴露）──
-
-@app.get("/auth/callback")
-async def oauth_callback(code: str):
-    """OAuth redirect page，本地调试示例；生产由前端 callback page 承接"""
-    token = await exchange_oauth_code(code)
-    response = RedirectResponse(url="/chat")
-    response.set_cookie("session", token["id_token"])
-    return response
 
 # ── Calendar OAuth callback（通过 Gateway /invocations/* policy 进入容器）──
 
@@ -181,10 +147,9 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 | `/api/conversations/{conversation_id}/messages` | GET | Web Chat BFF | Message history pagination | Target 已实现；G1 deployment probe pending |
 | `/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | POST | Web Chat BFF | 幂等取消 active Invocation，并在 204 前释放 Conversation lock | Target 已实现；G1 deployment probe pending |
 | `/auth/oauth2/callback/m365-calendar` | GET | Cloudflare Pages BFF server-side callback forward | 完成 Calendar Resource Token Auth session binding，并返回 result | production 经 Gateway full Runtime path；local 可 direct override |
-| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
+| `/invocations/playground` | GET | 本地/直连调试 | Chainlit 调试 UI | 不属于 Cloudflare BFF production API |
 
-> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path
-> 暴露。Calendar OAuth2 的公网入口由 Cloudflare Pages BFF 提供；production BFF 通过
+> **注意**：当前没有飞书 webhook。Calendar OAuth2 的公网入口由 Cloudflare Pages BFF 提供；production BFF 通过
 > `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway
 > policy，只有 local override 直连 Service。容器内 route 保持 Auth 语义路径。
 
@@ -346,39 +311,11 @@ deepagents 是 LangGraph 的 harness，不是替代品。需要自定义图编�
 
 ## 5. AgentArts 平台能力集成
 
-### 5.1 Memory（跨 Session 记忆）
+### 5.1 Memory（未接入）
 
-```python
-from agentarts.sdk.memory import MemoryClient
-from agentarts.sdk.memory.session import MemorySession
-from agentarts.sdk.memory.inner.config import TextMessage, MemorySearchFilter
-
-class PersonalAssistantMemory:
-    def __init__(self):
-        self.space_id = os.environ["MEMORY_SPACE_ID"]
-
-    async def get_context(self, user_id: str) -> str:
-        session = MemorySession(
-            space_id=self.space_id,
-            actor_id=f"pa-user-{user_id}",
-            assistant_id="personal-assistant"
-        )
-        results = session.search_long_term_memories(
-            filters=MemorySearchFilter(query="user preferences", top_k=5)
-        )
-        return "\n".join(r["record"]["content"] for r in results.results)
-
-    async def save(self, user_id: str, query: str, response: str):
-        session = MemorySession(
-            space_id=self.space_id,
-            actor_id=f"pa-user-{user_id}",
-            assistant_id="personal-assistant"
-        )
-        session.add_messages([
-            TextMessage(role="user", content=query[:2000]),
-            TextMessage(role="assistant", content=response[:2000]),
-        ])
-```
+当前 Service 没有 Memory client、Memory route、Memory 配置或 Memory 写入/检索。
+Conversation、Message 与 LangGraph Checkpoint 由 PostgreSQL 承担；长期 Memory 是未实现的
+平台能力，不属于当前架构。
 
 ### 5.2 Identity（Outbound 认证）
 
@@ -416,10 +353,10 @@ async def _github_request(
         return resp.json()
 ```
 
-支持三种 Outbound 模式：
+AgentArts Identity SDK 支持多种 Outbound 模式，但本项目只使用下列已实现路径：
 - **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）。邮件部分（`m365-provider`）由 Feature 10a 实现，详见 [overall_architecture.md §4.2](overall_architecture.md#42-outbound--agent-代表用户调用外部服务)。
-- **M2M**：以 Agent 自身身份调企业内部 API（API Key）
-- **STS**：获取云资源临时凭证（STS Token）
+- **STS**：用于已注册的 Huawei Cloud IAM 查询工具与 GitHub MCP Gateway 请求签名。
+- **M2M API Key**：当前没有使用此模式的业务工具。
 
 > **Workload Access Token 优化**：生产环境中，AgentArts Gateway 在转发请求时自动注入 `X-HW-AgentGateway-Workload-Access-Token` header（见 §2.3）。后端提取该 token 并存入 `AgentArtsRuntimeContext` 后，`@require_access_token` 等装饰器内部优先从 context 读取，直接使用 Gateway 注入的 token 向 Identity Service 换取 OAuth2 access token，跳过本地 `.agent_identity.json` 的 fallback 流程。本地开发时 header 不存在，行为不变。
 <!-- updated by issue: chore-5-workload-access-token-from-header -->
@@ -753,14 +690,10 @@ sequenceDiagram
 - `generate_report` public schema 只包含业务参数，不包含 credential 或 credential
   provider 的注入参数。
 
-### 5.3 Sandbox（代码执行隔离）
+### 5.3 Sandbox（未接入）
 
-```python
-from agentarts.sdk.tools import SandboxClient
-
-sandbox = SandboxClient()
-result = sandbox.execute("print('hello')")
-```
+当前 Service 没有创建 Sandbox client，也没有向 Agent 注册 Sandbox 工具。代码执行隔离不属于
+当前产品能力。
 
 ---
 
@@ -771,10 +704,10 @@ result = sandbox.execute("print('hello')")
 | **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
 | **LLM** | typed Settings + renewable Agent Bundle | `.env.example` 是唯一用户配置入口；credential 由 AgentArts Identity 提供；Model + compiled Agent 在 TTL 内按 worker 复用并原子刷新。详见 ADR-011、ADR-016 |
-| **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
+| **Memory** | 未接入 | 当前没有 AgentArts Memory 调用；对话数据使用 PostgreSQL |
 | **Identity** | AgentArts Gateway + Identity SDK | 当前 Inbound 只使用 CUSTOM_JWT；Identity SDK 负责 Outbound OAuth2/M2M/STS |
-| **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
-| **Sandbox** | AgentArts Sandbox SDK | 安全隔离代码执行 |
+| **Gateway** | AgentArts MCP Gateway | 仅作为 GitHub activity data source；Service 使用 typed internal source |
+| **Sandbox** | 未接入 | 当前没有 Sandbox client 或代码执行工具 |
 | **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
 | **Lint / Format** | ruff (Astral) | 替代 flake8 + black + isort，Rust 实现，单一配置。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
 | **Container** | Docker (linux/arm64) | Python 3.12+。详见 [ADR-001](ADR/ADR-001-python-3.12.md) |
@@ -797,19 +730,20 @@ personal-assistant/
 │   ├── settings.py                  # typed Runtime Settings（内部实现）
 │   ├── provider_catalog.py          # 内置 Provider metadata（非用户配置）
 │   ├── llm_config.py                # Settings + Identity → LLM model
-│   ├── feishu_adapter.py            # 飞书消息解析 + 回复
-│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   ├── mcp/
 │   │   └── github_activity_source.py # GitHub MCP typed internal source
 │   └── tools/
-│       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
-│       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2) ✅ Feature 10a
-│       ├── calendar_tools.py        # Microsoft 365 Calendar 工具 ✅ Feature 15
-│       ├── github_activity_tools.py # Agent-facing GitHub activity tools ✅ Feature 17
-│       ├── report_tools.py          # Report root tool + deterministic Markdown ✅ Feature 18
-│       ├── github_tools.py          # GitHub OAuth 工具 + Report OAuth context ✅
-│       ├── internal_tools.py        # 内部 API 工具 (API Key) [Planned]
-│       └── cloud_tools.py           # 云资源工具 (STS) [Planned]
+│       ├── __init__.py
+│       ├── calendar_tools.py
+│       ├── email_tools.py
+│       ├── github_activity_tools.py
+│       ├── github_tools.py
+│       ├── gitee_tools.py
+│       ├── iam_tools.py
+│       └── report_tools.py
+├── app/conversations/               # PostgreSQL Conversation API
+├── app/invocations/                 # Invocation request / streaming service
+└── migrations/                      # PostgreSQL schema migrations
 ```
 
 ---
