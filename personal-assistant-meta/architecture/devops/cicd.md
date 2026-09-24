@@ -15,7 +15,7 @@ flowchart TB
         Function["Pages Function API Proxy"]
     end
 
-    subgraph Layer3["Layer 3 — 华为云基础资源（未来）"]
+    subgraph Layer3["Layer 3 — 华为云基础资源（当前 IaC）"]
         OBS["OBS / CDN"]
         RDS["RDS"]
         VPC["VPC / EIP"]
@@ -28,9 +28,7 @@ flowchart TB
 
     subgraph Layer1["Layer 1 — AgentArts（Agent 运行时）"]
         Runtime["Runtime 容器"]
-        Memory["Memory Space"]
         Identity["Identity Provider"]
-        Sandbox["Sandbox"]
         Gateway["MCP Gateway"]
     end
 
@@ -93,15 +91,15 @@ flowchart LR
     Deploy --> Verify["curl /ping"]
 ```
 
-由于项目初期以手动部署为主，完整 CI 流水线可以后续建立。推荐路径：
+当前 Service workflow 已实现以下链路：Service 变更合入 `main` 后，使用原生
+`ubuntu-24.04-arm` runner 构建 ARM64 镜像，推送 latest、版本和 commit SHA 三个
+SWR tag，执行数据库迁移，最后运行 `agentarts launch` 更新 AgentArts Runtime。
+部署 workflow 也支持手动 `workflow_dispatch`；生产验证由 Frontend workflow 对 Pages
+首页、`/chat` 和未认证的 `/invocations` 401 进行 smoke check。
 
-| 阶段 | 工具 | 触发条件 |
-|------|------|----------|
-| Lint & Type Check | ruff + mypy | 每个 PR |
-| 单元测试 | pytest | 每个 PR |
-| 构建镜像 | `docker build --platform linux/arm64` | merge 到 main |
-| 推送 SWR | `docker push` + `agentarts launch` | merge 到 main |
-| 冒烟测试 | `curl /invocations` | 部署后 |
+统一 CI workflow（`.github/workflows/ci.yml`）在 PR 和 `main` push 上运行 Service
+lint/tests、Client tests/build，以及 E2E 的 `smoke` 和 `full_stack` marker。Browser
+和 manual real-auth 测试不在默认 CI 中运行。
 
 > 完整部署操作手册见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)。
 
@@ -237,8 +235,9 @@ flowchart LR
     Manual["workflow_dispatch<br/>action=apply"] --> Apply["tofu apply"]
 ```
 
-`.github/workflows/deploy-infra.yml` 不在 `main` push 后自动 apply。Apply 必须
-由操作者手动 dispatch，并以已 review 的 plan 为依据。`pa-terraform-state`
+`.github/workflows/deploy-infra.yml` 在 PR 和 `main` push 上执行 validate、fmt check
+和 plan，但不自动 apply。Apply 必须由操作者以 `workflow_dispatch` 选择 `action=apply`
+后执行，并以已 review 的 plan 为依据。`pa-terraform-state`
 保存 PostgreSQL RDS、VPC/Subnet 引用、Security Group、EIP 和 Agent Identity
 OAuth helper 等 HuaweiCloud resources 的共享 state。
 

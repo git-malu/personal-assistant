@@ -78,7 +78,7 @@ curl http://localhost:8080/ping
 
 ## 2. Identity 开发说明
 
-> 💡 **Microsoft 登录与授权配置**：关于如何注册与配置 Microsoft 开放平台、获取 `client_id` & `client_secret` 等步骤，详见 [Microsoft Entra ID (OIDC) 配置指南](microsoft-entra-id-setup.md)。
+> 💡 **Microsoft 登录与授权配置**：关于如何注册与配置 Microsoft 开放平台、获取 `client_id` & `client_secret` 等步骤，详见 [Microsoft Entra ID (OIDC) 配置指南](../external-systems/azure/microsoft-entra-id-setup.md)。
 
 ### 2.1 Outbound 认证的预配置
 

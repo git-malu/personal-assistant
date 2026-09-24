@@ -161,5 +161,5 @@ infra/*.tf                → 华为云基础资源层（OBS/RDS/IAM）
 - [CDKTF Sunset Notice](https://developer.hashicorp.com/terraform/cdktf)
 - [CDK Terrain 评估](https://cdktn.io) — 决定不采用
 - [ThoughtWorks Technology Radar — CDK Terrain](https://www.thoughtworks.com/en-us/radar/tools/cdk-terrain) — Assess
-- [Refactor 6: 从 CDKTF 迁移到 OpenTofu + HCL](../../issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)
+- [Refactor 6: 从 CDKTF 迁移到 OpenTofu + HCL](../../issues/refactor/resolved/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)
 - `architecture/devops/cicd.md` §4 Layer 3 详细说明

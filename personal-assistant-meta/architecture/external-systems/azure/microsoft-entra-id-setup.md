@@ -1,6 +1,6 @@
 # DevOps — Microsoft Entra ID (OIDC) 配置指南
 
-> 版本：v1.0 | 状态：Active | 关联文档：[`overall_architecture.md`](../overall_architecture.md), [`local-development.md`](local-development.md)
+> 版本：v1.0 | 状态：Active | 关联文档：[`overall_architecture.md`](../../overall_architecture.md), [`local-development.md`](../../devops/local-development.md)
 
 ---
 

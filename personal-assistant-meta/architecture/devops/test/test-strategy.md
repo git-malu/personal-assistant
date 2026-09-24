@@ -238,8 +238,10 @@ single retry，以及 Agent execution 启动后不 retry。E2E 只需复用既�
 
 1. E2E `pyproject.toml` 没有声明 `fastapi`，但多份测试模块在 collection 阶段直接 import `fastapi.testclient`。
 2. 多个 `FakeAgentHandler + TestClient` 用例属于 Service integration tests，不应长期放在 E2E。
-3. Browser tests 和 subprocess tests 已经存在，但目录没有按 smoke / browser / full_stack / manual 分层。
-4. GitHub Actions 尚未把 `personal-assistant-e2e` 作为稳定 PR gate。
+3. Browser、full-stack、smoke 和 manual 测试目录已经按层级存在；仍需持续校准
+   marker 与测试边界。
+4. GitHub Actions 已把 `personal-assistant-e2e` 纳入 PR/main CI gate，但默认只运行
+   `smoke` 和 `full_stack`；browser 与 manual real-auth 需要显式运行。
 
 ### 6.2 目标目录
 
@@ -339,33 +341,14 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
 
 ---
 
-## 8. 迁移计划
+## 8. 当前覆盖与后续工作
 
-### Phase 0：先修可运行性
+### 8.1 当前覆盖
 
-目标：`personal-assistant-e2e` 全量 collection 稳定。
+当前仓库已经按 `smoke`、`browser`、`full_stack` 和 `manual` 目录组织 E2E，CI
+默认执行 smoke/full-stack；真实 OAuth/browser 流程仍保留为显式或人工运行范围。
 
-- 明确 E2E 不再直接依赖 Service internal test imports。
-- 将 `fastapi.testclient` 风格用例迁移到 `personal-assistant-service/tests/`，或临时把运行命令改为 service project 环境。
-- 增加 pytest markers：`smoke`、`browser`、`full_stack`、`manual`、`slow`。
-- 保证 `uv run pytest --collect-only` 通过。
-
-### Phase 1：迁移归属错误的测试
-
-目标：把 Service integration tests 从 E2E 中移出。
-
-优先迁移：
-
-- Inbound Identity header + session extraction tests。
-- `/invocations` sync / streaming route tests。
-- `FakeAgentHandler` 邮件对话 tests 中只验证 Service route 与 handler 参数的部分。
-- configuration / logging / agent bundle contract tests。
-
-迁移后，`personal-assistant-e2e/` 保留跨进程、跨前后端、浏览器、部署 smoke。
-
-### Phase 2：补齐真正 E2E
-
-目标：覆盖生产拓扑中的关键边界。
+### 8.2 后续工作
 
 - 增加 Vite dev proxy + Service subprocess 的 `/invocations` happy path。
 - 增加 Pages Functions local dev + Service subprocess 的 `/invocations` streaming pass-through。
@@ -378,9 +361,7 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
 - 增加 Pages Functions local dev + Service callback 的 Calendar callback bridge test。
 - 增加 ChatPage browser happy path：mock auth state，发送消息，观察 UI 收到 SSE token。
 
-### Phase 3：建立 manual real auth runbook
-
-目标：真实账号和真实 OAuth flow 可重复验证。
+### 8.3 Manual real auth 运行规范
 
 - 准备低权限 Microsoft Entra 测试账号。
 - 准备 local/staging OAuth redirect URL。
