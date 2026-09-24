@@ -1,6 +1,6 @@
 # Personal Assistant — 领域词典
 
-> 版本：v0.1 | 用途：项目业务术语统一，避免歧义或重复查询
+> 版本：v0.2 | 最后核对：2026-09-24 | 用途：项目业务术语统一，避免歧义或重复查询
 >
 > 本文不解释通用技术概念（如 HTTP、JSON），仅收录本项目语境下有特定含义的术语。
 
@@ -10,7 +10,7 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Personal Assistant (PA)** | 本项目的代号。一个基于 AgentArts 平台的对话式 AI 助手，通过自然语言帮用户管理日程、邮件、笔记、任务，具备跨 Session 记忆和用户委托能力 |
+| **Personal Assistant (PA)** | 本项目的代号。一个基于 AgentArts 平台的对话式 AI 助手，通过自然语言管理邮件、日历、代码仓库并生成工作报表；当前具备持久化 Conversation、LangGraph Checkpoint 和用户委托能力，跨 Conversation 长期 Memory 属于 roadmap |
 
 ---
 
@@ -21,35 +21,35 @@
 | **AgentArts** | 华为云智能体开发平台（智果）。提供 Runtime（部署）、Memory（记忆）、Identity（认证）、Sandbox（代码执行）、MCP Gateway（工具网关）等 Agent 基础设施 | 原名 "华为云高代码智能体开发平台" |
 | **AgentArts Runtime** | AgentArts 的容器化部署服务。把你的代码打包成 ARM64 Docker 镜像并运行在 cn-southwest-2 区域 | **≠ Sandbox**。Runtime 是常驻容器，里面跑你的业务代码 |
 | **AgentArts Runtime 容器** | 指 Runtime 服务为你启动的那个容器实例。对外暴露 `:8080`，需要提供 `/ping` 和 `/invocations` | 架构图上写的 "AgentArts 容器" 就是指这个 |
-| **AgentArts Sandbox** | 平台提供的**隔离代码执行服务**。Agent 需要执行不受信任的代码时，发给 Sandbox 临时执行后销毁。每次调用是一次性的 | **≠ Runtime 容器**。Sandbox 是工具（用完就扔），Runtime 是宿主（常驻运行）。不是容器，是云 API |
-| **AgentArts Memory** | 平台的记忆管理服务。提供短期对话记忆 + 长期语义/偏好/情景记忆的自动抽取和检索 | "Memory Service" |
+| **AgentArts Sandbox** | 平台提供的隔离代码执行服务；当前 PA 未接入 | **≠ Runtime 容器**。Sandbox 是可选平台能力，Runtime 是当前业务宿主 |
+| **AgentArts Memory** | 平台的记忆管理服务；当前 PA 未接入，不能与 Conversation Message 或 LangGraph Checkpoint 混用 | "Memory Service"；当前为 roadmap |
 | **AgentArts Identity** | 平台的身份认证服务。管理 Inbound（用户→Agent）和 Outbound（Agent→外部服务）的认证凭据 | "Identity Service" |
 | **AgentArts MCP Gateway** | 平台的工具网关服务。将 OpenAPI 定义自动转换为 MCP Tool，供 Agent 的 LLM 调用 | "MCP Gateway" |
 
-### 2.1 Memory 子概念
+### 2.1 Memory 子概念（平台能力 / Roadmap）
 
 | 术语 | 定义 |
 |------|------|
-| **Memory Space** | 租户级记忆隔离单元。一个 PA 实例对应一个 Space。创建 Space 后获得 Space ID |
-| **Memory Session** | 一次对话会话。关联特定用户（actor_id）和助手（assistant_id） |
+| **Memory Space** | AgentArts Memory 的租户级记忆隔离单元；当前 PA 未创建或使用 |
+| **Memory Session** | AgentArts Memory 的会话概念；不等同于 BFF Runtime Session 或 PA Conversation |
 | **Semantic Memory（语义记忆）** | 知识/事实类长期记忆。如"Python 3.12 支持 PEP 695" |
 | **Preference Memory（偏好记忆）** | 用户习惯类长期记忆。如"用户喜欢简洁的回答风格" |
 | **Episodic Memory（情景记忆）** | 历史对话摘要类长期记忆。如"上次讨论过 GitHub Actions 配置问题" |
-| **Actor** | Memory 中的身份概念。actor_id=pa-user-{user_id}，区分不同用户 |
+| **Actor** | AgentArts Memory 中的身份概念；当前 PA 尚未建立 actor_id contract |
 
 ### 2.2 Identity 子概念
 
 | 术语 | 定义 |
 |------|------|
-| **Inbound 认证** | 用户 → Agent 的身份验证。支持三种：Custom JWT（Microsoft Entra ID / Okta）、IAM（华为云账号）、API Key（开发调试） |
+| **Inbound 认证** | 用户 → Agent 的身份验证。平台支持 Custom JWT、IAM 和 API Key；当前 PA production contract 只使用 Microsoft Entra ID `CUSTOM_JWT`，Service 从 Gateway 已验证 token 的 `sub` 派生用户 |
 | **Outbound 认证** | Agent → 外部服务的身份验证。Agent 拿到凭据后代表用户（或自身）调用外部 API |
 | **User Federation** | Outbound 模式之一。Agent 以**用户身份**调用外部 API（如查 GitHub Issues）。底层走 OAuth2，用户需完成一次授权 |
 | **M2M (Machine-to-Machine)** | Outbound 模式之一。Agent 以**自身服务身份**调用 API（如企业内部 CRM）。底层走 API Key |
-| **STS Token** | Outbound 模式之一。Agent 获取**云资源临时凭证**（如访问 OBS）。底层走华为云 STS |
-| **Credential Provider** | Identity Service 中配置的凭据提供方。如 `github-provider`（OAuth2）、`m365-provider`（OAuth2，Microsoft 365 邮件/日历）、`internal-api-provider`（API Key） |
-| **m365-provider** | Microsoft 365 OAuth2 Credential Provider。用于 Agent 以 User Federation 模式调用 Microsoft Graph API（邮件、日历）。创建时需提供 `client_id`、`client_secret`、`tenant_id`，vendor 为 `OAuth2Vendor.MICROSOFTOAUTH2`。详见 Feature 10a |
+| **STS Token** | Outbound 模式之一。Agent 获取**云资源临时凭证**；当前 `iam-users-readonly` Provider 为 HuaweiCloud IAM 只读 Tool 提供 STS 凭据 |
+| **Credential Provider** | Identity Service 中配置的凭据提供方。当前包括 `github-provider`、`gitee-provider`、`m365-email-provider`、`m365-calendar-provider`、`DEEPSEEK_API_KEY`、`iam-users-readonly` 和 `github-mcp-gateway` |
+| **Microsoft 365 Provider** | 邮件和日历使用独立的 OAuth2 Provider：`m365-email-provider` 与 `m365-calendar-provider`；两者均以 User Federation 模式调用 Microsoft Graph |
 | **Workload Identity** | Agent 在 Identity Service 中的工作负载身份标识 |
-| **Workload Access Token** | AgentArts Gateway 在转发请求时注入的短期凭证（header: `X-HW-AgentGateway-Workload-Access-Token`）。容器提取后存入 `AgentArtsRuntimeContext`，供 `@require_access_token` 等装饰器直接使用以换取 OAuth2 access token，跳过本地 `.agent_identity.json` fallback。仅在 Gateway 转发路径存在，本地开发时为空 |<!-- updated by issue: chore-5-workload-access-token-from-header -->
+| **Workload Access Token** | AgentArts Gateway 在 production 转发请求时注入的短期凭证（header: `X-HW-AgentGateway-Workload-Access-Token`）。容器提取后存入 `AgentArtsRuntimeContext`，供 Identity SDK 使用；本地 Calendar full flow 可用已验证 JWT 通过专用 Workload Identity 交换 WAT |<!-- updated by issue: chore-8-sync-spec-diagrams-with-implementation -->
 | **GitHub MCP Activity Data Source** | Service 工程活动数据源。通过 AgentArts MCP Gateway 调用 GitHub remote MCP，查询 `commit`、`pull_request`、`issue`、`review`、`comment` 五类活动。四个 `github_mcp_*` internal source 供 Report 等内部编排直接复用且不注册为 Agent Tool；Agent 只调用 `github_search_activity` 和 `github_get_activity_detail`，不能调用 raw MCP passthrough。Agent-facing activity tools 的 `identity_scope` 固定为 `platform`；Report 使用该 source 时会显式传入 OAuth `subject_login=A` 和仓库 allowlist，MCP 仅作为 `data_access_identity=platform_mcp` 读取通道 |
 | **GitHubActivityEvent** | GitHub MCP Activity Data Source 输出的统一活动事件模型。字段包括 `provider`、`event_type`、`repository`、`external_id`、`title`、`parent_external_id`、`url`、`actor`、`state`、`created_at`、`updated_at`、`summary`、`metrics`、`details`。其中 review/comment 使用 `parent_external_id` 记录所属 PR 或 Issue number，`details` 保存详情查询得到的结构化扩展数据 |
 | **Guard 机制** | 敏感操作（如发送邮件）的二次确认机制，防止 LLM 幻觉导致误操作。**当前实现（Feature 10a）**：Text-based Conversation Guard — Agent 先在对话中生成操作预览（收件人、主题、正文），仅在用户给出明确的肯定回复（如"发送"、"确认"）后，才在后续 ReAct loop 中调用 `send_email` 或 `reply_to_email` 工具执行写操作。`send_email` 和 `reply_to_email` 工具直接调用 Microsoft Graph API 执行实际操作。**Planned Enhancement**：Tool-level interrupt — `requires_confirmation=True` 标记，由 LangGraph `interrupt()` 暂停 graph 执行等待用户确认后 resume，提供更强的安全保证和更少的 token 消耗 |
@@ -62,9 +62,9 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Web Chat** | 浏览器直连的聊天界面。通过 SSE 实现流式对话，通过 Microsoft Entra ID 登录 |
-| **飞书直连** | 自行创建飞书 Bot，飞书服务器通过 Webhook 回调到 PA 后端的 `/feishu/webhook` |
-| **OfficeClaw** | 运行在 Windows PC 上的桌面客户端，桥接飞书/微信。通过 AgentArts 平台转发调用 PA 的 `/invocations` |
+| **Web Chat** | 当前唯一 production 产品入口。React SPA 通过 Cloudflare Pages Functions BFF、AgentArts Gateway 调用 FastAPI，使用 SSE 流式对话和 Microsoft Entra ID 登录 |
+| **飞书直连** | Roadmap channel；当前仓库没有 `/feishu/webhook` route 或 Bot adapter |
+| **OfficeClaw** | Roadmap channel；当前仓库没有可用 OfficeClaw client 或 Service adapter |
 
 ---
 
@@ -72,14 +72,12 @@
 
 | 术语 | 定义 |
 |------|------|
-| **LLM Provider** | LLM 推理服务提供方。本项目通过 `config.yaml` 管理多个 provider，运行时按名称选取 |
-| **MaaS** | 华为云 ModelArts as a Service。大模型即服务平台，提供模型广场、一键部署、API 调用。本项目默认 provider |
-| **DeepSeek 官方** | DeepSeek 官方 API（`api.deepseek.com`）。本项目备选 provider，公网可达，用于无 VPN 开发或低成本任务 |
-| **DeepSeek-V4-Pro** | MaaS 上的默认模型。1.6T 参数 / 49B 激活 / 1M 上下文 |
-| **DeepSeek-Chat** | DeepSeek 官方 API 的通用对话模型 |
-| **Provider 配置** | 通过 `config.yaml` 的 `llm.providers` 段管理，每个 provider 包含 `base_url`、`api_key_env`（环境变量引用）、`model` |
-| **Provider 切换** | 修改 `config.yaml` 的 `llm.default` 字段值，重启后生效。不需要改代码 |
-| **`api_key_env`** | Provider 配置中的密钥引用字段。存储环境变量名而非密钥明文，由 `app/llm_config.py` 在运行时通过 `os.environ` 读取 |
+| **LLM Provider** | LLM 推理服务提供方。当前通过 typed `Settings` 的 `LLM_PROVIDER` 选择 internal Provider catalog entry |
+| **Provider Catalog** | `app/provider_catalog.py` 中受代码 review 的 endpoint / protocol metadata；当前只注册 `deepseek` |
+| **DeepSeek 官方** | 当前 catalog 中的 OpenAI-compatible endpoint `https://api.deepseek.com` |
+| **DeepSeek-V4-Pro** | 当前 `LLM_MODEL` 默认值；模型可用性由所选 Provider endpoint 决定 |
+| **Provider 配置** | `.env.example` 是唯一使用者配置目录，使用 `LLM_PROVIDER`、`LLM_MODEL`、可选 `LLM_BASE_URL` 和 `LLM_CREDENTIAL_PROVIDER` |
+| **LLM Credential Provider** | `LLM_CREDENTIAL_PROVIDER` 是 AgentArts Identity API Key Provider 引用；真实 API Key 不写入 `.env`、代码或镜像 |
 
 ---
 
@@ -88,10 +86,9 @@
 | 术语 | 定义 |
 |------|------|
 | **ReAct Loop** | Agent 的核心推理模式：LLM 推理 → 决定调工具 or 直接回答 → 执行工具 → 结果喂回 LLM → 继续推理，直到不需要工具 |
-| **LangGraph** | 本项目的 Agent 编排框架。用 StateGraph 定义 agent → tools → finalize 的状态流转 |
-| **AgentState** | LangGraph 中的状态对象，包含 `messages`（对话历史）、`query`（当前请求）、`context`（Memory 上下文） |
-| **ToolNode** | LangGraph 中执行工具调用的节点。收到 LLM 的 tool_calls 后依次执行并返回结果 |
-| **Finalize Node** | LangGraph 中的终止节点。保存 Memory 并构建最终响应 |
+| **deepagents** | 当前 Agent factory。`create_deep_agent` 负责模型 / Tool loop，并使用 LangGraph Checkpointer 保存 thread state |
+| **LangGraph** | deepagents 底层编排与 Checkpoint framework；当前没有项目自定义的 `AgentState` 或 `finalize` node |
+| **LangGraph Checkpoint** | Conversation 内的短期 Agent thread state，key 为 `user_id:conversation_id`；不等同于 AgentArts Memory |
 
 ---
 
@@ -99,15 +96,15 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Email Tools** | Agent 以 User Federation 模式调用 Microsoft Graph API 处理邮件。包含 `list_emails`（列表）、`get_email`（详情）、`search_emails`（搜索）、`send_email`（发送，Guard 保护）、`reply_to_email`（直接回复邮件）。通过 `m365-provider` OAuth2 Provider 注入凭据。详见 Feature 10a |
-| **Microsoft 365 Tools** | Agent 以 User Federation 模式调用 Microsoft 365 API（Outlook 邮件、Calendar 等）。邮件部分由 Feature 10a 实现（`email_tools.py`），Calendar 部分待后续 Feature |
-| **GitHub Tools** | Agent 以 User Federation 模式调用 GitHub API（查 Issues/PR） |
+| **Email Tools** | Agent 以 User Federation 模式调用 Microsoft Graph API 处理邮件。包含列表、详情、搜索、发送和回复，通过 `m365-email-provider` 注入凭据；写操作受 Conversation Guard 保护 |
+| **Calendar Tools** | Agent 通过 `m365-calendar-provider` 以 User Federation 模式只读访问 Microsoft 365 Calendar，支持列表、详情和搜索，并实现 Service-owned OAuth2 full flow |
+| **GitHub Tools** | Agent 以 User Federation 模式调用 GitHub API，支持仓库列表、目录、文件、代码搜索和带确认的 star |
 | **GitHub MCP Activity Source** | Service internal data source，使用 AgentArts MCP Gateway + GitHub remote MCP 读取 GitHub 工程活动。与 GitHub Tools 不同，它不直接使用当前用户 OAuth token 访问 remote MCP。Agent-facing surface 仅包含 `github_search_activity` 和 `github_get_activity_detail`，所有返回结果固定包含 `identity_scope="platform"`；只有 `GITHUB_MCP_ENABLED` 与 `GITHUB_ACTIVITY_TOOLS_ENABLED` 同时为 `true` 时才注册这两个 Tool。Report 作为特殊内部消费者，会先用 GitHub OAuth 确认 `subject_login=A` 和 `repository_scope=oauth_accessible`，再以 `actor=A` 调用该 source |
 | **Report Root Capability** | 面向日报、周报、月报、工作总结和研发进展总结的 Agent root capability，对外入口为 `generate_report`。用户给出单个日期时通过 `reference_date` 锚定对应自然周期，给出范围时严格使用 `start_at` / `end_at`；显式日期优先于当前日期。未传 `sources` 时默认编排 GitHub、Email、Calendar；Email 默认覆盖 `inbox` 与 `sentitems`。GitHub 默认先通过 OAuth `/user` 确认主体账号 A 并枚举 A 可访问仓库，再通过 Feature 17 MCP source 以 `actor=A` 读取 A 自己的工程活动，不回退到 platform actor / repository discovery。该能力负责时间窗口解析、证据归一化、partial failure 降级和 deterministic Markdown 渲染，不依赖 Agent 临时串联 low-level tools |
 | **ReportEvidence** | Report 的统一证据模型。字段包括 `source`、`source_id`、`title`、`occurred_at`、`summary`、可选 `url` 和 source-specific `metadata`。Email、Calendar、GitHub 原始数据必须先归一化为该模型后才能进入报表正文 |
 | **ReportResult** | `generate_report` 的结构化结果。包含 `report_type`、规范化 `window`、deterministic Markdown `content`、`ReportEvidence[]`、脱敏 `warnings`、`source_coverage` 与可选 `source_context`。coverage 按 source 使用 `ok`、`partial`、`unavailable`、`skipped`，单个 source 失败不等于整个 Report 失败 |
-| **Internal Tools** | Agent 以 M2M 模式调用企业内部 API（CRM/OA 等） |
-| **Cloud Tools** | Agent 以 STS 模式访问华为云资源（OBS/RDS 等） |
+| **Internal Tools** | 平台级能力分类：Agent 可通过 M2M 模式调用企业内部 API；当前 PA 尚未实现 CRM/OA 等 Internal Tool |
+| **Cloud Tools** | Agent 以 STS 模式访问华为云资源；当前实现仅包含通过 `iam-users-readonly` Provider 查询 IAM 用户的只读 Tool |
 | **Guard Check** | 敏感操作二次确认机制。当前为 Text-based Conversation Guard（Agent 展示草稿 → 用户回复确认 → Agent 执行），详见 §2.2 `Guard 机制` |
 
 ---

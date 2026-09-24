@@ -43,6 +43,8 @@ Agent 调用 `search_calendar_events(query="Agent Identity", start_time=..., end
 
 ## OAuth2 Full Flow
 
+图类型：**Sequence Diagram（时序图）**。用于说明 Calendar Auth Card、Pages callback bridge、Gateway identity、Service completion 和 replay guard 的完整顺序。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -57,28 +59,41 @@ sequenceDiagram
     participant Graph as Microsoft Graph
 
     User->>UI: 请求查看日历
-    UI->>BFF: POST /invocations
-    BFF->>GW: 转发 Authorization + session id
-    GW->>Svc: 注入 user/session/workload context
-    Svc->>Svc: 生成 signed OAuth2 state
+    UI->>BFF: POST /invocations<br/>Bearer JWT + conversation_id
+    BFF->>BFF: resolve Runtime Session
+    BFF->>GW: 转发 JWT + 覆盖 Runtime Session header
+    GW->>GW: 校验 CUSTOM_JWT
+    GW->>Svc: 转发 Authorization + 注入 Runtime WAT
+    Svc->>Svc: 从 JWT sub 派生 user_id<br/>生成 signed OAuth2 state
     Svc->>ID: require_access_token(provider=m365-calendar-provider)
     ID-->>Svc: auth_url
-    Svc-->>UI: SSE AuthCard(auth_url, oauth2_state)
+    Svc-->>GW: SSE AuthCard(auth_url, oauth2_state)
+    GW-->>BFF: 返回上游 SSE response
+    BFF->>BFF: 在 response headers 写入<br/>callback auth/session cookies
+    BFF-->>UI: 返回 response 并流式透传 Auth Card
     User->>MS: 完成授权
     MS-->>BFF: GET /auth/callback/m365-calendar
-    BFF->>Svc: server-side 转发 callback query + Gateway context
-    Svc->>Svc: verify_oauth2_state(...)
+    BFF->>BFF: 恢复短期 Authorization + Runtime Session<br/>附加 BFF secret
+    BFF->>GW: server-side 转发 callback query + context
+    GW->>Svc: 校验 JWT、路由并注入 Runtime WAT
+    Svc->>Svc: verify BFF secret<br/>derive JWT sub<br/>verify signed state
     Svc->>Store: begin_completion(...)
     Svc->>ID: complete_resource_token_auth(session_uri, user_token)
     ID->>ID: 保存 Calendar Resource Token
     Svc->>Store: mark_completed(...)
-    Svc-->>BFF: callback result page
+    Svc-->>GW: callback result page<br/>complete / pending / failed
+    GW-->>BFF: callback response
+    BFF->>BFF: 清理 callback context cookies
+    BFF-->>UI: postMessage / BroadcastChannel 状态
     UI->>BFF: 重试日历问题
-    BFF->>GW: POST /invocations
-    GW->>Svc: 注入 context
-    Svc->>ID: get stored Calendar token
-    Svc->>Graph: 读取日历事件
-    Svc-->>UI: 日程摘要
+    BFF->>GW: POST /invocations + Runtime Session
+    GW->>Svc: validated JWT + Runtime WAT
+    Svc->>ID: require_access_token 获取已保存 token
+    ID-->>Svc: Calendar access token
+    Svc->>Graph: 使用 private credential boundary 读取日历
+    Svc-->>GW: SSE 日程摘要
+    GW-->>BFF: 流式透传
+    BFF-->>UI: 日程摘要
 ```
 
 ## Agent Identity 能力映射
@@ -88,9 +103,10 @@ sequenceDiagram
 | OAuth2 User Federation | Calendar public tools 只接收业务参数，内部调用 `_..._authorized` private boundary；该 boundary 通过 `@require_access_token(provider_name=CALENDAR_PROVIDER, auth_flow="USER_FEDERATION")` 以用户身份读取日历 |
 | Least Privilege | Calendar 首版只读，仅使用 `https://graph.microsoft.com/Calendars.Read` |
 | Callback URL | `callback_url` 指向 `/auth/callback/m365-calendar`，由 Cloudflare Pages BFF 承接 |
-| Signed State | Service 为每次 `/invocations` 生成绑定 `user_id`、`session_id`、provider 的 signed state |
+| Callback Context | BFF 将原 Invocation 的 Authorization 和 Runtime Session 临时保存为 path-scoped HttpOnly Cookie，callback 使用后立即清理 |
+| Signed State | Service 为每次 `/invocations` 生成绑定 `user_id`、provider、nonce 和 expiry 的 signed state；Runtime Session 不进入 state |
 | Backend-owned Completion | Service 使用 `complete_resource_token_auth(session_uri, UserIdentifier(user_token=...))` 完成 binding |
-| Replay Guard | `OAuth2CallbackStore` 控制 active / completed 状态，重复 callback 不会重复完成 |
+| Replay Guard | Production `OAuth2CallbackStore` 使用 PostgreSQL 控制 active / completed 状态；本地/测试使用进程内 guard，重复 callback 不会重复完成 |
 | Token Vault | Calendar Resource Token 存放在 AgentArts Identity，不进入浏览器或业务数据库 |
 | Workload Identity | Gateway 注入 Workload Access Token，Identity SDK 使用它与 Identity Service 通信 |
 
@@ -114,10 +130,11 @@ Calendar Tools 当前只支持读取：
 ## 安全边界
 
 - Browser 只展示授权状态，不调用 `complete_resource_token_auth`。
-- Callback 请求中的 `user_id` 不可信；Service 使用 signed state 和 Gateway context 做绑定。
+- Callback 不接受 caller `user_id`；Service 从 Gateway 已验证 JWT `sub` 派生用户，并与 signed state 的 `user_id` 比对。
+- BFF callback secret 只保护 BFF → Service transport，signed state 和 AgentArts Identity session binding 仍是授权绑定依据。
+- Callback context Cookie 为短期、HttpOnly、Secure、path-scoped，callback 完成或失败后清理。
 - public Calendar tool schema 不包含 `access_token`；LLM 只填写 `start_time`、`end_time`、`event_id`、`calendar_id`、`query`、`limit` 等业务参数。
 - Microsoft Graph access token 只在 `_list_calendar_events_authorized`、`_get_calendar_event_authorized`、`_search_calendar_events_authorized` private boundary 内由 Identity SDK 注入。
 - `session_uri` 只在 callback completion 中使用，不写入 LLM prompt。
 - Microsoft Graph access token 不出 AgentArts Identity Token Vault。
 - 日历内容可能包含隐私信息，Agent 只读取并总结用户请求范围内的数据。
-

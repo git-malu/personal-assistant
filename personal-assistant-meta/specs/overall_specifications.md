@@ -1,16 +1,16 @@
 # Personal Assistant — 总体功能规格书
 
-> 版本：v0.5 | 状态：Draft | 基于 AgentArts 平台
+> 版本：v0.6 | 状态：当前实现基线 | 最后核对：2026-09-24 | 基于 AgentArts 平台
 
 ---
 
 ## 1. 项目概述
 
-Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理邮件、日历并生成工作报表。系统具备跨 Session 的 Memory 能力，能够记住用户偏好和历史上下文，并在用户授权下以用户身份访问外部服务（如 Microsoft 365 邮件）。
+Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理邮件、日历、代码仓库并生成工作报表。当前实现通过 PostgreSQL Conversation / Message 和 LangGraph Checkpoint 保存对话状态；跨 Conversation 的 AgentArts 长期 Memory 尚未接入。系统可在用户授权后以用户身份访问 Microsoft 365、GitHub 和 Gitee，也可通过受限 STS 凭据访问华为云 IAM。
 
 ### 1.1 核心价值
 
-- **多渠道接入**：支持 Web Chat、飞书直连和 OfficeClaw 三种客户端接入方式，同一 Agent 后端同时服务多个入口
+- **Web Chat 接入**：当前 production 产品入口是 Web Chat；飞书直连和 OfficeClaw 仍在 roadmap
 - **安全委托**：Agent 以用户委托身份调用外部服务，无需暴露个人凭证给 Agent 代码
 
 ### 1.2 目标用户
@@ -22,47 +22,43 @@ Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言
 
 ---
 
-## 2. 接入渠道
+## 2. 接入渠道与当前拓扑
 
-系统支持三种客户端接入方式，共享同一 FastAPI 后端和 Agent 处理逻辑：
+当前只有 Web Chat 接入 production。浏览器通过 Cloudflare Pages Functions BFF 访问 AgentArts Gateway 和 FastAPI Service；BFF 管理 Runtime Session routing key，Service 管理 Conversation、Message 和 Agent Checkpoint。
+
+图类型：**Container / Deployment Diagram（容器 / 部署图）**。用于区分当前 production 调用链与尚未接入的 roadmap 渠道。
 
 ```mermaid
 flowchart LR
-   subgraph Clients["🖥️ 客户端（消息通道）"]
-       direction LR
-       WebChat["Web Chat<br/>浏览器"]
-       Feishu["飞书直连<br/>自定义 Bot"]
-       OC["OfficeClaw<br/>桌面客户端"]
-   end
+    subgraph Current["当前 production"]
+        User["用户"] --> WebChat["Web Chat<br/>React + MSAL"]
+        WebChat -->|"same-origin /invocations<br/>/api/conversations/*"| Pages["Cloudflare Pages<br/>Pages Functions BFF"]
+        Pages -->|"Bearer JWT + BFF Runtime Session"| Gateway["AgentArts Gateway<br/>CUSTOM_JWT"]
+        Gateway -->|"validated request + Runtime WAT"| Service["FastAPI Service<br/>:8080"]
+        Service --> Invocation["InvocationService<br/>ownership + persistence + SSE"]
+        Invocation --> Agent["AgentHandler<br/>deepagents + LangGraph"]
+        Invocation --> DB["PostgreSQL<br/>Conversation / Message"]
+        Agent --> Checkpoint["PostgreSQL<br/>LangGraph Checkpoint"]
+        Agent --> Tools["Registered Tools"]
+        Tools --> Identity["AgentArts Identity<br/>OAuth2 / STS"]
+    end
 
-   subgraph Backend["☁️ FastAPI 后端 — AgentArts 容器 :8080"]
-       direction LR
-       R_Stream["/chat/stream<br/>SSE 流式"]
-       R_Auth["/auth/callback<br/>OAuth 回调"]
-       R_FS["/feishu/webhook<br/>飞书事件"]
-       R_Invoke["/invocations<br/>Agent 对话"]
-       Handler["Agent 处理逻辑<br/>（三端共享）"]
-   end
-
-   WebChat --> R_Stream
-   WebChat --> R_Auth
-   Feishu --> R_FS
-   OC --> R_Invoke
-   R_Stream --> Handler
-   R_Auth --> Handler
-   R_FS --> Handler
-   R_Invoke --> Handler
-   Handler --> Memory["AgentArts Memory"]
-   Handler --> Sandbox["AgentArts Sandbox"]
+    subgraph Roadmap["Roadmap，尚未接入"]
+        Feishu["飞书直连"]
+        OfficeClaw["OfficeClaw"]
+        Adapters["待实现 channel adapter"]
+        Feishu -.-> Adapters
+        OfficeClaw -.-> Adapters
+    end
 ```
 
-| 渠道 | 接入方式 | 说明 | 适用场景 |
-|------|----------|------|----------|
-| **Web Chat** | 浏览器直连 `/chat/stream` | 独立 Web 聊天界面，支持 OAuth 登录和 SSE 流式响应，完全自定义 UI/UX | 个人桌面使用、对外 Demo |
-| **飞书直连** | 飞书事件回调 `/feishu/webhook` | 自行创建飞书 Bot，处理事件回调，完全自主可控，支持飞书卡片等高级交互 | 企业内部推广、移动端触达、高级飞书交互 |
-| **OfficeClaw** | AgentArts 转发 `/invocations` | 通过 OfficeClaw 桌面客户端桥接飞书/微信，无需写飞书代码，不需要公网回调 URL | 快速接入飞书/微信，不想维护飞书 Bot 代码 |
+| 渠道 | 接入方式 | 状态 | 说明 |
+|------|----------|------|------|
+| **Web Chat** | 浏览器 → Cloudflare Pages BFF → AgentArts Gateway → `/invocations` | 已实现 | Microsoft Entra ID 登录、Conversation 管理、SSE 流式响应和 OAuth Auth Card |
+| **飞书直连** | 待实现 channel adapter | Roadmap | 当前仓库没有 `/feishu/webhook` route 或 Bot adapter |
+| **OfficeClaw** | 待实现 AgentArts / client integration | Roadmap | 当前没有可用 OfficeClaw client 或 Service adapter |
 
-三种渠道共享同一个 Agent 处理逻辑和 Memory 空间，用户无论从哪个入口发起对话，Assistant 都能加载其偏好和历史上下文。
+当前 Conversation 状态只服务 Web Chat。AgentArts Memory 与 Sandbox 尚未接入，不能把 LangGraph Checkpoint 等同于跨 Conversation 长期 Memory。
 
 ---
 
@@ -73,7 +69,7 @@ flowchart LR
 | 类型 | 模块 | Use Case 文档 | 当前状态 |
 |---|---|---|---|
 | 基础身份能力 | Web Chat Inbound Identity | [`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md) | 已实现 |
-| 基础身份能力 | Session Isolation | [`UseCase/session-isolation.md`](use-cases/session-isolation.md) | 已实现 |
+| 基础身份能力 | Conversation Isolation | [`UseCase/session-isolation.md`](use-cases/session-isolation.md) | 已实现 |
 | Tool 能力 | Email Tools | [`UseCase/email-tools.md`](use-cases/email-tools.md) | 已实现 |
 | Tool 能力 | Calendar Tools | [`UseCase/calendar-tools.md`](use-cases/calendar-tools.md) | 已实现 |
 | Tool 能力 | GitHub Tools | [`UseCase/github-tools.md`](use-cases/github-tools.md) | 已实现 |
@@ -83,21 +79,22 @@ flowchart LR
 
 ### 3.1 Web Chat Inbound Identity
 
-用户通过 Microsoft Entra ID 登录 Web Chat 后，浏览器向 `/invocations` 发送 `Authorization: Bearer <id_token>` 和 `x-hw-agentarts-session-id`。AgentArts Gateway 负责校验 JWT，并向 Service 注入可信用户、会话和 Workload token。
+用户通过 Microsoft Entra ID 登录 Web Chat 后，浏览器向 same-origin `/invocations` 发送 `Authorization: Bearer <id_token>` 和 Conversation-aware request body。Cloudflare Pages BFF 从 HttpOnly Cookie 创建或复用 Runtime Session，并覆盖上游 `x-hw-agentarts-session-id`。AgentArts Gateway 校验 JWT、路由到 Runtime 并注入 Workload token；Service 从 Gateway 已验证并转发的 JWT `sub` 派生 canonical `user_id`。
 
 - **登录入口**：Web Chat + Microsoft Entra ID。
-- **可信身份来源**：`X-HW-AgentGateway-User-Id`。
-- **会话来源**：`x-hw-agentarts-session-id`。
+- **可信身份来源**：Gateway 已验证并转发的 Bearer JWT `sub`；caller User header 不参与 ownership。
+- **Runtime Session**：由 Cloudflare Pages BFF 的 `pa_runtime_session` HttpOnly Cookie resolver 管理，只用于 Gateway 路由。
+- **Conversation identity**：request body 中的 `conversation_id`，Service 必须结合 `user_id` 校验 ownership。
 - **Workload Identity**：`X-HW-AgentGateway-Workload-Access-Token` 用于 Runtime 访问 AgentArts Identity。
 - **详细规格**：[`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md)。
 
-### 3.2 Session Isolation
+### 3.2 Conversation Isolation
 
-系统使用 Gateway 注入的可信 `user_id` 和 session id 构造 LangGraph checkpoint key：`thread_id = "{user_id}:{session_id}"`。该设计支持同一 Session 内多轮对话连续，同时避免不同用户或不同 Session 之间发生状态串扰。
+系统使用从已验证 JWT 派生的 `user_id` 和 Service 管理的 `conversation_id` 构造 LangGraph checkpoint key：`thread_id = "{user_id}:{conversation_id}"`。Runtime Session 与业务 Conversation 解耦，一个 Runtime Session 可以承载多个 Conversation，同一 Conversation 也可以从新的 Runtime Session 恢复。
 
-- **同一 Session 连续**：Agent 能恢复当前 Session 的短期上下文。
-- **不同 Session 隔离**：同一用户的不同 Session 不共享 checkpoint。
-- **跨用户隔离**：即使不同用户使用相同 session id，最终 thread_id 仍不同。
+- **同一 Conversation 连续**：Agent 能恢复当前 Conversation 的短期上下文。
+- **不同 Conversation 隔离**：同一用户的不同 Conversation 不共享 checkpoint。
+- **跨用户隔离**：所有 Conversation / Message 查询同时按 `user_id + conversation_id` 过滤，thread namespace 也包含 `user_id`。
 - **Checkpoint 后端**：支持 in-memory、SQLite 和 PostgreSQL。
 - **详细规格**：[`UseCase/session-isolation.md`](use-cases/session-isolation.md)。
 
@@ -244,13 +241,13 @@ Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口�
 
 ### 4.1 用户登录（Inbound）
 
-用户通过以下方式之一登录后访问 Agent：
+当前 Web Chat 的 Inbound contract 固定为 Microsoft Entra ID + AgentArts Gateway `CUSTOM_JWT`：
 
-| 认证方式 | 说明 | 适用场景 |
-|----------|------|----------|
-| **OAuth 2.0 (Custom JWT)** | 通过 Microsoft Entra ID、Okta、Auth0 等 OIDC IdP 登录 | 生产环境，面向终端用户 |
-| **IAM** | 通过华为云 IAM 账号登录 | 华为云内部用户 |
-| **API Key** | 使用预配置的 API Key 访问 | 开发调试、机器对机器调用 |
+| 认证方式 | 当前状态 | 说明 |
+|----------|----------|------|
+| **CUSTOM_JWT / Microsoft Entra ID** | 已实现 | Gateway 校验 JWT，Service 从已验证 token 的 `sub` 派生 Conversation owner |
+| **IAM** | 未接入当前 Web Chat contract | 平台支持，但 Service 当前 ownership contract 要求 Bearer JWT `sub` |
+| **API Key** | 非当前 Service 调用路径 | AgentArts 配置保留开发 key，但 `/invocations` 仍要求 Bearer JWT |
 
 ### 4.2 服务委托（Outbound）
 
@@ -266,8 +263,9 @@ Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口�
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
-| Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Mail | OAuth 2.0 | USER_FEDERATION |
-| 开发者 | API Key | _(全部)_ | _(开发调试)_ | — |
+| Microsoft 用户 | Gateway-validated Entra ID JWT | Microsoft Graph Mail / Calendar | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | Gateway-validated Entra ID JWT | GitHub / Gitee | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | Gateway-validated Entra ID JWT | Huawei Cloud IAM | STS temporary credential | STS Provider |
 
 ---
 
@@ -275,22 +273,42 @@ Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口�
 
 ### 5.1 对话流程
 
+图类型：**Sequence Diagram（时序图）**。用于说明 Conversation-aware Invocation、持久化、Agent Tool loop 与 SSE 完成顺序。
+
 ```mermaid
-stateDiagram-v2
-    [*] --> ReceiveMessage: 用户发送消息
-    ReceiveMessage --> LoadMemory: 加载 Memory 上下文
-    LoadMemory --> IntentRouter: 意图路由
+sequenceDiagram
+    actor User as 用户
+    participant Web as Web Chat
+    participant BFF as Cloudflare Pages BFF
+    participant API as FastAPI / InvocationService
+    participant DB as PostgreSQL
+    participant Agent as deepagents / LangGraph
+    participant Tool as Registered Tool
 
-    IntentRouter --> Chat: 普通对话
-    IntentRouter --> EmailAction: 邮件操作请求
-
-    Chat --> SaveMemory
-    EmailAction --> GuardCheck: 敏感操作确认
-    GuardCheck --> CallExternal: 调用邮件 API
-
-    CallExternal --> SaveMemory
-    SaveMemory --> StreamResponse: 流式返回结果
-    StreamResponse --> [*]
+    User->>Web: 发送消息
+    opt 本地 draft 尚无 conversation_id
+        Web->>BFF: POST /api/conversations
+        BFF->>API: 经 Gateway 转发
+        API->>DB: 创建 user-owned Conversation
+        DB-->>API: conversation_id
+        API-->>BFF: Conversation response
+        BFF-->>Web: conversation_id
+    end
+    Web->>BFF: POST /invocations<br/>conversation_id + client_message_id + stream=true
+    BFF->>API: 经 Gateway 转发 JWT + Runtime Session
+    API->>DB: ownership check + lock + persist user message
+    API->>Agent: thread_id=user_id:conversation_id
+    loop 模型需要调用 Tool
+        Agent->>Tool: business arguments
+        Tool-->>Agent: authorized result / Auth Card event
+    end
+    Agent-->>API: token / custom events / final response
+    API-->>BFF: SSE token / custom events
+    BFF-->>Web: 流式透传
+    API->>DB: persist assistant message + commit
+    API-->>BFF: done=true
+    BFF-->>Web: done=true
+    Web-->>User: 展示最终答复
 ```
 
 ### 5.2 典型对话示例
@@ -323,34 +341,27 @@ Agent: 草拟如下：
 
 ## 6. LLM Provider 管理
 
-系统支持配置多个 LLM Provider，通过 `config.yaml` 声明式管理。默认使用华为云 MaaS，可按需切换到 DeepSeek 官方或其他 OpenAI-compatible provider。
+系统通过 typed `Settings` 和 internal Provider catalog 解析 LLM 配置。`.env.example` 是唯一面向使用者的配置目录；LLM API Key 由 AgentArts Identity API Key Credential Provider 注入，不写入 `.env` 或镜像。当前 catalog 只注册 `deepseek`。
 
 ### 6.1 Provider 切换场景
 
-| 场景 | 推荐 Provider | 原因 |
-|------|--------------|------|
-| 生产环境 | MaaS | 内网直连、数据合规、华为云统一账单 |
-| 无 VPN 开发 | DeepSeek 官方 | 公网可达，不受华为内网限制 |
-| 低成本长尾任务 | DeepSeek 官方 | 按量付费，无平台溢价 |
-| 模型能力对比 | 任一 | 切换 `llm.default` 即可 A/B 测试 |
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `LLM_PROVIDER` | `deepseek` | 必须存在于 internal Provider catalog |
+| `LLM_MODEL` | `deepseek-v4-pro` | 传给 OpenAI-compatible model adapter 的模型名 |
+| `LLM_BASE_URL` | Provider catalog endpoint | 可选 endpoint override |
+| `LLM_CREDENTIAL_PROVIDER` | `DEEPSEEK_API_KEY` | AgentArts Identity Provider 引用，不是 Secret 本身 |
 
 ### 6.2 配置方式
 
-详见 [ADR-011](../architecture/ADR/ADR-011-multi-llm-provider.md) 和 [LLM Provider 配置](../architecture/overall_architecture.md#6-llm-provider-配置)。
+详见 [ADR-011](../architecture/ADR/ADR-011-multi-llm-provider.md)、
+[`app/settings.py`](../../personal-assistant-service/app/settings.py) 和
+[`app/provider_catalog.py`](../../personal-assistant-service/app/provider_catalog.py)。
 
-```yaml
-# config.yaml
-llm:
-  default: maas
-  providers:
-    maas:
-      base_url: https://api.modelarts-maas.com/openai/v1
-      api_key_env: MAAS_API_KEY
-      model: deepseek-v4-pro
-    deepseek:
-      base_url: https://api.deepseek.com
-      api_key_env: DEEPSEEK_API_KEY
-      model: deepseek-chat
+```dotenv
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-v4-pro
+LLM_CREDENTIAL_PROVIDER=DEEPSEEK_API_KEY
 ```
 
 ---
@@ -359,8 +370,8 @@ llm:
 
 | 验证项 | 说明 |
 |--------|------|
-| **Inbound Auth** | 用户通过 OAuth 2.0 / API Key 认证后访问 Agent |
-| **Session Isolation** | 同一用户同一 Session 多轮连续，不同用户或不同 Session 不串扰 |
+| **Inbound Auth** | AgentArts Gateway 校验 Microsoft Entra ID `CUSTOM_JWT`，Service 从已验证 token 的 `sub` 派生用户 |
+| **Conversation Isolation** | 同一用户同一 Conversation 多轮连续；不同用户或不同 Conversation 不串扰；Runtime Session 不参与 ownership |
 | **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 Microsoft 365、GitHub、Gitee 等外部 API |
 | **Calendar OAuth2 Full Flow** | Calendar 授权 callback 由 Service 完成 `complete_resource_token_auth` |
 | **STS 云凭证** | Agent 使用 `iam-users-readonly` STS Provider 只读查询华为云 IAM 用户 |
@@ -375,8 +386,8 @@ llm:
 | Phase | 内容 | 验证点 |
 |-------|------|--------|
 | **Phase 1** | 搭建 Agent 骨架：LangGraph chat loop + 本地开发环境 | 本地对话通 |
-| **Phase 2** | 配置 Inbound Identity：Microsoft Entra ID Custom JWT + API Key | 用户登录后访问 |
-| **Phase 3** | 实现 Session Checkpoint | 同 Session 多轮连续，跨用户隔离 |
+| **Phase 2** | 配置 Inbound Identity：Microsoft Entra ID `CUSTOM_JWT` | Gateway 校验 JWT，Service 使用 `sub` 作为 canonical user identity |
+| **Phase 3** | 实现 Conversation Checkpoint | `thread_id=user_id:conversation_id`，跨用户和跨 Conversation 隔离 |
 | **Phase 4** | 实现 Outbound OAuth2 User Federation Tools | 邮件、日历、GitHub、Gitee 以用户身份访问 |
 | **Phase 5** | 实现 STS 云资源只读 Tool | 使用短期 STS 查询华为云 IAM 用户 |
 | **Phase 6** | Web Chat 前端：Vite + React + SSE 流式对话 + OAuth 登录 | 浏览器完整对话体验 |

@@ -6,8 +6,9 @@
 
 | Agent Identity 能力 | Demo 中的落点 | 价值 |
 |---|---|---|
-| Inbound Identity | Web Chat 通过 Microsoft Entra ID 登录，AgentArts Gateway 校验 JWT 并注入 `X-HW-AgentGateway-User-Id` | 后端只信任 Gateway 注入的用户身份，避免浏览器伪造用户 ID |
-| Session Identity | Gateway / Client 传递 `x-hw-agentarts-session-id`，后端用 `{user_id}:{session_id}` 作为 checkpoint thread_id | 同一用户多轮对话连续，不同用户和不同 Session 隔离 |
+| Inbound Identity | Web Chat 通过 Microsoft Entra ID 登录，AgentArts Gateway 校验 JWT，Service 从已验证 token 的 `sub` 派生 `user_id` | Conversation ownership 不信任 caller User header |
+| Runtime Session | Cloudflare Pages BFF 用 `pa_runtime_session` HttpOnly Cookie 生成并覆盖 `x-hw-agentarts-session-id` | 仅用于 AgentArts Runtime 路由，不参与业务 ownership 或 checkpoint key |
+| Conversation Identity | Service 校验 `user_id + conversation_id`，LangGraph 使用 `thread_id=user_id:conversation_id` | 同一 Conversation 连续，不同用户和不同 Conversation 隔离 |
 | Workload Identity | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，后端写入 `AgentArtsRuntimeContext` | Agent 容器用短期 Workload token 访问 Identity Service，不依赖本地长期凭据 |
 | API Key Credential Provider | `DEEPSEEK_API_KEY` Provider 为 LLM 调用提供 DeepSeek API Key | LLM API Key 不进代码、不进 `.env`、不进镜像 |
 | OAuth2 User Federation | `m365-email-provider`、`m365-calendar-provider`、`github-provider`、`gitee-provider` | Agent 以用户委托身份访问 Microsoft Graph、GitHub、Gitee |
@@ -21,6 +22,8 @@
 
 所有 tool use case 共享同一条 Agent Identity 基础链路：
 
+图类型：**Sequence Diagram（时序图）**。用于说明 Web Chat、BFF、Gateway、Service、Agent Identity 和外部 API 之间的端到端凭据与数据流。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -29,29 +32,39 @@ sequenceDiagram
     participant BFF as Cloudflare Pages Function
     participant GW as AgentArts Gateway
     participant Svc as FastAPI Service
+    participant DB as PostgreSQL
     participant Agent as deepagents Agent
     participant ID as AgentArts Identity
     participant Ext as External API
 
     User->>Web: Microsoft Entra ID 登录
-    Web->>BFF: POST /invocations<br/>Authorization: Bearer id_token<br/>x-hw-agentarts-session-id
-    BFF->>GW: same-origin proxy 转发请求
-    GW->>GW: CUSTOM_JWT 校验
-    GW->>Svc: 注入 user_id / session_id / workload token
-    Svc->>Svc: 设置 AgentArtsRuntimeContext
-    Svc->>Agent: message + user-scoped thread_id
+    Web->>BFF: POST /invocations<br/>Bearer id_token + conversation_id
+    BFF->>BFF: 创建 / 读取 HttpOnly Runtime Session cookie
+    BFF->>GW: 转发 JWT + 覆盖 Runtime Session header
+    GW->>GW: CUSTOM_JWT 校验与 Runtime 路由
+    GW->>Svc: 转发 Authorization + 注入 workload token
+    Svc->>Svc: 从已验证 JWT sub 派生 user_id<br/>设置 Runtime Context
+    Svc->>DB: 校验 Conversation ownership<br/>持久化 user message
+    Svc->>Agent: message + thread_id=user_id:conversation_id
     Agent->>ID: 通过 Credential Provider 获取凭据
     ID-->>Agent: API Key / OAuth2 token / STS token
     Agent->>Ext: 调用 Microsoft Graph / GitHub / Gitee / HuaweiCloud IAM
     Ext-->>Agent: 返回业务数据
-    Agent-->>Web: SSE token / AuthCard / JSON response
+    Agent->>DB: 保存 LangGraph Checkpoint
+    Agent-->>Svc: token / AuthCard / final response
+    Svc->>DB: 持久化 assistant message
+    Svc-->>GW: SSE 或 JSON response
+    GW-->>BFF: 流式透传
+    BFF-->>Web: same-origin response
 ```
 
 这条链路体现了 Demo 的核心边界：
 
 - Browser 只负责登录、携带 ID Token 和展示授权状态。
-- Gateway 是生产环境 Inbound JWT 校验者。
-- Service 只信任 Gateway 注入的身份 header。
+- BFF 独占 Runtime Session header 的生成和覆盖，Browser 不能选择 routing key。
+- Gateway 是 production Inbound JWT 校验者并注入 Runtime WAT。
+- Service 从 Gateway 已验证并转发的 JWT `sub` 派生 canonical `user_id`，忽略 caller User header。
+- Runtime Session 与 Conversation / Checkpoint 生命周期解耦。
 - Agent 通过 Identity SDK 获取外部凭据。
 - 第三方 access token 不暴露给浏览器、LLM、日志或业务数据库。
 
@@ -60,7 +73,7 @@ sequenceDiagram
 | Use Case | 文档 | Agent Identity 能力 |
 |---|---|---|
 | 登录后进入 Web Chat | [Web Chat Inbound Identity](web-chat-inbound-identity.md) | Inbound Custom JWT、Gateway header injection、Workload Access Token |
-| 多轮会话与用户隔离 | [Session Isolation](session-isolation.md) | Gateway User ID、Session ID、user-scoped checkpoint |
+| Conversation 连续性与用户隔离 | [Conversation Isolation 与 Runtime Session](session-isolation.md) | JWT `sub` ownership、BFF Runtime Session、user-scoped Conversation checkpoint |
 
 ## Tool Use Case 文档
 
